@@ -16,13 +16,22 @@ const startServer = async () => {
   try {
     // Connect to MongoDB
     console.log('[STARTUP] Connecting to MongoDB...');
-    await connectDatabase();
+    try {
+      await connectDatabase();
+      console.log('[STARTUP] MongoDB connection successful');
+    } catch (dbError) {
+      console.warn(
+        `[STARTUP] MongoDB connection failed: ${dbError.message}`
+      );
+      console.warn('[STARTUP] Continuing without database (check .env MONGO_URI)');
+    }
 
     // Start Express server
     app.listen(config.port, () => {
       console.log(`[STARTUP] Server running on http://localhost:${config.port}`);
       console.log(`[STARTUP] Environment: ${config.nodeEnv}`);
       console.log(`[STARTUP] Frontend URL: ${config.frontendUrl}`);
+      console.log(`[STARTUP] API Health Check: http://localhost:${config.port}/api/health`);
       console.log('[STARTUP] Server ready to accept requests');
     });
   } catch (error) {
