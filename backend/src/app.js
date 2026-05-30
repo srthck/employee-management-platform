@@ -3,6 +3,7 @@ import cors from 'cors';
 import 'express-async-errors';
 import config from './config/environment.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import authRoutes from './routes/authRoutes.js';
 
 /**
  * Express Application Setup
@@ -40,8 +41,10 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Authentication routes
+app.use('/api/auth', authRoutes);
+
 // API routes (placeholder for future routes)
-// app.use('/api/auth', authRoutes);
 // app.use('/api/employees', employeeRoutes);
 
 // 404 handler
