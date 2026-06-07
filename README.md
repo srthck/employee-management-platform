@@ -8,11 +8,7 @@
 ![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-green)
 ![JWT](https://img.shields.io/badge/Auth-JWT-orange)
 
-## Live Demo
 
-**Frontend:** https://your-vercel-url.vercel.app
-
-**Backend API:** https://your-render-url.onrender.com
 
 ---
 
