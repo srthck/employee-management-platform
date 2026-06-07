@@ -94,6 +94,9 @@ The platform includes:
 
 ![Dashboard](./screenshots/dashboard.png)
 
+### ADD EMPLOYEE
+![ADD EMPLOYEE](./screenshots/addemployee.png)
+
 ---
 
 ## System Architecture
