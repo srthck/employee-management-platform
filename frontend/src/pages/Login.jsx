@@ -1,178 +1,174 @@
-import { useContext, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState, useContext } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../contexts/AuthContext';
 
 /**
  * Login Page
- * 
- * Handles user authentication
- * Shows validation errors
- * Redirects to dashboard on success
+ *
+ * Features:
+ * - Email + password form with client-side validation
+ * - Mirrors backend password rules (presence check only on login)
+ * - Error handling with structured API error messages
+ * - Loading state during request
+ * - Redirects to /dashboard on success
  */
 
 export default function Login() {
+  const { login } = useContext(AuthContext);
   const navigate = useNavigate();
-  const { login, error, clearError } = useContext(AuthContext);
 
-  const [formData, setFormData] = useState({
-    email: '',
-    password: '',
-  });
-
-  const [validationErrors, setValidationErrors] = useState({});
+  const [form, setForm] = useState({ email: '', password: '' });
+  const [errors, setErrors] = useState({});
+  const [apiError, setApiError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  /**
-   * Validate form data
-   */
-  const validateForm = () => {
-    const errors = {};
-
-    if (!formData.email.trim()) {
-      errors.email = 'Email is required';
-    } else if (!/^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/.test(formData.email)) {
-      errors.email = 'Invalid email format';
-    }
-
-    if (!formData.password) {
-      errors.password = 'Password is required';
-    } else if (formData.password.length < 8) {
-      errors.password = 'Password must be at least 8 characters';
-    }
-
-    setValidationErrors(errors);
-    return Object.keys(errors).length === 0;
+  // ─── Client-side validation ────────────────────────────────────────────────
+  const validate = () => {
+    const errs = {};
+    if (!form.email.trim()) errs.email = 'Email is required';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
+      errs.email = 'Enter a valid email address';
+    if (!form.password) errs.password = 'Password is required';
+    return errs;
   };
 
-  /**
-   * Handle input change
-   */
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: value,
-    }));
-    // Clear validation error for this field when user starts typing
-    if (validationErrors[name]) {
-      setValidationErrors((prev) => ({
-        ...prev,
-        [name]: '',
-      }));
-    }
-    clearError();
+    setForm((prev) => ({ ...prev, [name]: value }));
+    // Clear field-level error on change
+    if (errors[name]) setErrors((prev) => ({ ...prev, [name]: '' }));
+    setApiError('');
   };
 
-  /**
-   * Handle form submission
-   */
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    if (!validateForm()) {
+    const errs = validate();
+    if (Object.keys(errs).length) {
+      setErrors(errs);
       return;
     }
 
     setIsLoading(true);
+    setApiError('');
 
     try {
-      await login(formData.email, formData.password);
+      await login({ email: form.email, password: form.password });
       navigate('/dashboard');
     } catch (err) {
-      console.error('Login failed:', err);
-      // Error is handled by context
+      const message =
+        err.response?.data?.message || 'Login failed. Please try again.';
+      setApiError(message);
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-50 to-neutral-50 py-12 px-4">
-      <div className="w-full max-w-md">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-neutral-900 mb-2">
-            Welcome Back
-          </h1>
-          <p className="text-neutral-600">
-            Sign in to your account to continue
-          </p>
-        </div>
+    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
+      {/* Background gradient orbs */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -left-40 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl" />
+        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl" />
+      </div>
 
-        {/* Form Card */}
-        <div className="card">
-          <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Email Field */}
+      <div className="relative w-full max-w-md">
+        {/* Card */}
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl shadow-black/50">
+          {/* Header */}
+          <div className="mb-8">
+            <div className="flex items-center gap-2 mb-6">
+              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
+                <span className="text-white text-xs font-bold">EMS</span>
+              </div>
+              <span className="text-slate-400 text-sm font-medium">Employee Management System</span>
+            </div>
+            <h1 className="text-2xl font-bold text-white">Welcome back</h1>
+            <p className="text-slate-400 text-sm mt-1">Sign in to your admin account</p>
+          </div>
+
+          {/* API Error Banner */}
+          {apiError && (
+            <div className="mb-6 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-center gap-2">
+              <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+              {apiError}
+            </div>
+          )}
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} noValidate className="space-y-5">
+            {/* Email */}
             <div>
-              <label className="label">Email Address</label>
+              <label htmlFor="login-email" className="block text-sm font-medium text-slate-300 mb-1.5">
+                Email address
+              </label>
               <input
-                type="email"
+                id="login-email"
                 name="email"
-                value={formData.email}
+                type="email"
+                autoComplete="email"
+                value={form.email}
                 onChange={handleChange}
-                placeholder="john@example.com"
-                className={`input ${
-                  validationErrors.email ? 'border-red-500' : ''
-                }`}
-                disabled={isLoading}
+                placeholder="admin@example.com"
+                className={`w-full px-4 py-2.5 rounded-lg bg-slate-800 border text-white placeholder-slate-500 text-sm outline-none transition-all duration-200
+                  focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500
+                  ${errors.email ? 'border-red-500/60 focus:ring-red-500/30 focus:border-red-500' : 'border-slate-700 hover:border-slate-600'}`}
               />
-              {validationErrors.email && (
-                <p className="text-sm text-red-600 mt-2">
-                  {validationErrors.email}
-                </p>
+              {errors.email && (
+                <p className="mt-1.5 text-xs text-red-400">{errors.email}</p>
               )}
             </div>
 
-            {/* Password Field */}
+            {/* Password */}
             <div>
-              <label className="label">Password</label>
+              <label htmlFor="login-password" className="block text-sm font-medium text-slate-300 mb-1.5">
+                Password
+              </label>
               <input
-                type="password"
+                id="login-password"
                 name="password"
-                value={formData.password}
+                type="password"
+                autoComplete="current-password"
+                value={form.password}
                 onChange={handleChange}
                 placeholder="••••••••"
-                className={`input ${
-                  validationErrors.password ? 'border-red-500' : ''
-                }`}
-                disabled={isLoading}
+                className={`w-full px-4 py-2.5 rounded-lg bg-slate-800 border text-white placeholder-slate-500 text-sm outline-none transition-all duration-200
+                  focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500
+                  ${errors.password ? 'border-red-500/60 focus:ring-red-500/30 focus:border-red-500' : 'border-slate-700 hover:border-slate-600'}`}
               />
-              {validationErrors.password && (
-                <p className="text-sm text-red-600 mt-2">
-                  {validationErrors.password}
-                </p>
+              {errors.password && (
+                <p className="mt-1.5 text-xs text-red-400">{errors.password}</p>
               )}
             </div>
 
-            {/* Server Error */}
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                <p className="text-red-700 text-sm">{error}</p>
-              </div>
-            )}
-
-            {/* Submit Button */}
+            {/* Submit */}
             <button
+              id="login-submit"
               type="submit"
               disabled={isLoading}
-              className="btn btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full mt-2 py-2.5 px-4 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500
+                text-white text-sm font-semibold tracking-wide transition-all duration-200 shadow-lg shadow-violet-500/25
+                disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              {isLoading ? 'Signing In...' : 'Sign In'}
+              {isLoading ? (
+                <>
+                  <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  Signing in…
+                </>
+              ) : (
+                'Sign in'
+              )}
             </button>
           </form>
 
           {/* Footer */}
-          <div className="mt-6 pt-6 border-t border-neutral-200">
-            <p className="text-center text-neutral-600 text-sm">
-              Don't have an account?{' '}
-              <Link
-                to="/register"
-                className="text-primary-600 font-medium hover:text-primary-700"
-              >
-                Sign Up
-              </Link>
-            </p>
-          </div>
+          <p className="mt-6 text-center text-sm text-slate-500">
+            Don&apos;t have an account?{' '}
+            <Link to="/register" className="text-violet-400 hover:text-violet-300 font-medium transition-colors">
+              Create one
+            </Link>
+          </p>
         </div>
       </div>
     </div>

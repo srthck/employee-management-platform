@@ -22,7 +22,7 @@ const apiClient = axios.create({
 // Request interceptor (add JWT token to all requests)
 apiClient.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('authToken');
+    const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -33,14 +33,27 @@ apiClient.interceptors.request.use(
   }
 );
 
+const AUTH_PUBLIC_PATHS = ['/auth/login', '/auth/register'];
+
 // Response interceptor
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Handle unauthorized (redirect to login, clear token, etc.)
-      console.error('Unauthorized - redirect to login');
+    const status = error.response?.status;
+    const requestUrl = error.config?.url || '';
+
+    const isAuthEndpoint = AUTH_PUBLIC_PATHS.some((path) =>
+      requestUrl.includes(path)
+    );
+
+    if (status === 401 && !isAuthEndpoint) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('authUser');
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
     }
+
     return Promise.reject(error);
   }
 );

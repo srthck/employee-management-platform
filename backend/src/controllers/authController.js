@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import Admin from '../models/Admin.js';
 import config from '../config/environment.js';
+import { formatUserResponse } from '../utils/formatUser.js';
 
 /**
  * Authentication Controller
@@ -74,14 +75,18 @@ export const register = async (req, res) => {
     await newAdmin.save();
 
     // Generate JWT token
-    const token = generateToken(newAdmin._id, newAdmin.email, newAdmin.name, newAdmin.role);
+    const token = generateToken(
+      newAdmin._id.toString(),
+      newAdmin.email,
+      newAdmin.name,
+      newAdmin.role
+    );
 
-    // Return response (password not included thanks to toJSON method)
     return res.status(201).json({
       success: true,
       message: 'Registration successful',
       data: {
-        user: newAdmin.toJSON(),
+        user: formatUserResponse(newAdmin),
         token,
       },
     });
@@ -145,14 +150,18 @@ export const login = async (req, res) => {
     }
 
     // Generate JWT token
-    const token = generateToken(admin._id, admin.email, admin.name, admin.role);
+    const token = generateToken(
+      admin._id.toString(),
+      admin.email,
+      admin.name,
+      admin.role
+    );
 
-    // Return response
     return res.status(200).json({
       success: true,
       message: 'Login successful',
       data: {
-        user: admin.toJSON(),
+        user: formatUserResponse(admin),
         token,
       },
     });
@@ -186,11 +195,18 @@ export const getCurrentUser = async (req, res) => {
       });
     }
 
+    if (!admin.isActive) {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account has been deactivated. Please contact support.',
+      });
+    }
+
     return res.status(200).json({
       success: true,
       message: 'User fetched successfully',
       data: {
-        user: admin.toJSON(),
+        user: formatUserResponse(admin),
       },
     });
   } catch (error) {

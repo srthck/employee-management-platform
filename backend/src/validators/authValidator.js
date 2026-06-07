@@ -36,16 +36,14 @@ export const validateRegister = [
   body('password')
     .isLength({ min: 8 })
     .withMessage('Password must be at least 8 characters')
-    .isLength({ max: 128 })
-    .withMessage('Password cannot exceed 128 characters')
-    .matches(/(?=.*[a-z])/)
+    .isLength({ max: 64 })
+    .withMessage('Password cannot exceed 64 characters')
+    .matches(/(?=.*[a-z])/) // at least one lowercase
     .withMessage('Password must contain at least one lowercase letter')
-    .matches(/(?=.*[A-Z])/)
+    .matches(/(?=.*[A-Z])/) // at least one uppercase
     .withMessage('Password must contain at least one uppercase letter')
-    .matches(/(?=.*\d)/)
-    .withMessage('Password must contain at least one digit')
-    .matches(/(?=.*[@$!%*?&])/)
-    .withMessage('Password must contain at least one special character (@$!%*?&)'),
+    .matches(/(?=.*\d)/) // at least one digit
+    .withMessage('Password must contain at least one digit'),
 
   body('confirmPassword')
     .custom((value, { req }) => value === req.body.password)

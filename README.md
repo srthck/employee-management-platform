@@ -1,174 +1,291 @@
-# Employee Management System
+# Enterprise Employee Management Platform
 
-An enterprise-grade employee management platform built with React, Node.js, Express, and MongoDB. Designed for scalability, security, and maintainability.
+> A full-stack workforce management platform built with React, Node.js, Express, and MongoDB, featuring secure authentication, role-based access control, employee lifecycle management, analytics dashboards, and enterprise-grade architecture.
 
-## Tech Stack
+![License](https://img.shields.io/badge/license-MIT-blue)
+![React](https://img.shields.io/badge/React-18-blue)
+![Node.js](https://img.shields.io/badge/Node.js-Express-green)
+![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-green)
+![JWT](https://img.shields.io/badge/Auth-JWT-orange)
+
+## Live Demo
+
+**Frontend:** https://your-vercel-url.vercel.app
+
+**Backend API:** https://your-render-url.onrender.com
+
+---
+
+## Overview
+
+Managing employee records, authentication, permissions, and workforce data is a common challenge in modern organizations.
+
+This project simulates a real-world internal business application used by HR and operations teams to manage employees securely and efficiently.
+
+The platform includes:
+
+* Secure JWT Authentication
+* Role-Based Access Control (RBAC)
+* Employee Lifecycle Management
+* Dashboard Analytics
+* Search, Filtering & Pagination
+* Protected APIs
+* Enterprise Security Practices
+
+---
+
+## Key Features
+
+### Authentication & Authorization
+
+* JWT-based authentication
+* Password hashing with bcrypt
+* Protected routes
+* Persistent sessions
+* Login rate limiting
+* Role-based access foundation (Admin / Manager)
+
+### Employee Management
+
+* Create employees
+* View employees
+* Update employee records
+* Delete employees
+* Employee status tracking
+* Department management
+
+### Analytics Dashboard
+
+* Total employees
+* Active employees
+* Employees on leave
+* New hires this month
+
+### Data Operations
+
+* Search employees
+* Department filtering
+* Status filtering
+* Sorting
+* Pagination
+
+### Security
+
+* JWT verification middleware
+* Input validation using express-validator
+* Environment variable protection
+* Rate limiting
+* Password hashing
+* Generic authentication error responses
+
+---
+
+## Application Screenshots
+
+### Landing Page
+
+![Landing Page](./screenshots/landing-page.png)
+
+### Registration
+
+![Register](./screenshots/register-page.png)
+
+### Login
+
+![Login](./screenshots/login-page.png)
+
+### Dashboard
+
+![Dashboard](./screenshots/dashboard.png)
+
+---
+
+## System Architecture
+
+```text
+React + Vite
+      │
+      ▼
+Axios Service Layer
+      │
+      ▼
+Express REST API
+      │
+      ▼
+Authentication Middleware
+      │
+      ▼
+MongoDB Atlas
+```
+
+---
+
+## Technical Architecture
 
 ### Frontend
-- **React 18** with Vite (lightning-fast bundling)
-- **React Router v6** (client-side routing)
-- **Tailwind CSS** (utility-first styling)
-- **Axios** (HTTP client with interceptors)
+
+* React 18
+* Vite
+* React Router v6
+* Axios
+* Tailwind CSS
+* Context API
 
 ### Backend
-- **Node.js** with Express.js (scalable REST API)
-- **MongoDB Atlas** (cloud database)
-- **Mongoose** (schema validation and modeling)
-- **JWT** (stateless authentication)
-- **bcrypt** (password hashing)
 
-### Deployment
-- **Frontend**: Vercel
-- **Backend**: Render
-- **Database**: MongoDB Atlas
+* Node.js
+* Express.js
+* MongoDB Atlas
+* Mongoose
+* JWT
+* bcrypt
+
+### Infrastructure
+
+* Vercel
+* Render
+* MongoDB Atlas
+
+---
+
+## Engineering Decisions
+
+### Why JWT?
+
+JWT provides stateless authentication, enabling horizontal scaling without server-side session storage.
+
+### Why bcrypt?
+
+Passwords are never stored in plain text. bcrypt provides secure adaptive hashing with salting.
+
+### Why MongoDB?
+
+MongoDB offers flexible document modeling and rapid development for evolving business requirements.
+
+### Why Layered Architecture?
+
+Separating routes, controllers, middleware, models, and services improves maintainability and scalability.
+
+---
+
+## Security Considerations
+
+Implemented:
+
+* Password hashing (bcrypt)
+* JWT authentication
+* Protected API routes
+* Login rate limiting
+* Input validation
+* Environment variable protection
+* Role-based authorization foundation
+
+Future Enhancements:
+
+* Refresh Tokens
+* HttpOnly Cookies
+* Audit Logs
+* Multi-Factor Authentication
+* Account Lockout Policies
+
+---
+
+## REST API Endpoints
+
+### Authentication
+
+| Method | Endpoint           | Description                |
+| ------ | ------------------ | -------------------------- |
+| POST   | /api/auth/register | Register administrator     |
+| POST   | /api/auth/login    | Login user                 |
+| GET    | /api/auth/me       | Current authenticated user |
+
+### Employees
+
+| Method | Endpoint             | Description          |
+| ------ | -------------------- | -------------------- |
+| GET    | /api/employees       | List employees       |
+| GET    | /api/employees/stats | Dashboard statistics |
+| GET    | /api/employees/:id   | Employee details     |
+| POST   | /api/employees       | Create employee      |
+| PUT    | /api/employees/:id   | Update employee      |
+| DELETE | /api/employees/:id   | Delete employee      |
+
+---
 
 ## Project Structure
 
-```
-EMPLOYEE MANAGEMENT SYSTEM/
-├── backend/                    # Express API server
-│   ├── src/
-│   │   ├── config/            # Configuration (database, environment)
-│   │   ├── models/            # Mongoose schemas
-│   │   ├── routes/            # API routes
-│   │   ├── controllers/       # Business logic
-│   │   ├── middleware/        # Custom middleware
-│   │   ├── utils/             # Utilities
-│   │   └── app.js             # Express app setup
-│   ├── .env.example           # Environment variables template
-│   ├── .env                   # (Git ignored)
-│   ├── package.json
-│   └── server.js              # Entry point
-│
-├── frontend/                   # React application
-│   ├── src/
-│   │   ├── components/        # Reusable UI components
-│   │   ├── pages/             # Page components
-│   │   ├── services/          # API service layer
-│   │   ├── hooks/             # Custom React hooks
-│   │   ├── contexts/          # React context (auth, etc.)
-│   │   ├── utils/             # Utility functions
-│   │   ├── App.jsx            # Main app component
-│   │   └── main.jsx           # Entry point
-│   ├── .env.example
-│   ├── .env                   # (Git ignored)
-│   ├── package.json
-│   ├── vite.config.js
-│   └── tailwind.config.js
-│
-└── docs/                       # Documentation
+```text
+backend/
+├── config/
+├── controllers/
+├── middleware/
+├── models/
+├── routes/
+├── utils/
+
+frontend/
+├── components/
+├── contexts/
+├── pages/
+├── services/
+├── hooks/
+├── utils/
 ```
 
-## Getting Started
+---
 
-### Prerequisites
-- Node.js 18+ 
-- npm or yarn
-- MongoDB Atlas account
+## Local Development
 
-### Backend Setup
+### Backend
 
-1. Navigate to backend directory:
 ```bash
 cd backend
-```
-
-2. Install dependencies:
-```bash
 npm install
-```
-
-3. Create `.env` file (copy from `.env.example`):
-```bash
-cp .env.example .env
-```
-
-4. Configure your MongoDB URI in `.env`:
-```
-MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/employee_management
-PORT=5000
-NODE_ENV=development
-```
-
-5. Start the server:
-```bash
-npm start
-```
-
-Server runs on `http://localhost:5000`
-
-### Frontend Setup
-
-1. Navigate to frontend directory:
-```bash
-cd frontend
-```
-
-2. Install dependencies:
-```bash
-npm install
-```
-
-3. Create `.env` file:
-```bash
-cp .env.example .env
-```
-
-4. Configure API endpoint in `.env`:
-```
-VITE_API_URL=http://localhost:5000/api
-```
-
-5. Start development server:
-```bash
 npm run dev
 ```
 
-Frontend runs on `http://localhost:5173`
-
-## API Health Check
-
-Verify the backend is running:
+### Frontend
 
 ```bash
-curl http://localhost:5000/api/health
+cd frontend
+npm install
+npm run dev
 ```
 
-Expected response:
-```json
-{
-  "status": "healthy",
-  "timestamp": "2026-05-30T10:30:00Z",
-  "uptime": 125.34
-}
-```
+---
 
-## Development Standards
+## What This Project Demonstrates
 
-- **Code Style**: Clean Code principles, ESLint configuration
-- **Architecture**: Separation of concerns, scalable folder structure
-- **Security**: Environment variables, no hardcoded secrets, JWT validation
-- **Database**: Mongoose schema validation, proper indexing
-- **Error Handling**: Centralized error middleware, proper HTTP status codes
+* Full Stack Development
+* Authentication & Authorization
+* REST API Design
+* Database Modeling
+* Secure Software Engineering
+* State Management
+* Enterprise Architecture
+* Production-Oriented Development
 
-## Contributing
+---
 
-This project follows enterprise software engineering standards:
-- Production-grade code only
-- Scalable architecture
-- Security-first mindset
-- Clean, maintainable code
+## Future Roadmap
 
-## Team
+* Advanced RBAC
+* Employee Document Management
+* Payroll Module
+* Attendance Tracking
+* Email Notifications
+* Audit Logging
+* Reporting & Analytics
+* Docker Deployment
+* CI/CD Pipeline
 
-Built with senior software engineering standards for enterprise use.
+---
 
-## Status
+## Author
 
-**Day 1**: Foundation setup (in progress)
-- [x] Git initialized
-- [x] Project structure created
-- [ ] Backend setup
-- [ ] Frontend setup
-- [ ] MongoDB connection
-- [ ] Health check API
+Sarthak Kadam
+
+B.Tech Computer Science
+
+Focused on Full-Stack Engineering, Backend Systems, and Enterprise Software Development.

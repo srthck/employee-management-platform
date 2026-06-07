@@ -1,172 +1,77 @@
-import { createContext, useState, useEffect } from 'react';
+import { createContext, useState, useEffect, useCallback } from 'react';
+import * as authService from '../services/authService';
 
 /**
- * Authentication Context
- * 
- * Global state for:
- * - Current user data
- * - Authentication token
- * - Loading states
- * - Errors
- * 
- * Production standards:
- * - Token persisted to localStorage
- * - Token injected into all API requests
- * - Automatic token cleanup on logout
+ * AuthContext
+ *
+ * Provides global authentication state across the entire React application.
+ *
+ * Exposes:
+ *   user     – currently authenticated user (null if not logged in)
+ *   loading  – true while verifying token on app mount (prevents flash redirect)
+ *   login    – authenticates user, persists token, updates state
+ *   register – creates account, persists token, updates state
+ *   logout   – clears token and user state
+ *
+ * Portfolio implementation:
+ * Token stored in localStorage for simplicity.
+ * Production systems should prefer HttpOnly Secure Cookies.
  */
 
-export const AuthContext = createContext();
+export const AuthContext = createContext(null);
 
-export const AuthProvider = ({ children }) => {
+export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loading, setLoading] = useState(true); // true until we resolve token
 
-  /**
-   * Initialize auth state from localStorage on app load
-   */
+  // ─── On Mount: Verify existing token ──────────────────────────────────────
+  // If a token exists in localStorage, fetch /auth/me to confirm it is valid.
+  // This keeps the user logged in after a browser refresh.
   useEffect(() => {
-    const storedToken = localStorage.getItem('authToken');
-    const storedUser = localStorage.getItem('authUser');
-
-    if (storedToken && storedUser) {
-      try {
-        setToken(storedToken);
-        setUser(JSON.parse(storedUser));
-        setIsAuthenticated(true);
-      } catch (err) {
-        console.error('[AUTH] Failed to restore auth state:', err);
-        localStorage.removeItem('authToken');
-        localStorage.removeItem('authUser');
+    const restoreSession = async () => {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        setLoading(false);
+        return;
       }
-    }
+      try {
+        const data = await authService.getCurrentUser();
+        setUser(data.data.user);
+      } catch {
+        // Token invalid or expired – clean up silently
+        localStorage.removeItem('token');
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
+    };
 
-    setLoading(false);
+    restoreSession();
   }, []);
 
-  /**
-   * Login user
-   * 
-   * @param {string} email - User email
-   * @param {string} password - User password
-   * @returns {Promise<object>} - User object and token
-   */
-  const login = async (email, password) => {
-    setLoading(true);
-    setError(null);
+  // ─── Login ─────────────────────────────────────────────────────────────────
+  const login = useCallback(async ({ email, password }) => {
+    const data = await authService.login({ email, password });
+    localStorage.setItem('token', data.data.token);
+    setUser(data.data.user);
+    return data;
+  }, []);
 
-    try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
+  // ─── Register ──────────────────────────────────────────────────────────────
+  const register = useCallback(async ({ name, email, password, confirmPassword }) => {
+    const data = await authService.register({ name, email, password, confirmPassword });
+    localStorage.setItem('token', data.data.token);
+    setUser(data.data.user);
+    return data;
+  }, []);
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.message || 'Login failed');
-      }
-
-      // Store token and user
-      const { token: newToken, user: userData } = data.data;
-      localStorage.setItem('authToken', newToken);
-      localStorage.setItem('authUser', JSON.stringify(userData));
-
-      setToken(newToken);
-      setUser(userData);
-      setIsAuthenticated(true);
-
-      return { user: userData, token: newToken };
-    } catch (err) {
-      const errorMessage = err.message || 'Login failed';
-      setError(errorMessage);
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /**
-   * Register new user
-   * 
-   * @param {object} data - Registration data (name, email, password, confirmPassword)
-   * @returns {Promise<object>} - User object and token
-   */
-  const register = async (data) => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/auth/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(data),
-      });
-
-      const responseData = await response.json();
-
-      if (!response.ok) {
-        throw new Error(responseData.message || 'Registration failed');
-      }
-
-      // Store token and user
-      const { token: newToken, user: userData } = responseData.data;
-      localStorage.setItem('authToken', newToken);
-      localStorage.setItem('authUser', JSON.stringify(userData));
-
-      setToken(newToken);
-      setUser(userData);
-      setIsAuthenticated(true);
-
-      return { user: userData, token: newToken };
-    } catch (err) {
-      const errorMessage = err.message || 'Registration failed';
-      setError(errorMessage);
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  /**
-   * Logout user
-   * 
-   * Clears all auth state and tokens
-   */
-  const logout = () => {
-    localStorage.removeItem('authToken');
-    localStorage.removeItem('authUser');
-    setToken(null);
+  // ─── Logout ────────────────────────────────────────────────────────────────
+  const logout = useCallback(() => {
+    localStorage.removeItem('token');
     setUser(null);
-    setIsAuthenticated(false);
-    setError(null);
-  };
+  }, []);
 
-  /**
-   * Clear error message
-   */
-  const clearError = () => {
-    setError(null);
-  };
-
-  const value = {
-    user,
-    token,
-    loading,
-    error,
-    isAuthenticated,
-    login,
-    register,
-    logout,
-    clearError,
-  };
+  const value = { user, loading, login, register, logout };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-};
+}

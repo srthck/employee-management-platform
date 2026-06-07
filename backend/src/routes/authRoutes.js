@@ -5,6 +5,7 @@ import {
   getCurrentUser,
 } from '../controllers/authController.js';
 import authMiddleware from '../middleware/authMiddleware.js';
+import { authRateLimiter } from '../middleware/rateLimiter.js';
 import {
   validateRegister,
   validateLogin,
@@ -72,6 +73,7 @@ router.post(
  */
 router.post(
   '/login',
+  authRateLimiter,
   validateLogin,
   handleValidationErrors,
   login

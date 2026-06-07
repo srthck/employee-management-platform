@@ -21,8 +21,14 @@ const requiredEnvVars = [
 
 // Validate required environment variables
 const missingVars = requiredEnvVars.filter((v) => !process.env[v]);
+const isProduction = process.env.NODE_ENV === 'production';
+
 if (missingVars.length > 0) {
-  console.warn(`[CONFIG] Missing environment variables: ${missingVars.join(', ')}`);
+  const message = `[CONFIG] Missing environment variables: ${missingVars.join(', ')}`;
+  if (isProduction) {
+    throw new Error(`${message}. Copy .env.example to .env and configure values.`);
+  }
+  console.warn(message);
   console.warn('[CONFIG] Please copy .env.example to .env and fill in the values');
 }
 
@@ -37,8 +43,10 @@ const config = {
   mongoUri: process.env.MONGO_URI,
 
   // Authentication
-  jwtSecret: process.env.JWT_SECRET || 'dev-secret-key-change-in-production',
-  jwtExpire: process.env.JWT_EXPIRE || '7d',
+  jwtSecret:
+    process.env.JWT_SECRET ||
+    (isProduction ? undefined : 'dev-secret-key-change-in-production'),
+  jwtExpire: process.env.JWT_EXPIRE || '1d',
 
   // CORS
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',

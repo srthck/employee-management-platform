@@ -4,6 +4,7 @@ import 'express-async-errors';
 import config from './config/environment.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import authRoutes from './routes/authRoutes.js';
+import employeeRoutes from './routes/employeeRoutes.js';
 
 /**
  * Express Application Setup
@@ -44,8 +45,8 @@ app.get('/api/health', (req, res) => {
 // Authentication routes
 app.use('/api/auth', authRoutes);
 
-// API routes (placeholder for future routes)
-// app.use('/api/employees', employeeRoutes);
+// Employee routes
+app.use('/api/employees', employeeRoutes);
 
 // 404 handler
 app.use((req, res) => {

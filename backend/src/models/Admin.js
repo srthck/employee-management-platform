@@ -36,7 +36,7 @@ const adminSchema = new mongoose.Schema(
     password: {
       type: String,
       required: [true, 'Password is required'],
-      minlength: [6, 'Password must be at least 6 characters'],
+      minlength: [8, 'Password must be at least 8 characters'],
       select: false, // Don't return password by default
     },
     role: {
@@ -99,8 +99,6 @@ adminSchema.methods.toJSON = function () {
   return obj;
 };
 
-// Create indexes for performance
-adminSchema.index({ email: 1 });
 adminSchema.index({ createdAt: -1 });
 
 export default mongoose.model('Admin', adminSchema);
