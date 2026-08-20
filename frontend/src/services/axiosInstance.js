@@ -8,8 +8,8 @@ import axios from 'axios';
  * Response interceptor handles global 401 (token expired / invalid).
  *
  * Portfolio implementation:
- * Token is stored in localStorage for simplicity.
- * Production systems should prefer HttpOnly Secure Cookies.
+ * The backend currently accepts bearer tokens but does not issue HttpOnly
+ * cookies. Keep the token in memory until the backend cookie contract exists.
  */
 
 const axiosInstance = axios.create({
@@ -20,13 +20,17 @@ const axiosInstance = axios.create({
   },
 });
 
+let authToken = null;
+
+export const setAuthToken = (token) => { authToken = token || null; };
+export const clearAuthToken = () => { authToken = null; };
+
 // ─── Request Interceptor ────────────────────────────────────────────────────
 // Attach JWT token to every outgoing request if present
 axiosInstance.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    if (authToken) {
+      config.headers.Authorization = `Bearer ${authToken}`;
     }
     return config;
   },
@@ -39,8 +43,7 @@ axiosInstance.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Token is invalid or expired – clear storage and redirect to login
-      localStorage.removeItem('token');
+      clearAuthToken();
       // Avoid circular imports: use window.location for hard redirect
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';

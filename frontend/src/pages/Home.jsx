@@ -44,7 +44,7 @@ export default function Home() {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
               <span className="text-white text-xs font-bold">EMS</span>
             </div>
-            <span className="text-white font-semibold">Employee Management System</span>
+            <span className="text-white font-semibold">PAYGUARD</span>
           </div>
           <div className="flex items-center gap-3">
             {user ? (
@@ -94,13 +94,13 @@ export default function Home() {
         {/* Hero */}
         <div className="text-center mb-16">
           <h1 className="text-5xl font-bold text-white mb-4">
-            Employee Management
+            Payroll operations
             <span className="block bg-gradient-to-r from-violet-400 to-indigo-400 bg-clip-text text-transparent">
               Made Simple
             </span>
           </h1>
           <p className="text-lg text-slate-400 max-w-2xl mx-auto">
-            A secure, enterprise-grade platform for administrators to manage employee records with full CRUD operations.
+              Transparent payroll, versioned compliance, and accounting-grade integrity for Indian MSMEs.
           </p>
           <div className="flex items-center justify-center gap-4 mt-8">
             {user ? (

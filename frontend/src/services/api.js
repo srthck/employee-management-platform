@@ -8,7 +8,7 @@ import axios from 'axios';
  * - Request/response interceptors
  * - Error handling
  * - Base URL management
- * - Token injection (for authentication, implemented later)
+ * - Public health endpoint client
  */
 
 const apiClient = axios.create({
@@ -18,20 +18,6 @@ const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 });
-
-// Request interceptor (add JWT token to all requests)
-apiClient.interceptors.request.use(
-  (config) => {
-    const token = localStorage.getItem('token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
 
 const AUTH_PUBLIC_PATHS = ['/auth/login', '/auth/register'];
 
@@ -47,8 +33,6 @@ apiClient.interceptors.response.use(
     );
 
     if (status === 401 && !isAuthEndpoint) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('authUser');
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
       }

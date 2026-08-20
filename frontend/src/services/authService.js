@@ -36,7 +36,7 @@ export const login = async ({ email, password }) => {
 };
 
 /**
- * Fetch the current authenticated user (requires valid token in localStorage).
+ * Fetch the current authenticated user (requires the in-memory bearer token).
  * @returns {{ user }}
  */
 export const getCurrentUser = async () => {

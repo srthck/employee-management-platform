@@ -2,37 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Base styles */
+:root {
+  font-family: "DM Sans", "Segoe UI", sans-serif;
+  color: #182230;
+  background: #f4f7f9;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
 body {
-  @apply bg-neutral-50 text-neutral-900;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  margin: 0;
+  min-width: 320px;
+  background: #f4f7f9;
+  color: #182230;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Component classes */
-.btn {
-  @apply px-4 py-2 rounded-lg font-medium transition-colors duration-200;
-}
+button, a, input, select { font: inherit; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #55b9c6; outline-offset: 2px; }
+.pg-scrollbar::-webkit-scrollbar { height: 8px; width: 8px; }
+.pg-scrollbar::-webkit-scrollbar-thumb { background: #b8c7cd; border-radius: 8px; }
 
-.btn-primary {
-  @apply btn bg-primary-600 text-white hover:bg-primary-700;
-}
-
-.btn-secondary {
-  @apply btn bg-neutral-200 text-neutral-900 hover:bg-neutral-300;
-}
-
-.card {
-  @apply bg-white rounded-lg shadow-md p-6 border border-neutral-200;
-}
-
-.input {
-  @apply w-full px-3 py-2 border border-neutral-300 rounded-lg focus:outline-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500;
-}
-
-.label {
-  @apply block text-sm font-medium text-neutral-700 mb-2;
+@layer components {
+  .eyebrow { @apply text-[10px] font-bold uppercase tracking-[0.18em] text-[#6d8188]; }
+  .page-title { @apply mt-2 text-3xl font-semibold tracking-tight text-[#182230] sm:text-4xl; }
+  .page-subtitle { @apply mt-2 text-sm text-[#687a81]; }
+  .section-title { @apply mt-1 text-xl font-semibold tracking-tight text-[#182230]; }
+  .panel { @apply rounded-md border border-[#dce5e8] bg-white p-5 shadow-[0_4px_18px_rgba(20,45,55,0.035)] sm:p-6; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-md border border-[#cbd9dd] bg-white px-4 py-2.5 text-sm font-semibold text-[#31464d] transition hover:border-[#8daeb5] hover:bg-[#f6fafb] disabled:cursor-not-allowed disabled:opacity-50; }
+  .btn-primary { @apply border-[#167985] bg-[#167985] text-white hover:border-[#125f69] hover:bg-[#125f69]; }
+  .btn-danger { @apply border-[#e5c4c1] text-[#a33d35] hover:border-[#d99a94] hover:bg-[#fff7f6]; }
+  .btn-small { @apply px-2.5 py-1.5 text-xs; }
+  .field { @apply w-full rounded-md border border-[#cbd9dd] bg-white px-3 py-2.5 text-sm text-[#182230] placeholder-[#9aabb0] focus:border-[#55aeb9] focus:ring-2 focus:ring-[#55b9c6]/20; }
+  .label { @apply text-xs font-semibold uppercase tracking-[0.1em] text-[#6d8188]; }
+  .status { @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em]; }
+  .status-neutral { @apply border-[#d6e0e3] bg-[#f5f8f9] text-[#60747b]; }
+  .status-info { @apply border-[#bfdde2] bg-[#eff9fa] text-[#187a88]; }
+  .status-warn { @apply border-[#efd8a4] bg-[#fff8e8] text-[#9a6700]; }
+  .status-success { @apply border-[#bfe2d5] bg-[#effaf5] text-[#26765f]; }
+  .status-danger { @apply border-[#edc4c0] bg-[#fff4f3] text-[#a33d35]; }
+  .health { @apply inline-flex items-center gap-1.5 text-xs font-semibold; }
+  .health-good { @apply text-[#26765f]; }
+  .health-warn { @apply text-[#9a6700]; }
+  .health-muted { @apply text-[#819198]; }
+  .data-table { @apply min-w-[800px] w-full text-left text-sm; }
+  .data-table th { @apply border-b border-[#dce5e8] px-4 py-3 text-[10px] font-bold uppercase tracking-[0.12em] text-[#6d8188]; }
+  .data-table td { @apply border-b border-[#edf1f2] px-4 py-4 align-top text-[#31464d]; }
+  .data-table tbody tr { @apply transition hover:bg-[#f7fafb]; }
+  .alert { @apply rounded-md border px-4 py-3 text-sm; }
+  .alert-danger { @apply border-[#edc4c0] bg-[#fff4f3] text-[#a33d35]; }
+  .alert-warn { @apply border-[#efd8a4] bg-[#fff8e8] text-[#845b00]; }
+  .alert-success { @apply border-[#bfe2d5] bg-[#effaf5] text-[#26765f]; }
+  .empty-state { @apply py-14 text-center text-[#687a81]; }
+  .dialog-backdrop { @apply fixed inset-0 z-50 flex items-center justify-center bg-[#071116]/50 p-4; }
+  .dialog { @apply w-full max-w-lg rounded-md border border-[#dce5e8] bg-white p-6 shadow-2xl; }
+  .icon-button { @apply rounded-md px-2 py-1 text-xl text-[#6d8188] hover:bg-[#f0f5f6] hover:text-[#182230]; }
 }

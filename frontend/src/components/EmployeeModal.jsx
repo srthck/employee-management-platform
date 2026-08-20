@@ -118,6 +118,8 @@ export default function EmployeeModal({ employee, onSuccess, onClose }) {
       notes: form.notes.trim() || undefined,
     };
 
+    if (isEdit) delete payload.salary;
+
     try {
       if (isEdit) {
         await employeeService.updateEmployee(employee._id, payload);
@@ -250,7 +252,7 @@ export default function EmployeeModal({ employee, onSuccess, onClose }) {
 
               <div>
                 <label htmlFor="emp-salary" className="block text-xs font-medium text-slate-400 mb-1">
-                  Annual Salary (USD) <span className="text-red-400">*</span>
+                  {isEdit ? 'Current salary (read-only)' : 'Annual Salary (USD)'} <span className="text-red-400">*</span>
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>
@@ -262,6 +264,8 @@ export default function EmployeeModal({ employee, onSuccess, onClose }) {
                     step="1000"
                     value={form.salary}
                     onChange={handleChange}
+                    readOnly={isEdit}
+                    aria-readonly={isEdit}
                     placeholder="60000"
                     className={`w-full pl-7 pr-3 py-2 rounded-lg bg-slate-800 border text-white text-sm placeholder-slate-600 outline-none transition-all
                       focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500

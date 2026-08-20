@@ -4,7 +4,16 @@ import ProtectedRoute from './components/ProtectedRoute';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
-import Dashboard from './pages/Dashboard';
+import Dashboard from './pages/Overview';
+import PayGuardLayout from './components/PayGuardLayout';
+import Employees from './pages/Employees';
+import EmployeeProfile from './pages/EmployeeProfile';
+import PayrollRuns from './pages/PayrollRuns';
+import PayrollRunDetail from './pages/PayrollRunDetail';
+import Snapshot from './pages/Snapshot';
+import Compliance from './pages/Compliance';
+import Audit from './pages/Audit';
+import Settings from './pages/Settings';
 import './index.css';
 
 /**
@@ -17,7 +26,7 @@ import './index.css';
  *     /register  → Register page
  *
  *   Protected (requires valid JWT):
- *     /dashboard → Full employee management dashboard
+ *     /dashboard → PayGuard payroll overview
  *
  *   Catch-all   → redirect to /
  */
@@ -33,7 +42,17 @@ function AppRoutes() {
 
       {/* Protected routes — ProtectedRoute renders <Outlet /> */}
       <Route element={<ProtectedRoute />}>
-        <Route path="/dashboard" element={<Dashboard />} />
+        <Route element={<PayGuardLayout />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/employees" element={<Employees />} />
+          <Route path="/employees/:id" element={<EmployeeProfile />} />
+          <Route path="/payroll" element={<PayrollRuns />} />
+          <Route path="/payroll/:id" element={<PayrollRunDetail />} />
+          <Route path="/snapshots/:id" element={<Snapshot />} />
+          <Route path="/compliance" element={<Compliance />} />
+          <Route path="/audit" element={<Audit />} />
+          <Route path="/settings" element={<Settings />} />
+        </Route>
       </Route>
 
       {/* Catch-all: redirect to home */}

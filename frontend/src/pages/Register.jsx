@@ -147,7 +147,7 @@ export default function Register() {
               <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
                 <span className="text-white text-xs font-bold">EMS</span>
               </div>
-              <span className="text-slate-400 text-sm font-medium">Employee Management System</span>
+              <span className="text-slate-400 text-sm font-medium">PAYGUARD · Payroll operations</span>
             </div>
             <h1 className="text-2xl font-bold text-white">Create your account</h1>
             <p className="text-slate-400 text-sm mt-1">Set up your admin credentials to get started</p>
