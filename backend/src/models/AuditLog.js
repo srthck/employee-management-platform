@@ -20,6 +20,12 @@ import mongoose from 'mongoose';
 
 const auditLogSchema = new mongoose.Schema(
   {
+    sequenceNumber: {
+      type: Number,
+      required: true,
+      unique: true,
+      index: true,
+    },
     // ─── What happened ────────────────────────────────────────────────────
     action: {
       type: String,
@@ -80,6 +86,16 @@ const auditLogSchema = new mongoose.Schema(
     ipAddress: {
       type: String,
       trim: true,
+    },
+
+    previousHash: {
+      type: String,
+      required: true,
+    },
+    hash: {
+      type: String,
+      required: true,
+      index: true,
     },
   },
   {

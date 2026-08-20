@@ -1,7 +1,7 @@
 import express from 'express';
 import { param, query, validationResult } from 'express-validator';
 import authMiddleware, { requireRole } from '../middleware/authMiddleware.js';
-import { listAuditLogs, getEntityAuditHistory } from '../controllers/auditController.js';
+import { listAuditLogs, getEntityAuditHistory, verifyAuditChain } from '../controllers/auditController.js';
 
 const handleValidation = (req, res, next) => {
   const errors = validationResult(req);
@@ -13,4 +13,5 @@ const router = express.Router();
 router.use(authMiddleware, requireRole('admin', 'manager'));
 router.get('/logs', ...pagination, query('entityType').optional().isString(), query('action').optional().isString(), handleValidation, listAuditLogs);
 router.get('/logs/entity/:entityType/:entityId', [...pagination, param('entityType').isString(), param('entityId').isMongoId(), handleValidation], getEntityAuditHistory);
+router.get('/verify', verifyAuditChain);
 export default router;

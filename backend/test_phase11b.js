@@ -26,7 +26,18 @@ test('compliance and audit APIs are read-only', () => {
   assert.doesNotMatch(compliance, /router\.(post|put|patch|delete)/);
   assert.match(audit, /listAuditLogs/);
   assert.match(audit, /getEntityAuditHistory/);
+  assert.match(audit, /verifyAuditChain/);
+  assert.match(audit, /router\.get\('\/verify'/);
   assert.doesNotMatch(audit, /router\.(post|put|patch|delete)/);
+});
+
+test('audit service contains deterministic SHA-256 chain verification', () => {
+  const service = read('./src/services/auditService.js');
+  assert.match(service, /createHash\('sha256'\)/);
+  assert.match(service, /GENESIS_HASH/);
+  assert.match(service, /sequenceNumber/);
+  assert.match(service, /previousHash/);
+  assert.match(service, /verifyAuditChain/);
 });
 
 test('authentication uses cookie flags and does not return token fields', () => {

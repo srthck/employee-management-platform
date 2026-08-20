@@ -9,3 +9,8 @@ export const getEntityAuditHistory = async (req, res) => {
   const result = await auditService.getEntityHistoryPage(req.params.entityType, req.params.entityId, req.query);
   return res.status(200).json({ success: true, data: result });
 };
+
+export const verifyAuditChain = async (req, res) => {
+  const result = await auditService.verifyAuditChain();
+  return res.status(result.valid ? 200 : 409).json({ success: result.valid, data: result });
+};

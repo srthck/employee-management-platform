@@ -1,6 +1,7 @@
 import app from './src/app.js';
 import connectDatabase from './src/config/database.js';
 import config from './src/config/environment.js';
+import auditService from './src/services/auditService.js';
 
 /**
  * Server Entry Point
@@ -19,6 +20,8 @@ const startServer = async () => {
     try {
       await connectDatabase();
       console.log('[STARTUP] MongoDB connection successful');
+      const migratedAuditRecords = await auditService.backfillLegacyChain();
+      if (migratedAuditRecords) console.log(`[STARTUP] Backfilled ${migratedAuditRecords} legacy audit record(s) into the SHA-256 chain`);
     } catch (dbError) {
       console.warn(
         `[STARTUP] MongoDB connection failed: ${dbError.message}`
