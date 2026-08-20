@@ -252,10 +252,9 @@ export default function EmployeeModal({ employee, onSuccess, onClose }) {
 
               <div>
                 <label htmlFor="emp-salary" className="block text-xs font-medium text-slate-400 mb-1">
-                  {isEdit ? 'Current salary (read-only)' : 'Annual Salary (USD)'} <span className="text-red-400">*</span>
+                  {isEdit ? 'Legacy salary field (read-only)' : 'Legacy salary field (backend unit)'} <span className="text-red-400">*</span>
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">$</span>
                   <input
                     id="emp-salary"
                     name="salary"

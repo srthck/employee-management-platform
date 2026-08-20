@@ -6,8 +6,6 @@ const links = [
   { to: '/dashboard', label: 'Overview', icon: '▦' },
   { to: '/employees', label: 'Employees', icon: '♙' },
   { to: '/payroll', label: 'Payroll runs', icon: '₹' },
-  { to: '/compliance', label: 'Compliance', icon: '✓' },
-  { to: '/audit', label: 'Audit trail', icon: '⌁' },
 ];
 
 export default function PayGuardLayout() {
