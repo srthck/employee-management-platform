@@ -1,4 +1,5 @@
 import AuditLog from '../models/AuditLog.js';
+import mongoose from 'mongoose';
 
 /**
  * AuditService — Phase 6 compatible audit event emitter.
@@ -85,6 +86,25 @@ const auditService = {
       .sort({ createdAt: -1 })
       .limit(limit)
       .lean();
+  },
+
+  async list({ entityType, action, limit = 50, skip = 0 } = {}) {
+    const filter = {};
+    if (entityType) filter.entityType = entityType.toUpperCase();
+    if (action) filter.action = action.toUpperCase();
+    const [logs, total] = await Promise.all([
+      AuditLog.find(filter).sort({ createdAt: -1 }).skip(Number(skip)).limit(Number(limit)).lean(),
+      AuditLog.countDocuments(filter),
+    ]);
+    return { logs, total, limit: Number(limit), skip: Number(skip) };
+  },
+
+  async getEntityHistoryPage(entityType, entityId, opts = {}) {
+    if (!mongoose.isValidObjectId(entityId)) {
+      throw Object.assign(new Error('Entity history not found.'), { statusCode: 404 });
+    }
+    const logs = await this.getEntityHistory(entityType, entityId, opts);
+    return { logs, total: logs.length };
   },
 };
 

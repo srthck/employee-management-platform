@@ -238,6 +238,15 @@ export const createEmployee = async (req, res) => {
 export const updateEmployee = async (req, res) => {
   const { id } = req.params;
 
+  const protectedFields = ['employeeCode', 'isDeleted', 'deletedAt', 'deletedBy', 'createdBy', 'salary', 'role', 'permissions'];
+  const attemptedProtectedField = protectedFields.find((field) => Object.prototype.hasOwnProperty.call(req.body, field));
+  if (attemptedProtectedField) {
+    return res.status(422).json({
+      success: false,
+      message: `${attemptedProtectedField} cannot be changed through employee profile updates.`,
+    });
+  }
+
   // If email is being changed, check for conflicts
   if (req.body.email) {
     const conflict = await Employee.findOne({

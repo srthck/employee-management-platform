@@ -120,8 +120,7 @@ export const validateUpdateEmployee = [
     .isLength({ max: 100 }).withMessage('Position cannot exceed 100 characters'),
 
   body('salary')
-    .optional()
-    .isFloat({ min: 0, max: 10000000 }).withMessage('Salary must be a positive number'),
+    .not().exists().withMessage('Salary changes must use the salary version endpoint.'),
 
   body('hireDate')
     .optional()

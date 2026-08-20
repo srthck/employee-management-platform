@@ -5,6 +5,9 @@ import config from './config/environment.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import authRoutes from './routes/authRoutes.js';
 import employeeRoutes from './routes/employeeRoutes.js';
+import salaryRoutes from './routes/salaryRoutes.js';
+import complianceRuleRoutes from './routes/complianceRuleRoutes.js';
+import auditRoutes from './routes/auditRoutes.js';
 import payrollRunRoutes from './routes/payrollRunRoutes.js';
 import { runScopedRouter, snapshotRouter } from './routes/payrollSnapshotRoutes.js';
 
@@ -28,6 +31,8 @@ const allowedOrigins = new Set([
   config.frontendUrl,
   'http://localhost:5173',
   'http://127.0.0.1:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5174',
 ]);
 
 app.use(
@@ -61,8 +66,15 @@ app.get('/api/health', (req, res) => {
 // Authentication routes
 app.use('/api/auth', authRoutes);
 
+// Versioned salary APIs must be mounted before generic employee :id routes.
+app.use('/api/employees', salaryRoutes);
+
 // Employee routes
 app.use('/api/employees', employeeRoutes);
+
+// Read-only statutory rule and audit history APIs
+app.use('/api/compliance/rules', complianceRuleRoutes);
+app.use('/api/audit', auditRoutes);
 
 // Payroll Run routes (Phase 8)
 app.use('/api/payroll-runs', payrollRunRoutes);
