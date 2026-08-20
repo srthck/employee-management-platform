@@ -158,8 +158,8 @@ salaryStructureSchema.index({ employeeId: 1, effectiveTo: 1 });
 // Find current (open-ended) salary for an employee
 salaryStructureSchema.index({ employeeId: 1, effectiveTo: 1, effectiveFrom: -1 });
 
-// ─── Pre-save: compute grossMonthly from components ───────────────────────────
-salaryStructureSchema.pre('save', function (next) {
+// ─── Pre-validation: compute grossMonthly from components ─────────────────────
+salaryStructureSchema.pre('validate', function (next) {
   if (this.components) {
     this.grossMonthly =
       (this.components.basic || 0) +

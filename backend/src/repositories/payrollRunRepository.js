@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import PayrollRun from '../models/PayrollRun.js';
+import PayrollRun, { canTransition } from '../models/PayrollRun.js';
 import PayrollStagingResult from '../models/PayrollStagingResult.js';
 
 /**
@@ -47,6 +47,12 @@ const payrollRunRepository = {
     transitionEntry  = {},
     session = null
   ) {
+    // Defense in depth: callers cannot use this low-level operation to bypass
+    // the PayrollRun state machine (for example FINALIZED → PROCESSING).
+    if (!canTransition(fromStatus, toStatus)) {
+      return null;
+    }
+
     const update = {
       $set: { status: toStatus, lastActivityAt: new Date(), ...additionalFields },
       $push: {

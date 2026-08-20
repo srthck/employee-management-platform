@@ -453,6 +453,15 @@ const payrollSnapshotService = {
       await session.commitTransaction();
     } catch (err) {
       await session.abortTransaction();
+      if (
+        err?.code === 112 ||
+        err?.errorLabels?.has?.('TransientTransactionError')
+      ) {
+        throw Object.assign(
+          new Error('Finalization conflict: another finalization attempt won. Retry by reading the current run state.'),
+          { statusCode: 409, cause: err }
+        );
+      }
       throw err;
     } finally {
       session.endSession();
