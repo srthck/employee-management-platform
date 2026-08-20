@@ -105,8 +105,12 @@ describe('Phase 8 — State Machine', () => {
     assert.equal(canTransition('FINALIZED', 'PROCESSING'), false);
   });
 
-  test('PROCESSING → FINALIZED is allowed', () => {
-    assert.equal(canTransition('PROCESSING', 'FINALIZED'), true);
+  test('PROCESSING → READY_FOR_FINALIZATION is allowed (corrected — direct FINALIZED forbidden)', () => {
+    assert.equal(canTransition('PROCESSING', 'READY_FOR_FINALIZATION'), true);
+  });
+
+  test('PROCESSING → FINALIZED is REJECTED (must pass through READY_FOR_FINALIZATION)', () => {
+    assert.equal(canTransition('PROCESSING', 'FINALIZED'), false);
   });
 
   test('PROCESSING → FAILED is allowed', () => {

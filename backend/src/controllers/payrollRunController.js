@@ -12,13 +12,14 @@
  * NEVER read from req.body. They come only from the service/state machine.
  *
  * ROUTES (registered in payrollRunRoutes.js):
- *   POST   /api/payroll-runs                    – Create DRAFT run
- *   GET    /api/payroll-runs                    – List runs for company
- *   GET    /api/payroll-runs/:id                – Get single run
- *   POST   /api/payroll-runs/:id/preflight      – Run preflight checks
- *   POST   /api/payroll-runs/:id/process        – Process (DRAFT/FAILED → PROCESSING → FINALIZED)
- *   POST   /api/payroll-runs/:id/finalize       – Explicit PROCESSING → FINALIZED
- *   POST   /api/payroll-runs/:id/cancel         – FAILED → CANCELLED
+ *   POST   /api/payroll-runs                      – Create DRAFT run
+ *   GET    /api/payroll-runs                      – List runs for company
+ *   GET    /api/payroll-runs/:id                  – Get single run
+ *   POST   /api/payroll-runs/:id/preflight        – Run preflight checks
+ *   POST   /api/payroll-runs/:id/process          – Process (DRAFT/FAILED → PROCESSING → READY_FOR_FINALIZATION)
+ *   POST   /api/payroll-runs/:id/finalize         – READY_FOR_FINALIZATION → FINALIZED (Phase 9 gate)
+ *   POST   /api/payroll-runs/:id/cancel           – FAILED → CANCELLED
+ *   POST   /api/payroll-runs/:id/recover          – Recover stuck PROCESSING run → FAILED
  */
 
 import payrollRunService from '../services/payrollRunService.js';
@@ -222,6 +223,32 @@ export const cancelPayrollRun = async (req, res) => {
   return res.status(200).json({
     success: true,
     message: 'Payroll run cancelled.',
+    data: { run },
+  });
+};
+
+// ─── POST /api/payroll-runs/:id/recover ────────────────────────────────────────
+/**
+ * Recover a stuck PROCESSING run → FAILED so it can be retried.
+ *
+ * Only succeeds if lastActivityAt is older than the stuckThreshold (default 30 min).
+ * Optional body: { stuckThresholdMs }
+ */
+export const recoverStuckRun = async (req, res) => {
+  const actor            = actorFromRequest(req);
+  const companyId        = companyIdFromRequest(req);
+  const { stuckThresholdMs } = req.body || {};
+
+  const run = await payrollRunService.recoverStuckRun(
+    req.params.id,
+    companyId,
+    actor,
+    stuckThresholdMs ? Number(stuckThresholdMs) : undefined
+  );
+
+  return res.status(200).json({
+    success: true,
+    message: 'Stuck payroll run recovered to FAILED state. You may now retry processing.',
     data: { run },
   });
 };

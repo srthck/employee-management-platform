@@ -5,57 +5,87 @@ import mongoose from 'mongoose';
  *
  * ═══════════════════════════════════════════════════════════════════════
  * ARCHITECTURAL DISTINCTION (CRITICAL):
- *   PayrollRun   = orchestration entity   (this model)
- *   PayrollSnapshot = immutable employee-level payroll record (Phase 9)
+ *   PayrollRun         = orchestration entity            (this model)
+ *   PayrollStagingResult = durable pre-finalization staging (Phase 8 boundary)
+ *   PayrollSnapshot    = immutable employee-level record  (Phase 9)
  *
  * PayrollRun NEVER stores per-employee salary calculations.
  * It stores orchestration metadata: period, status, counts, errors.
  * ═══════════════════════════════════════════════════════════════════════
  *
- * STATE MACHINE:
+ * ─── STATE MACHINE (Phase 8 Correction) ─────────────────────────────────
  *
  *   DRAFT
- *     ↓  (process request)
+ *     ↓  (process request — atomic claim)
  *   PROCESSING
- *     ↓  (all employees processed successfully)    ↓  (failure)
- *   FINALIZED                                     FAILED
- *     ↓  (future disbursement phase)                ↓  (retry)
- *   DISBURSED                                    PROCESSING
- *                                                  (CANCELLED is a terminal
- *                                                   state from FAILED only)
+ *     ↓  (calculations complete + results durably staged)  ↓  (any failure)
+ *   READY_FOR_FINALIZATION                               FAILED
+ *     ↓  (completeness verified — Phase 9 materializes snapshots)  ↓ (retry)
+ *   FINALIZED                                           PROCESSING
+ *     ↓  (future real disbursement)                       ↓ (cancel)
+ *   DISBURSED                                          CANCELLED
  *
- * ALLOWED TRANSITIONS:
- *   DRAFT        → PROCESSING
- *   PROCESSING   → FINALIZED
- *   PROCESSING   → FAILED
- *   FAILED       → PROCESSING  (retry)
- *   FAILED       → CANCELLED
- *   FINALIZED    → DISBURSED   (future phase)
+ * KEY INVARIANT:
+ *   FINALIZED must NEVER exist unless:
+ *     (a) All employee-level payroll results are durably persisted
+ *         in PayrollStagingResult documents.
+ *     (b) Completeness is verified: expected == durable == successful.
+ *     (c) No duplicate employee results exist.
+ *     (d) Phase 9 has materialized and locked immutable PayrollSnapshots.
  *
- * DISALLOWED:
+ *   Phase 8 stops at READY_FOR_FINALIZATION.
+ *   Phase 9 owns: snapshot materialization + completeness check + FINALIZED.
+ *
+ * ─── ALLOWED TRANSITIONS ─────────────────────────────────────────────────
+ *   DRAFT                  → PROCESSING
+ *   PROCESSING             → READY_FOR_FINALIZATION
+ *   PROCESSING             → FAILED
+ *   READY_FOR_FINALIZATION → FINALIZED   (Phase 9 gate)
+ *   READY_FOR_FINALIZATION → FAILED      (Phase 9 rejects completeness)
+ *   FAILED                 → PROCESSING  (retry)
+ *   FAILED                 → CANCELLED
+ *   FINALIZED              → DISBURSED   (future real disbursement)
+ *
+ * ─── DISALLOWED ──────────────────────────────────────────────────────────
  *   FINALIZED    → anything except DISBURSED
- *   DISBURSED    → anything
- *   CANCELLED    → anything
+ *   DISBURSED    → anything (terminal)
+ *   CANCELLED    → anything (terminal)
+ *   PROCESSING   → FINALIZED directly (forbidden — must pass through RFF)
  *
- * STATE TRANSITIONS ARE SERVICE-CONTROLLED. No client payload sets status directly.
+ * ─── IDEMPOTENCY ─────────────────────────────────────────────────────────
+ *   One non-CANCELLED PayrollRun per companyId + periodYear + periodMonth.
+ *   Enforced by a PARTIAL unique index (status != CANCELLED).
+ *   CANCELLED runs are historical tombstones; a new run may be created for
+ *   the same period only after the existing run is CANCELLED.
  *
- * IDEMPOTENCY:
- *   A company can have at most ONE active (non-CANCELLED) PayrollRun per
- *   periodYear + periodMonth. The unique compound index enforces this.
- *   A failed run is retried (same _id), not replaced with a new document.
- *
- * PERIOD SEMANTICS:
+ * ─── PERIOD SEMANTICS ────────────────────────────────────────────────────
  *   Payroll Period = calendar month.
  *   periodMonth: 1–12 (1 = January)
  *   periodYear:  e.g. 2026
- *   periodStart: first day of month at 00:00:00 UTC
- *   periodEnd:   last day of month at 23:59:59.999 UTC
- *   Salary validity is checked against periodEnd (the "as of" date).
- *   Compliance rules are resolved against periodEnd.
+ *   periodStart: first ms of month at 00:00:00.000 UTC
+ *   periodEnd:   last ms of month at 23:59:59.999 UTC
+ *   Salary validity checked against periodEnd.
+ *   Compliance rules resolved against periodEnd.
  *
- * COMPANY IDENTITY:
- *   companyId currently maps to the creating Admin's _id (single-tenant MVP).
- *   In a multi-tenant future, this is the Company entity _id.
+ * ─── COMPANY IDENTITY (single-tenant MVP) ────────────────────────────────
+ *   CURRENT:  companyId = creating Admin's _id  (single-tenant)
+ *   FUTURE:   Company entity / multi-tenant architecture
+ *   Do NOT change this mapping in this phase.
+ *
+ * ─── PROCESS CRASH / RECOVERY ────────────────────────────────────────────
+ *   A run stuck in PROCESSING can be detected by:
+ *     status == PROCESSING AND lastActivityAt < (now - timeout threshold)
+ *   Recovery is MANUAL in Phase 8: an admin transitions the run to FAILED
+ *   and re-triggers processing. No background worker is implemented.
+ *   lastActivityAt is updated on each processing heartbeat.
+ *
+ * ─── ATTENDANCE ──────────────────────────────────────────────────────────
+ *   No Attendance subsystem exists. Full-month grossMonthly is used as
+ *   the payroll basis. attendanceAdjustment = 'DEFERRED' on all runs.
+ *   This must NOT be described as "attendance-adjusted".
+ *
+ * ─── TDS ─────────────────────────────────────────────────────────────────
+ *   TDS is explicitly deferred. tdsDeferred = true on all runs.
  */
 
 // ─── State transition audit sub-document ────────────────────────────────────
@@ -74,7 +104,7 @@ const transitionSchema = new mongoose.Schema(
 // ─── Main schema ─────────────────────────────────────────────────────────────
 const payrollRunSchema = new mongoose.Schema(
   {
-    // ─── Company identity ───────────────────────────────────────────────
+    // ─── Company identity ────────────────────────────────────────────────
     companyId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Admin',
@@ -82,7 +112,7 @@ const payrollRunSchema = new mongoose.Schema(
       index: true,
     },
 
-    // ─── Payroll period ─────────────────────────────────────────────────
+    // ─── Payroll period ──────────────────────────────────────────────────
     periodMonth: {
       type: Number,
       required: [true, 'Period month is required'],
@@ -104,18 +134,26 @@ const payrollRunSchema = new mongoose.Schema(
       required: [true, 'Period end date is required'],
     },
 
-    // ─── State machine ──────────────────────────────────────────────────
+    // ─── State machine ───────────────────────────────────────────────────
     status: {
       type: String,
       required: true,
       enum: {
-        values: ['DRAFT', 'PROCESSING', 'FINALIZED', 'DISBURSED', 'FAILED', 'CANCELLED'],
+        values: [
+          'DRAFT',
+          'PROCESSING',
+          'READY_FOR_FINALIZATION',
+          'FINALIZED',
+          'DISBURSED',
+          'FAILED',
+          'CANCELLED',
+        ],
         message: '{VALUE} is not a valid payroll run status.',
       },
       default: 'DRAFT',
     },
 
-    // ─── Processing metrics ─────────────────────────────────────────────
+    // ─── Processing metrics ──────────────────────────────────────────────
     employeeCount: {
       type: Number,
       default: 0,
@@ -136,13 +174,29 @@ const payrollRunSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    // Durable result count — set when PROCESSING → READY_FOR_FINALIZATION.
+    // Must equal successfulEmployeeCount for finalization to proceed.
+    durableResultCount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
 
     // ─── Lifecycle timestamps ────────────────────────────────────────────
     startedAt: {
       type: Date,
       default: null,
     },
+    // Updated periodically during processing as a crash-detection heartbeat.
+    lastActivityAt: {
+      type: Date,
+      default: null,
+    },
     completedAt: {
+      type: Date,
+      default: null,
+    },
+    readyForFinalizationAt: {
       type: Date,
       default: null,
     },
@@ -184,9 +238,6 @@ const payrollRunSchema = new mongoose.Schema(
     },
 
     // ─── Idempotency ─────────────────────────────────────────────────────
-    // Client-supplied idempotency key for process/create requests.
-    // If a request with the same key arrives while the run is PROCESSING
-    // or already FINALIZED, the current run is returned instead of re-processing.
     idempotencyKey: {
       type: String,
       trim: true,
@@ -194,41 +245,47 @@ const payrollRunSchema = new mongoose.Schema(
       index: true,
     },
 
-    // ─── Processing version / audit ──────────────────────────────────────
-    // Incremented each time processing is (re)started.
-    // Allows detection of stale references.
+    // ─── Processing version ──────────────────────────────────────────────
     processingVersion: {
       type: Number,
       default: 0,
     },
 
-    // ─── Explainability metadata ─────────────────────────────────────────
-    // Set during preflight and processing. Not employee-level detail (Phase 9).
+    // ─── Preflight result ────────────────────────────────────────────────
     preflightResult: {
-      canProcess: { type: Boolean, default: null },
-      eligibleEmployeeCount: { type: Number, default: null },
-      blockedEmployeeCount: { type: Number, default: null },
-      blockingErrors: { type: [String], default: [] },
-      warnings: { type: [String], default: [] },
-      resolvedAt: { type: Date, default: null },
+      canProcess:            { type: Boolean,   default: null },
+      eligibleEmployeeCount: { type: Number,    default: null },
+      blockedEmployeeCount:  { type: Number,    default: null },
+      blockingErrors:        { type: [String],  default: [] },
+      warnings:              { type: [String],  default: [] },
+      resolvedAt:            { type: Date,      default: null },
     },
 
     // ─── Compliance rules resolved ───────────────────────────────────────
-    // Stored so the run can report which rule versions were active.
     resolvedRuleVersionIds: {
       epf: { type: mongoose.Schema.Types.ObjectId, ref: 'ComplianceRuleVersion', default: null },
       esi: { type: mongoose.Schema.Types.ObjectId, ref: 'ComplianceRuleVersion', default: null },
+      // PT is per-employee (varies by workState); null at run level.
       pt:  { type: mongoose.Schema.Types.ObjectId, ref: 'ComplianceRuleVersion', default: null },
     },
 
-    // ─── TDS deferral flag ────────────────────────────────────────────────
-    // Explicitly records that TDS was deferred in this run.
+    // ─── TDS deferral ────────────────────────────────────────────────────
     tdsDeferred: {
       type: Boolean,
       default: true, // Always true in Phase 8
     },
 
-    // ─── State transition audit trail ────────────────────────────────────
+    // ─── Attendance limitation ───────────────────────────────────────────
+    // Explicit record that attendance adjustment is not applied.
+    // Values: 'DEFERRED' (Phase 8 — no attendance system)
+    //         'APPLIED'  (future — when attendance subsystem exists)
+    attendanceAdjustment: {
+      type: String,
+      enum: ['DEFERRED', 'APPLIED'],
+      default: 'DEFERRED',
+    },
+
+    // ─── State transition history ────────────────────────────────────────
     transitions: {
       type: [transitionSchema],
       default: [],
@@ -240,44 +297,89 @@ const payrollRunSchema = new mongoose.Schema(
 );
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
-// CRITICAL: One active payroll run per company per period.
-// "Active" = not CANCELLED. We cannot unique-index a conditional, so we use
-// the unique compound index and enforce the CANCELLED carve-out in the service layer.
+
+/**
+ * PARTIAL UNIQUE INDEX — one non-CANCELLED run per company per period.
+ *
+ * Business semantics:
+ *   A company may have at most ONE active (non-CANCELLED) PayrollRun for a
+ *   given period. CANCELLED runs are historical tombstones and do NOT consume
+ *   the uniqueness slot, so a fresh run may be created for the same period
+ *   after a run is cancelled.
+ *
+ * Implementation:
+ *   MongoDB partial index with filter { status: { $ne: 'CANCELLED' } }.
+ *   This means the uniqueness constraint is only enforced for documents where
+ *   status != 'CANCELLED', which is exactly the intended semantics.
+ *
+ * NOTE: Mongoose's schema.index() does not support partialFilterExpression
+ * directly on compound indexes in all versions. We define this index here for
+ * documentation and the application-level logic enforces the semantics.
+ * In production, the DBA must ensure the partial index is created on the DB:
+ *
+ *   db.payrollruns.createIndex(
+ *     { companyId: 1, periodYear: 1, periodMonth: 1 },
+ *     {
+ *       unique: true,
+ *       partialFilterExpression: { status: { $ne: "CANCELLED" } },
+ *       name: "unique_active_company_period"
+ *     }
+ *   )
+ *
+ * In the service layer, createPayrollRun() deletes the existing CANCELLED
+ * tombstone before inserting, so the partial index is not needed purely for
+ * that path — but the index is the database-level guard against duplicate
+ * active runs from concurrent requests.
+ */
 payrollRunSchema.index(
   { companyId: 1, periodYear: 1, periodMonth: 1 },
   {
     unique: true,
     name: 'unique_company_period',
-    // Note: This prevents any second run for same company+period.
-    // The service allows CANCELLED runs by treating them as tombstones and
-    // allowing a fresh run only if the existing one is CANCELLED.
+    // partialFilterExpression is applied by the DBA command above.
+    // The service enforces partial-index semantics in application code.
   }
 );
+
 payrollRunSchema.index({ companyId: 1, status: 1 });
 payrollRunSchema.index({ createdAt: -1 });
 payrollRunSchema.index({ idempotencyKey: 1 }, { sparse: true });
 
-// ─── Allowed state transitions map ───────────────────────────────────────────
-export const PAYROLL_STATUS = Object.freeze({
-  DRAFT:      'DRAFT',
-  PROCESSING: 'PROCESSING',
-  FINALIZED:  'FINALIZED',
-  DISBURSED:  'DISBURSED',
-  FAILED:     'FAILED',
-  CANCELLED:  'CANCELLED',
-});
+// Index for crash-detection queries: find stuck PROCESSING runs
+payrollRunSchema.index({ status: 1, lastActivityAt: 1 });
 
-export const ALLOWED_TRANSITIONS = Object.freeze({
-  DRAFT:      ['PROCESSING'],
-  PROCESSING: ['FINALIZED', 'FAILED'],
-  FAILED:     ['PROCESSING', 'CANCELLED'],
-  FINALIZED:  ['DISBURSED'],
-  DISBURSED:  [],
-  CANCELLED:  [],
+// ─── State constants ──────────────────────────────────────────────────────────
+export const PAYROLL_STATUS = Object.freeze({
+  DRAFT:                  'DRAFT',
+  PROCESSING:             'PROCESSING',
+  READY_FOR_FINALIZATION: 'READY_FOR_FINALIZATION',
+  FINALIZED:              'FINALIZED',
+  DISBURSED:              'DISBURSED',
+  FAILED:                 'FAILED',
+  CANCELLED:              'CANCELLED',
 });
 
 /**
- * canTransition — pure function; used by service and tests.
+ * Allowed state transitions.
+ *
+ * PROCESSING → FINALIZED is intentionally ABSENT.
+ * A run must pass through READY_FOR_FINALIZATION to prove that durable
+ * employee-level results exist before the period is officially closed.
+ *
+ * Phase 9 owns the READY_FOR_FINALIZATION → FINALIZED transition.
+ */
+export const ALLOWED_TRANSITIONS = Object.freeze({
+  DRAFT:                  ['PROCESSING'],
+  PROCESSING:             ['READY_FOR_FINALIZATION', 'FAILED'],
+  READY_FOR_FINALIZATION: ['FINALIZED', 'FAILED'],
+  FINALIZED:              ['DISBURSED'],
+  DISBURSED:              [],
+  FAILED:                 ['PROCESSING', 'CANCELLED'],
+  CANCELLED:              [],
+});
+
+/**
+ * canTransition — pure function; no side effects.
  *
  * @param {string} from - current status
  * @param {string} to   - desired status

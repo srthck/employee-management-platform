@@ -8,6 +8,7 @@ import {
   processPayrollRun,
   finalizePayrollRun,
   cancelPayrollRun,
+  recoverStuckRun,
 } from '../controllers/payrollRunController.js';
 import {
   validateCreatePayrollRun,
@@ -21,26 +22,25 @@ import {
  *
  * All routes require valid JWT (authMiddleware).
  *
- * RBAC mapping (current Admin model has roles: 'admin' | 'manager'):
- *   admin   — full access (create, process, finalize, cancel, view)
- *   manager — view only (list, get, preflight)
- *
- * Write endpoints (create, process, finalize, cancel) require 'admin' role.
- * Read endpoints (list, get, preflight) permit both 'admin' and 'manager'.
+ * RBAC (current Admin model roles: 'admin' | 'manager'):
+ *   admin   — full access (create, process, finalize, cancel, recover, view)
+ *   manager — read only (list, get, preflight)
  *
  * ─────────────────────────────────────────────────────────────────────────
  * POST   /api/payroll-runs                  – Create DRAFT run (admin)
  * GET    /api/payroll-runs                  – List runs (admin, manager)
  * GET    /api/payroll-runs/:id              – Get single run (admin, manager)
- * POST   /api/payroll-runs/:id/preflight   – Preflight check (admin, manager)
- * POST   /api/payroll-runs/:id/process     – Process run (admin)
- * POST   /api/payroll-runs/:id/finalize    – Finalize run (admin)
- * POST   /api/payroll-runs/:id/cancel      – Cancel FAILED run (admin)
+ * POST   /api/payroll-runs/:id/preflight    – Preflight check (admin, manager)
+ * POST   /api/payroll-runs/:id/process      – DRAFT/FAILED → PROCESSING → READY_FOR_FINALIZATION (admin)
+ * POST   /api/payroll-runs/:id/finalize     – READY_FOR_FINALIZATION → FINALIZED (admin / Phase 9 gate)
+ * POST   /api/payroll-runs/:id/cancel       – FAILED → CANCELLED (admin)
+ * POST   /api/payroll-runs/:id/recover      – Recover stuck PROCESSING run → FAILED (admin)
  * ─────────────────────────────────────────────────────────────────────────
  *
  * INTENTIONALLY ABSENT:
- *   PUT /api/payroll-runs/:id              – NEVER expose. State machine owns status.
- *   PATCH /api/payroll-runs/:id/status     – NEVER expose. Use action endpoints.
+ *   PUT  /api/payroll-runs/:id           — NEVER expose. State machine owns status.
+ *   PATCH /api/payroll-runs/:id/status   — NEVER expose. Use action endpoints.
+ *   POST /api/payroll-runs/:id/disburse  — Future phase only (real bank disbursement).
  */
 
 const router = express.Router();
@@ -79,6 +79,14 @@ router.post(
   validateRunId,
   handleValidationErrors,
   cancelPayrollRun
+);
+
+router.post(
+  '/:id/recover',
+  requireRole('admin'),
+  validateRunId,
+  handleValidationErrors,
+  recoverStuckRun
 );
 
 // ─── Read routes (admin + manager) ───────────────────────────────────────────
