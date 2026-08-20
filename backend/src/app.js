@@ -22,9 +22,23 @@ import { runScopedRouter, snapshotRouter } from './routes/payrollSnapshotRoutes.
 const app = express();
 
 // Middleware: CORS
+// Browsers treat localhost and 127.0.0.1 as different origins. Support both
+// local development URLs so the Vite dev server can be opened either way.
+const allowedOrigins = new Set([
+  config.frontendUrl,
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+]);
+
 app.use(
   cors({
-    origin: config.frontendUrl,
+    origin(origin, callback) {
+      // Requests without an Origin header (health checks, CLI clients) are safe.
+      if (!origin || allowedOrigins.has(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Origin not allowed by CORS'));
+    },
     credentials: true,
     optionsSuccessStatus: 200,
   })
