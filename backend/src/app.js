@@ -5,6 +5,7 @@ import config from './config/environment.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import authRoutes from './routes/authRoutes.js';
 import employeeRoutes from './routes/employeeRoutes.js';
+import payrollRunRoutes from './routes/payrollRunRoutes.js';
 
 /**
  * Express Application Setup
@@ -47,6 +48,9 @@ app.use('/api/auth', authRoutes);
 
 // Employee routes
 app.use('/api/employees', employeeRoutes);
+
+// Payroll Run routes (Phase 8)
+app.use('/api/payroll-runs', payrollRunRoutes);
 
 // 404 handler
 app.use((req, res) => {
