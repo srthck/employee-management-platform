@@ -1,6 +1,5 @@
 import { createContext, useState, useEffect, useCallback } from 'react';
 import * as authService from '../services/authService';
-import { clearAuthToken, setAuthToken } from '../services/axiosInstance';
 
 /**
  * AuthContext
@@ -10,9 +9,9 @@ import { clearAuthToken, setAuthToken } from '../services/axiosInstance';
  * Exposes:
  *   user     – currently authenticated user (null if not logged in)
  *   loading  – true while verifying token on app mount (prevents flash redirect)
- *   login    – authenticates user, keeps the bearer token in memory
- *   register – creates account, keeps the bearer token in memory
- *   logout   – clears the in-memory token and user state
+ *   login    – authenticates user through the HttpOnly session cookie
+ *   register – authenticates user through the HttpOnly session cookie
+ *   logout   – invalidates the server-side cookie
  *
  */
 
@@ -20,17 +19,15 @@ export const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true); // true until we resolve token
+  const [loading, setLoading] = useState(true);
 
-  // ─── On Mount: Verify existing token ──────────────────────────────────────
   useEffect(() => {
-    setLoading(false);
+    authService.getCurrentUser().then((data) => setUser(data.data.user)).catch(() => setUser(null)).finally(() => setLoading(false));
   }, []);
 
   // ─── Login ─────────────────────────────────────────────────────────────────
   const login = useCallback(async ({ email, password }) => {
     const data = await authService.login({ email, password });
-    setAuthToken(data.data.token);
     setUser(data.data.user);
     return data;
   }, []);
@@ -38,15 +35,13 @@ export function AuthProvider({ children }) {
   // ─── Register ──────────────────────────────────────────────────────────────
   const register = useCallback(async ({ name, email, password, confirmPassword }) => {
     const data = await authService.register({ name, email, password, confirmPassword });
-    setAuthToken(data.data.token);
     setUser(data.data.user);
     return data;
   }, []);
 
   // ─── Logout ────────────────────────────────────────────────────────────────
-  const logout = useCallback(() => {
-    clearAuthToken();
-    setUser(null);
+  const logout = useCallback(async () => {
+    try { await authService.logout(); } finally { setUser(null); }
   }, []);
 
   const value = { user, loading, login, register, logout };

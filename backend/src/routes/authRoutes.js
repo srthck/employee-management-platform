@@ -3,6 +3,7 @@ import {
   register,
   login,
   getCurrentUser,
+  logout,
 } from '../controllers/authController.js';
 import authMiddleware from '../middleware/authMiddleware.js';
 import { authRateLimiter } from '../middleware/rateLimiter.js';
@@ -78,6 +79,8 @@ router.post(
   handleValidationErrors,
   login
 );
+
+router.post('/logout', logout);
 
 /**
  * GET /api/auth/me

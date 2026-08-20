@@ -42,6 +42,21 @@ const generateToken = (userId, email, name, role) => {
   );
 };
 
+const setAuthCookie = (res, token) => {
+  const secure = config.authCookieSecure ? '; Secure' : '';
+  res.setHeader(
+    'Set-Cookie',
+    `${config.authCookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=${config.authCookieSameSite}${secure}`
+  );
+};
+
+const clearAuthCookie = (res) => {
+  res.setHeader(
+    'Set-Cookie',
+    `${config.authCookieName}=; Path=/; HttpOnly; Max-Age=0; SameSite=${config.authCookieSameSite}${config.authCookieSecure ? '; Secure' : ''}`
+  );
+};
+
 /**
  * POST /api/auth/register
  * 
@@ -82,12 +97,13 @@ export const register = async (req, res) => {
       newAdmin.role
     );
 
+    setAuthCookie(res, token);
+
     return res.status(201).json({
       success: true,
       message: 'Registration successful',
       data: {
         user: formatUserResponse(newAdmin),
-        token,
       },
     });
   } catch (error) {
@@ -157,12 +173,13 @@ export const login = async (req, res) => {
       admin.role
     );
 
+    setAuthCookie(res, token);
+
     return res.status(200).json({
       success: true,
       message: 'Login successful',
       data: {
         user: formatUserResponse(admin),
-        token,
       },
     });
   } catch (error) {
@@ -173,6 +190,11 @@ export const login = async (req, res) => {
       message: 'Login failed. Please try again.',
     });
   }
+};
+
+export const logout = async (req, res) => {
+  clearAuthCookie(res);
+  return res.status(200).json({ success: true, message: 'Logout successful.' });
 };
 
 /**

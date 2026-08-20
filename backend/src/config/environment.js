@@ -51,6 +51,11 @@ const config = {
   // CORS
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
 
+  // Authentication cookie
+  authCookieName: process.env.AUTH_COOKIE_NAME || 'payguard_session',
+  authCookieSameSite: process.env.AUTH_COOKIE_SAMESITE || 'strict',
+  authCookieSecure: isProduction,
+
   // Logging
   logLevel: process.env.LOG_LEVEL || 'info',
 };

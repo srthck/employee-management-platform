@@ -1,6 +1,12 @@
 import jwt from 'jsonwebtoken';
 import config from '../config/environment.js';
 
+const readCookie = (req, name) => {
+  const header = req.headers.cookie || '';
+  const item = header.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`));
+  return item ? decodeURIComponent(item.slice(name.length + 1)) : null;
+};
+
 /**
  * Authentication Middleware
  * 
@@ -18,23 +24,15 @@ import config from '../config/environment.js';
 
 const authMiddleware = async (req, res, next) => {
   try {
-    // Extract token from Authorization header
+    // Browser clients use the HttpOnly cookie. Bearer remains a temporary
+    // compatibility path for existing non-browser API clients.
     const authHeader = req.headers.authorization;
-
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
-        success: false,
-        message: 'No token provided. Authorization header missing or invalid format.',
-      });
-    }
-
-    // Extract token (remove "Bearer " prefix)
-    const token = authHeader.substring(7);
+    const token = readCookie(req, config.authCookieName) || (authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : null);
 
     if (!token) {
       return res.status(401).json({
         success: false,
-        message: 'Token is empty.',
+        message: 'Authentication required.',
       });
     }
 
