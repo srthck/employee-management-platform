@@ -247,13 +247,52 @@ async function resolveEligibleEmployees(companyId, periodStart, periodEnd) {
         issues,
       });
     } else {
+      // Build rule provenance for this employee now, while we have the resolved rule docs.
+      // This allows the staging result to freeze exact rule metadata at processing time.
+      const ruleProvenance = [];
+      if (epfRule && salary.pfEnrolled) {
+        ruleProvenance.push({
+          ruleType:        'EPF',
+          ruleId:          epfRule._id,
+          jurisdiction:    epfRule.jurisdiction,
+          effectiveFrom:   epfRule.effectiveFrom,
+          effectiveTo:     epfRule.effectiveTo,
+          sourceReference: epfRule.description ||
+            `EPF-${epfRule.jurisdiction}-${epfRule.effectiveFrom.toISOString().slice(0, 10)}`,
+        });
+      }
+      if (esiRule && salary.esiEnrolled) {
+        ruleProvenance.push({
+          ruleType:        'ESI',
+          ruleId:          esiRule._id,
+          jurisdiction:    esiRule.jurisdiction,
+          effectiveFrom:   esiRule.effectiveFrom,
+          effectiveTo:     esiRule.effectiveTo,
+          sourceReference: esiRule.description ||
+            `ESI-${esiRule.jurisdiction}-${esiRule.effectiveFrom.toISOString().slice(0, 10)}`,
+        });
+      }
+      if (ptRule && salary.ptEnrolled) {
+        ruleProvenance.push({
+          ruleType:        'PT',
+          ruleId:          ptRule._id,
+          jurisdiction:    ptRule.jurisdiction,
+          effectiveFrom:   ptRule.effectiveFrom,
+          effectiveTo:     ptRule.effectiveTo,
+          sourceReference: ptRule.description ||
+            `PT-${ptRule.jurisdiction}-${ptRule.effectiveFrom.toISOString().slice(0, 10)}`,
+        });
+      }
+
       eligible.push({
         employeeId: emp._id.toString(),
         name:       `${emp.firstName} ${emp.lastName}`,
+        employee:   emp,          // full lean document — for employeeSnapshot freeze
         salary,
         epfRule,
         esiRule,
         ptRule,
+        ruleProvenance,           // pre-built provenance array — for ruleProvenance freeze
       });
     }
   }
@@ -592,7 +631,10 @@ const payrollRunService = {
         // Reuse Phase 7 calculator — DO NOT duplicate statutory formulas
         const result = complianceCalculationService.calculate(calcInput);
 
-        // C2: Durably persist result BEFORE advancing run state
+        // C2: Durably persist result BEFORE advancing run state.
+        // C9 (Phase 9 correction): freeze ALL historical inputs into staging
+        // so Phase 9 never needs to read current Employee, SalaryStructure,
+        // or ComplianceRuleVersion to reconstruct historical payroll state.
         await payrollRunRepository.upsertStagingResult({
           runId:             run._id,
           companyId,
@@ -600,16 +642,72 @@ const payrollRunService = {
           periodMonth:       run.periodMonth,
           periodYear:        run.periodYear,
           employeeId:        empData.employeeId,
-          employeeName:      empData.name,
-          salaryStructureId: salary._id,
-          grossMonthly:      result.grossMonthly,
-          attendanceAdjustment: 'DEFERRED',  // C8: explicit, never described as "adjusted"
+
+          // ── FROZEN EMPLOYEE IDENTITY ──────────────────────────────────
+          // Captured now. If the employee changes department/status/name
+          // after this write, the staging record is unaffected.
+          employeeSnapshot: {
+            firstName:        empData.employee.firstName,
+            lastName:         empData.employee.lastName,
+            fullName:         `${empData.employee.firstName} ${empData.employee.lastName}`,
+            email:            empData.employee.email,
+            department:       empData.employee.department,
+            position:         empData.employee.position,
+            employmentStatus: empData.employee.status,
+            hireDate:         empData.employee.hireDate,
+          },
+
+          // ── FROZEN SALARY SNAPSHOT ────────────────────────────────────
+          // Captured now. New salary versions do not affect this record.
+          salarySnapshot: {
+            salaryStructureId: salary._id,
+            effectiveFrom:     salary.effectiveFrom,
+            effectiveTo:       salary.effectiveTo,
+            components: {
+              basic:               salary.components.basic,
+              hra:                 salary.components.hra               || 0,
+              conveyanceAllowance: salary.components.conveyanceAllowance || 0,
+              medicalAllowance:    salary.components.medicalAllowance   || 0,
+              specialAllowance:    salary.components.specialAllowance   || 0,
+              otherAllowances:     salary.components.otherAllowances    || 0,
+            },
+            grossMonthly:   salary.grossMonthly,
+            currency:       salary.currency    || 'INR',
+            payFrequency:   salary.payFrequency || 'monthly',
+            workState:      salary.workState,
+            pfEnrolled:     salary.pfEnrolled,
+            esiEnrolled:    salary.esiEnrolled,
+            ptEnrolled:     salary.ptEnrolled,
+            pfWageOverride: salary.pfWageOverride != null ? salary.pfWageOverride : null,
+          },
+
+          // ── FROZEN RULE PROVENANCE ────────────────────────────────────
+          // Store ruleType, ruleId, jurisdiction, effectiveFrom, effectiveTo.
+          // Phase 9 never re-queries rules by date.
+          ruleProvenance: empData.ruleProvenance,
+
+          // ── FROZEN PAYROLL INPUTS ─────────────────────────────────────
+          payrollInputs: {
+            grossMonthly:         salary.grossMonthly,
+            basicSalary:          salary.components.basic,
+            pfWageOverride:       salary.pfWageOverride != null ? salary.pfWageOverride : null,
+            pfEnrolled:           salary.pfEnrolled,
+            esiEnrolled:          salary.esiEnrolled,
+            ptEnrolled:           salary.ptEnrolled,
+            workState:            salary.workState,
+            payrollDate:          run.periodEnd,
+            attendanceAdjustment: 'DEFERRED',
+          },
+
+          // ── CALCULATION RESULTS ───────────────────────────────────────
           epf:               result.epf,
           esi:               result.esi,
           pt:                result.pt,
           tdsDeferred:       true,
           totalEmployeeDeductions: result.totalEmployeeDeductions,
-          netPay:            result.netPay,
+          netPayBeforeTDS:         result.netPay,
+
+          // Legacy IDs for completeness checks
           resolvedRuleVersionIds: {
             epf: empData.epfRule ? empData.epfRule._id : null,
             esi: empData.esiRule ? empData.esiRule._id : null,

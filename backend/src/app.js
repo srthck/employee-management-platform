@@ -6,6 +6,7 @@ import { errorHandler } from './middleware/errorHandler.js';
 import authRoutes from './routes/authRoutes.js';
 import employeeRoutes from './routes/employeeRoutes.js';
 import payrollRunRoutes from './routes/payrollRunRoutes.js';
+import { runScopedRouter, snapshotRouter } from './routes/payrollSnapshotRoutes.js';
 
 /**
  * Express Application Setup
@@ -51,6 +52,13 @@ app.use('/api/employees', employeeRoutes);
 
 // Payroll Run routes (Phase 8)
 app.use('/api/payroll-runs', payrollRunRoutes);
+
+// PayrollSnapshot routes — run-scoped (Phase 9)
+// Mounts: materialize, finalize-run, snapshots under /api/payroll-runs/:runId/
+app.use('/api/payroll-runs/:runId', runScopedRouter);
+
+// PayrollSnapshot routes — standalone (Phase 9)
+app.use('/api/payroll-snapshots', snapshotRouter);
 
 // 404 handler
 app.use((req, res) => {

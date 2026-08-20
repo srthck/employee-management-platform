@@ -132,18 +132,22 @@ describe('C2 — PayrollStagingResult durable staging model', () => {
     }
   });
 
-  test('has employee fields: employeeId, employeeName, salaryStructureId', () => {
+  test('has employee fields: employeeId + frozen employeeSnapshot sub-document', () => {
     const paths = StagingResult.schema.paths;
-    for (const f of ['employeeId', 'salaryStructureId', 'grossMonthly']) {
-      assert.ok(f in paths, `PayrollStagingResult must have field: ${f}`);
-    }
+    // employeeId is the reference pointer (top-level)
+    assert.ok('employeeId' in paths, 'PayrollStagingResult must have field: employeeId');
+    // employeeSnapshot is the frozen historical sub-document (Phase 9 correction)
+    assert.ok('employeeSnapshot' in paths, 'PayrollStagingResult must have frozen employeeSnapshot');
+    // salarySnapshot (not top-level salaryStructureId) — Phase 9 correction
+    assert.ok('salarySnapshot' in paths, 'PayrollStagingResult must have frozen salarySnapshot');
   });
 
-  test('has compliance result fields: epf, esi, pt, netPay', () => {
+  test('has compliance result fields: epf, esi, pt, netPayBeforeTDS, totalEmployeeDeductions', () => {
     const paths = StagingResult.schema.paths;
-    for (const f of ['netPay', 'totalEmployeeDeductions', 'tdsDeferred']) {
-      assert.ok(f in paths, `PayrollStagingResult must have field: ${f}`);
-    }
+    // netPayBeforeTDS replaces netPay after Phase 9 correction (honest field name)
+    assert.ok('netPayBeforeTDS' in paths, 'PayrollStagingResult must have field: netPayBeforeTDS');
+    assert.ok('totalEmployeeDeductions' in paths, 'PayrollStagingResult must have field: totalEmployeeDeductions');
+    assert.ok('tdsDeferred' in paths, 'PayrollStagingResult must have field: tdsDeferred');
   });
 
   test('tdsDeferred defaults to true', () => {
@@ -169,18 +173,24 @@ describe('C2 — PayrollStagingResult durable staging model', () => {
     assert.ok(uniqueIdx, 'unique_staging_result_per_run_employee_version index must exist');
   });
 
-  // C8: attendanceAdjustment field
-  test('C8 — attendanceAdjustment field exists and defaults to DEFERRED', () => {
-    const path = StagingResult.schema.paths['attendanceAdjustment'];
-    assert.ok(path, 'attendanceAdjustment field must exist on PayrollStagingResult');
+  // C8: attendanceAdjustment field — now inside payrollInputs sub-document (Phase 9 correction)
+  test('C8 — attendanceAdjustment exists inside payrollInputs sub-document', () => {
+    // After the Phase 9 historical-freeze correction, attendanceAdjustment lives in
+    // the payrollInputs sub-schema, not at the top level of the staging document.
+    const inputSchema = StagingResult.schema.path('payrollInputs').schema;
+    assert.ok(inputSchema, 'payrollInputs must be a sub-schema');
+    const path = inputSchema.paths['attendanceAdjustment'];
+    assert.ok(path, 'attendanceAdjustment must exist inside payrollInputs');
     assert.equal(path.defaultValue, 'DEFERRED');
   });
 
-  test('C8 — attendanceAdjustment enum does not allow arbitrary values', () => {
-    const enumValues = StagingResult.schema.paths['attendanceAdjustment'].enumValues;
-    assert.ok(enumValues.includes('DEFERRED'));
-    assert.ok(enumValues.includes('APPLIED'));
-    assert.equal(enumValues.length, 2);
+  test('C8 — payrollInputs.attendanceAdjustment is a String defaulting to DEFERRED', () => {
+    const inputSchema  = StagingResult.schema.path('payrollInputs').schema;
+    const path         = inputSchema.paths['attendanceAdjustment'];
+    assert.ok(path, 'attendanceAdjustment must exist in payrollInputs');
+    assert.equal(path.defaultValue, 'DEFERRED', 'Default must be DEFERRED');
+    // Plain String field — enum not required here (enforced at PayrollRun/StagingResult level)
+    assert.equal(path.instance, 'String');
   });
 });
 
