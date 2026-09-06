@@ -14,28 +14,195 @@ export default function PayGuardLayout() {
   const { user, logout } = useContext(AuthContext);
   const [open, setOpen] = useState(false);
   const location = useLocation();
-  const current = links.find((link) => location.pathname.startsWith(link.to));
+
+  const current = links.find((link) =>
+    location.pathname.startsWith(link.to)
+  );
 
   return (
-    <div className="min-h-screen bg-[#f4f7f9] text-[#182230]">
-      <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-[#14232d] text-white transition-transform lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
+    <div className="min-h-screen bg-[#FFFDF8] text-[#241F20]">
+
+      {/* ==================== SIDEBAR ==================== */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 w-64 bg-[#7D1022] text-white transition-transform duration-200 lg:translate-x-0 ${
+          open ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
         <div className="flex h-full flex-col">
-          <div className="border-b border-white/10 px-6 py-6">
-            <div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-md bg-[#55b9c6] font-bold text-[#10242c]">P</div><div><p className="text-lg font-semibold tracking-tight">PAYGUARD</p><p className="text-[10px] uppercase tracking-[0.18em] text-[#9bb4bb]">Payroll operations</p></div></div>
+
+          {/* BRAND */}
+          <div className="border-b border-white/15 px-6 py-6">
+            <div className="flex items-center gap-3">
+
+              <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#FFF7F0] font-bold text-[#A6192E]">
+                P
+              </div>
+
+              <div>
+                <p className="text-base font-semibold tracking-[0.04em]">
+                  PAYGUARD
+                </p>
+
+                <p className="text-[10px] uppercase tracking-[0.18em] text-[#F8E8EA]">
+                  Payroll operations
+                </p>
+              </div>
+
+            </div>
           </div>
-          <nav aria-label="Primary navigation" className="flex-1 space-y-1 px-3 py-6">
-            <p className="px-3 pb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#78929a]">Workspace</p>
-            {links.map((link) => <NavLink key={link.to} to={link.to} onClick={() => setOpen(false)} className={({ isActive }) => `flex items-center gap-3 rounded-md px-3 py-2.5 text-sm transition ${isActive ? 'bg-[#25434d] text-white' : 'text-[#adc0c5] hover:bg-white/5 hover:text-white'}`}><span aria-hidden="true" className="w-5 text-center text-[#70c7cc]">{link.icon}</span>{link.label}</NavLink>)}
-            <div className="my-6 border-t border-white/10" />
-            <NavLink to="/settings" onClick={() => setOpen(false)} className={({ isActive }) => `flex items-center gap-3 rounded-md px-3 py-2.5 text-sm ${isActive ? 'bg-[#25434d] text-white' : 'text-[#adc0c5] hover:bg-white/5 hover:text-white'}`}><span className="w-5 text-center text-[#70c7cc]">⚙</span>Settings</NavLink>
+
+          {/* NAVIGATION */}
+          <nav
+            aria-label="Primary navigation"
+            className="flex-1 space-y-1 px-3 py-6"
+          >
+            <p className="px-3 pb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#EFC9CF]">
+              Workspace
+            </p>
+
+            {links.map((link) => (
+              <NavLink
+                key={link.to}
+                to={link.to}
+                onClick={() => setOpen(false)}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm transition ${
+                    isActive
+                      ? 'bg-[#A6192E] text-white shadow-sm'
+                      : 'text-[#F3DDE0] hover:bg-white/10 hover:text-white'
+                  }`
+                }
+              >
+                <span
+                  aria-hidden="true"
+                  className="w-5 text-center text-[#FFF7F0]"
+                >
+                  {link.icon}
+                </span>
+
+                {link.label}
+              </NavLink>
+            ))}
+
+            <div className="my-6 border-t border-white/15" />
+
+            {/* SETTINGS */}
+            <NavLink
+              to="/settings"
+              onClick={() => setOpen(false)}
+              className={({ isActive }) =>
+                `flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm transition ${
+                  isActive
+                    ? 'bg-[#A6192E] text-white shadow-sm'
+                    : 'text-[#F3DDE0] hover:bg-white/10 hover:text-white'
+                }`
+              }
+            >
+              <span
+                aria-hidden="true"
+                className="w-5 text-center text-[#FFF7F0]"
+              >
+                ⚙
+              </span>
+
+              Settings
+            </NavLink>
           </nav>
-          <div className="border-t border-white/10 p-4"><p className="truncate text-sm font-medium">{user?.name || 'Authenticated user'}</p><p className="mt-1 text-xs text-[#8ca6ad]">{user?.role || 'Admin'} · single tenant</p><button type="button" onClick={logout} className="mt-4 w-full rounded-md border border-white/15 px-3 py-2 text-left text-xs text-[#bfd0d3] hover:bg-white/5">Sign out</button></div>
+
+          {/* USER SECTION */}
+          <div className="border-t border-white/15 p-4">
+
+            <p className="truncate text-sm font-medium text-white">
+              {user?.name || 'Authenticated user'}
+            </p>
+
+            <p className="mt-1 text-xs text-[#EFC9CF]">
+              {user?.role || 'Admin'} · single tenant
+            </p>
+
+            <button
+              type="button"
+              onClick={logout}
+              className="mt-4 w-full rounded-[8px] border border-white/20 px-3 py-2 text-left text-xs text-[#F8E8EA] transition hover:bg-white/10 hover:text-white"
+            >
+              Sign out
+            </button>
+
+          </div>
         </div>
       </aside>
-      {open && <button aria-label="Close navigation" type="button" className="fixed inset-0 z-30 bg-[#071116]/50 lg:hidden" onClick={() => setOpen(false)} />}
+
+      {/* ==================== MOBILE OVERLAY ==================== */}
+      {open && (
+        <button
+          aria-label="Close navigation"
+          type="button"
+          className="fixed inset-0 z-30 bg-[#241F20]/40 lg:hidden"
+          onClick={() => setOpen(false)}
+        />
+      )}
+
+      {/* ==================== MAIN AREA ==================== */}
       <div className="lg:pl-64">
-        <header className="sticky top-0 z-20 border-b border-[#dce5e8] bg-[#f8fafb]/95 backdrop-blur"><div className="flex h-16 items-center justify-between px-4 sm:px-8"><div className="flex items-center gap-3"><button type="button" aria-label="Open navigation" onClick={() => setOpen(true)} className="rounded-md border border-[#d4e0e3] px-2 py-1.5 text-lg lg:hidden">☰</button><div><p className="text-sm font-semibold">{current?.label || 'PayGuard'}</p><p className="text-xs text-[#6d8188]">Payroll and compliance operations</p></div></div><div className="flex items-center gap-3"><span className="hidden text-xs text-[#6d8188] sm:block">MVP scope · TDS deferred</span><div className="h-2 w-2 rounded-full bg-[#2b9e7d]" title="Session active" /><span className="hidden text-sm font-medium sm:block">{user?.name}</span></div></div></header>
-        <main className="mx-auto max-w-[1480px] p-4 sm:p-8"><Outlet /></main>
+
+        {/* ==================== HEADER ==================== */}
+        <header className="sticky top-0 z-20 border-b border-[#E7D8D5] bg-[#FFFDF8]/95 backdrop-blur">
+
+          <div className="flex h-16 items-center justify-between px-4 sm:px-8">
+
+            {/* LEFT SIDE */}
+            <div className="flex items-center gap-3">
+
+              {/* MOBILE MENU BUTTON */}
+              <button
+                type="button"
+                aria-label="Open navigation"
+                onClick={() => setOpen(true)}
+                className="rounded-[8px] border border-[#E7D8D5] bg-white px-2 py-1.5 text-lg text-[#A6192E] transition hover:bg-[#F8E8EA] lg:hidden"
+              >
+                ☰
+              </button>
+
+              <div>
+                <p className="text-sm font-semibold text-[#241F20]">
+                  {current?.label || 'PayGuard'}
+                </p>
+
+                <p className="text-xs text-[#6F6565]">
+                  Payroll and compliance operations
+                </p>
+              </div>
+
+            </div>
+
+            {/* RIGHT SIDE */}
+            <div className="flex items-center gap-3">
+
+              <span className="hidden text-xs text-[#6F6565] sm:block">
+                MVP scope · TDS deferred
+              </span>
+
+              {/* ACTIVE SESSION */}
+              <div
+                className="h-2 w-2 rounded-full bg-[#2E7D32]"
+                title="Session active"
+              />
+
+              <span className="hidden text-sm font-medium text-[#241F20] sm:block">
+                {user?.name}
+              </span>
+
+            </div>
+
+          </div>
+
+        </header>
+
+        {/* ==================== PAGE CONTENT ==================== */}
+        <main className="mx-auto max-w-[1480px] p-4 sm:p-8">
+          <Outlet />
+        </main>
+
       </div>
     </div>
   );

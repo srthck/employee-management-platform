@@ -1,0 +1,28 @@
+:root {
+  /* =========================================================
+     PAYGUARD — ROYAL RED + CREAM THEME
+  ========================================================= */
+
+  --primary: #A6192E;
+  --primary-dark: #7D1022;
+  --primary-light: #F8E8EA;
+
+  --background: #FFFDF8;
+  --surface: #FFFFFF;
+  --surface-soft: #FFF7F0;
+
+  --text-primary: #241F20;
+  --text-secondary: #6F6565;
+
+  --border: #E7D8D5;
+
+  --success: #2E7D32;
+  --warning: #B7791F;
+  --error: #9B1C31;
+
+  --shadow: 0 2px 10px rgba(60, 25, 30, 0.06);
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}

@@ -2,60 +2,374 @@
 @tailwind components;
 @tailwind utilities;
 
+/* =========================================================
+   PAYGUARD — GLOBAL DESIGN SYSTEM
+   Scarlet Red + Cream White
+   ========================================================= */
+
 :root {
   font-family: "DM Sans", "Segoe UI", sans-serif;
-  color: #182230;
-  background: #f4f7f9;
+
+  color: #1f2937;
+  background: #fffdf8;
+
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* PayGuard colors */
+  --pg-primary: #c62828;
+  --pg-primary-dark: #8e1b1b;
+  --pg-primary-light: #fdecec;
+
+  --pg-background: #fffdf8;
+  --pg-surface: #ffffff;
+
+  --pg-text-primary: #1f2937;
+  --pg-text-secondary: #6b7280;
+  --pg-text-muted: #8a807c;
+
+  --pg-border: #e8ddda;
+  --pg-border-light: #f0e7e4;
+
+  --pg-success: #2e7d32;
+  --pg-success-light: #eef8ef;
+
+  --pg-warning: #f59e0b;
+  --pg-warning-light: #fff8e8;
+
+  --pg-error: #b91c1c;
+  --pg-error-light: #fff4f3;
+
+  --pg-info: #8e1b1b;
+  --pg-info-light: #fdecec;
+
+  --pg-shadow: 0 4px 18px rgba(83, 43, 37, 0.06);
+  --pg-shadow-lg: 0 12px 35px rgba(83, 43, 37, 0.09);
+
+  --pg-radius-sm: 7px;
+  --pg-radius-md: 10px;
+  --pg-radius-lg: 14px;
+}
+
+/* =========================================================
+   GLOBAL ELEMENTS
+   ========================================================= */
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
   margin: 0;
   min-width: 320px;
-  background: #f4f7f9;
-  color: #182230;
+
+  background: #fffdf8;
+  color: #1f2937;
+
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-button, a, input, select { font: inherit; }
-button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #55b9c6; outline-offset: 2px; }
-.pg-scrollbar::-webkit-scrollbar { height: 8px; width: 8px; }
-.pg-scrollbar::-webkit-scrollbar-thumb { background: #b8c7cd; border-radius: 8px; }
+button,
+a,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(198, 40, 40, 0.22);
+  outline-offset: 2px;
+}
+
+/* =========================================================
+   SCROLLBAR
+   ========================================================= */
+
+.pg-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #d3c3bf transparent;
+}
+
+.pg-scrollbar::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+.pg-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.pg-scrollbar::-webkit-scrollbar-thumb {
+  background: #d3c3bf;
+  border-radius: 8px;
+}
+
+.pg-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #b9a7a2;
+}
+
+/* =========================================================
+   COMPONENT LAYER
+   ========================================================= */
 
 @layer components {
-  .eyebrow { @apply text-[10px] font-bold uppercase tracking-[0.18em] text-[#6d8188]; }
-  .page-title { @apply mt-2 text-3xl font-semibold tracking-tight text-[#182230] sm:text-4xl; }
-  .page-subtitle { @apply mt-2 text-sm text-[#687a81]; }
-  .section-title { @apply mt-1 text-xl font-semibold tracking-tight text-[#182230]; }
-  .panel { @apply rounded-md border border-[#dce5e8] bg-white p-5 shadow-[0_4px_18px_rgba(20,45,55,0.035)] sm:p-6; }
-  .btn { @apply inline-flex items-center justify-center gap-2 rounded-md border border-[#cbd9dd] bg-white px-4 py-2.5 text-sm font-semibold text-[#31464d] transition hover:border-[#8daeb5] hover:bg-[#f6fafb] disabled:cursor-not-allowed disabled:opacity-50; }
-  .btn-primary { @apply border-[#167985] bg-[#167985] text-white hover:border-[#125f69] hover:bg-[#125f69]; }
-  .btn-danger { @apply border-[#e5c4c1] text-[#a33d35] hover:border-[#d99a94] hover:bg-[#fff7f6]; }
-  .btn-small { @apply px-2.5 py-1.5 text-xs; }
-  .field { @apply w-full rounded-md border border-[#cbd9dd] bg-white px-3 py-2.5 text-sm text-[#182230] placeholder-[#9aabb0] focus:border-[#55aeb9] focus:ring-2 focus:ring-[#55b9c6]/20; }
-  .label { @apply text-xs font-semibold uppercase tracking-[0.1em] text-[#6d8188]; }
-  .status { @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em]; }
-  .status-neutral { @apply border-[#d6e0e3] bg-[#f5f8f9] text-[#60747b]; }
-  .status-info { @apply border-[#bfdde2] bg-[#eff9fa] text-[#187a88]; }
-  .status-warn { @apply border-[#efd8a4] bg-[#fff8e8] text-[#9a6700]; }
-  .status-success { @apply border-[#bfe2d5] bg-[#effaf5] text-[#26765f]; }
-  .status-danger { @apply border-[#edc4c0] bg-[#fff4f3] text-[#a33d35]; }
-  .health { @apply inline-flex items-center gap-1.5 text-xs font-semibold; }
-  .health-good { @apply text-[#26765f]; }
-  .health-warn { @apply text-[#9a6700]; }
-  .health-muted { @apply text-[#819198]; }
-  .data-table { @apply min-w-[800px] w-full text-left text-sm; }
-  .data-table th { @apply border-b border-[#dce5e8] px-4 py-3 text-[10px] font-bold uppercase tracking-[0.12em] text-[#6d8188]; }
-  .data-table td { @apply border-b border-[#edf1f2] px-4 py-4 align-top text-[#31464d]; }
-  .data-table tbody tr { @apply transition hover:bg-[#f7fafb]; }
-  .alert { @apply rounded-md border px-4 py-3 text-sm; }
-  .alert-danger { @apply border-[#edc4c0] bg-[#fff4f3] text-[#a33d35]; }
-  .alert-warn { @apply border-[#efd8a4] bg-[#fff8e8] text-[#845b00]; }
-  .alert-success { @apply border-[#bfe2d5] bg-[#effaf5] text-[#26765f]; }
-  .empty-state { @apply py-14 text-center text-[#687a81]; }
-  .dialog-backdrop { @apply fixed inset-0 z-50 flex items-center justify-center bg-[#071116]/50 p-4; }
-  .dialog { @apply w-full max-w-lg rounded-md border border-[#dce5e8] bg-white p-6 shadow-2xl; }
-  .icon-button { @apply rounded-md px-2 py-1 text-xl text-[#6d8188] hover:bg-[#f0f5f6] hover:text-[#182230]; }
+
+  /* -------------------------------------------------------
+     TYPOGRAPHY
+     ------------------------------------------------------- */
+
+  .eyebrow {
+    @apply text-[10px] font-bold uppercase tracking-[0.18em] text-[#8A6F69];
+  }
+
+  .page-title {
+    @apply mt-2 text-3xl font-semibold tracking-tight text-[#1F2937] sm:text-4xl;
+  }
+
+  .page-subtitle {
+    @apply mt-2 text-sm leading-6 text-[#776D69];
+  }
+
+  .section-title {
+    @apply mt-1 text-xl font-semibold tracking-tight text-[#1F2937];
+  }
+
+
+  /* -------------------------------------------------------
+     PANELS / CARDS
+     ------------------------------------------------------- */
+
+  .panel {
+    @apply rounded-[10px] border border-[#E8DDDA] bg-white p-5 shadow-[0_4px_18px_rgba(83,43,37,0.05)] sm:p-6;
+  }
+
+  .panel:hover {
+    @apply border-[#E2D2CE];
+  }
+
+
+  /* -------------------------------------------------------
+     BUTTONS
+     ------------------------------------------------------- */
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-[8px] border border-[#DECFCB] bg-white px-4 py-2.5 text-sm font-semibold text-[#3F3532] transition duration-200 hover:border-[#C9B4AF] hover:bg-[#FDF8F6] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply border-[#C62828] bg-[#C62828] text-white hover:border-[#A91F1F] hover:bg-[#A91F1F];
+  }
+
+  .btn-danger {
+    @apply border-[#E7C4C0] bg-white text-[#A33D35] hover:border-[#D99A94] hover:bg-[#FFF7F6];
+  }
+
+  .btn-small {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+
+
+  /* -------------------------------------------------------
+     FORM FIELDS
+     ------------------------------------------------------- */
+
+  .field {
+    @apply w-full rounded-[8px] border border-[#D9CCC8] bg-white px-3 py-2.5 text-sm text-[#1F2937] placeholder-[#9A8F8B] transition focus:border-[#C62828] focus:outline-none focus:ring-2 focus:ring-[#C62828]/10;
+  }
+
+  .label {
+    @apply text-xs font-semibold uppercase tracking-[0.1em] text-[#766B67];
+  }
+
+
+  /* -------------------------------------------------------
+     STATUS BADGES
+     ------------------------------------------------------- */
+
+  .status {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em];
+  }
+
+  .status-neutral {
+    @apply border-[#E2D9D6] bg-[#F8F5F4] text-[#6D625E];
+  }
+
+  .status-info {
+    @apply border-[#EBC9C9] bg-[#FDECEC] text-[#8E1B1B];
+  }
+
+  .status-warn {
+    @apply border-[#EFD8A4] bg-[#FFF8E8] text-[#9A6700];
+  }
+
+  .status-success {
+    @apply border-[#BFE2D5] bg-[#EFFAF5] text-[#26765F];
+  }
+
+  .status-danger {
+    @apply border-[#EDC4C0] bg-[#FFF4F3] text-[#A33D35];
+  }
+
+
+  /* -------------------------------------------------------
+     HEALTH INDICATORS
+     ------------------------------------------------------- */
+
+  .health {
+    @apply inline-flex items-center gap-1.5 text-xs font-semibold;
+  }
+
+  .health-good {
+    @apply text-[#2E7D32];
+  }
+
+  .health-warn {
+    @apply text-[#9A6700];
+  }
+
+  .health-muted {
+    @apply text-[#817773];
+  }
+
+
+  /* -------------------------------------------------------
+     TABLES
+     ------------------------------------------------------- */
+
+  .data-table {
+    @apply min-w-[800px] w-full text-left text-sm;
+  }
+
+  .data-table th {
+    @apply border-b border-[#E8DDDA] px-4 py-3 text-[10px] font-bold uppercase tracking-[0.12em] text-[#766B67];
+  }
+
+  .data-table td {
+    @apply border-b border-[#F0E9E7] px-4 py-4 align-top text-[#3F3532];
+  }
+
+  .data-table tbody tr {
+    @apply transition-colors hover:bg-[#FDF8F6];
+  }
+
+
+  /* -------------------------------------------------------
+     ALERTS
+     ------------------------------------------------------- */
+
+  .alert {
+    @apply rounded-[8px] border px-4 py-3 text-sm;
+  }
+
+  .alert-danger {
+    @apply border-[#EDC4C0] bg-[#FFF4F3] text-[#A33D35];
+  }
+
+  .alert-warn {
+    @apply border-[#EFD8A4] bg-[#FFF8E8] text-[#845B00];
+  }
+
+  .alert-success {
+    @apply border-[#BFE2D5] bg-[#EFFAF5] text-[#26765F];
+  }
+
+
+  /* -------------------------------------------------------
+     EMPTY STATES
+     ------------------------------------------------------- */
+
+  .empty-state {
+    @apply py-14 text-center text-[#776D69];
+  }
+
+
+  /* -------------------------------------------------------
+     DIALOGS / MODALS
+     ------------------------------------------------------- */
+
+  .dialog-backdrop {
+    @apply fixed inset-0 z-50 flex items-center justify-center bg-[#241614]/50 p-4;
+  }
+
+  .dialog {
+    @apply w-full max-w-lg rounded-[12px] border border-[#E8DDDA] bg-white p-6 shadow-2xl;
+  }
+
+
+  /* -------------------------------------------------------
+     ICON BUTTONS
+     ------------------------------------------------------- */
+
+  .icon-button {
+    @apply rounded-[8px] px-2 py-1 text-xl text-[#766B67] transition hover:bg-[#F8F1EF] hover:text-[#1F2937];
+  }
+
+
+  /* -------------------------------------------------------
+     PAYGUARD BRAND HELPERS
+     ------------------------------------------------------- */
+
+  .pg-primary-text {
+    @apply text-[#C62828];
+  }
+
+  .pg-primary-bg {
+    @apply bg-[#C62828];
+  }
+
+  .pg-primary-light {
+    @apply bg-[#FDECEC];
+  }
+
+  .pg-surface {
+    @apply bg-white;
+  }
+
+  .pg-page {
+    @apply bg-[#FFFDF8];
+  }
+
+  .pg-border {
+    @apply border-[#E8DDDA];
+  }
+}
+
+/* =========================================================
+   SMALL RESPONSIVE ADJUSTMENTS
+   ========================================================= */
+
+@media (max-width: 640px) {
+  .page-title {
+    font-size: 1.75rem;
+  }
+
+  .panel {
+    padding: 1rem;
+  }
+
+  .data-table {
+    min-width: 700px;
+  }
 }

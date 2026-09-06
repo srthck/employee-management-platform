@@ -3,17 +3,22 @@ import cors from 'cors';
 import 'express-async-errors';
 import config from './config/environment.js';
 import { errorHandler } from './middleware/errorHandler.js';
+
 import authRoutes from './routes/authRoutes.js';
 import employeeRoutes from './routes/employeeRoutes.js';
+import employeeAccountRoutes from './routes/employeeAccountRoutes.js';
 import salaryRoutes from './routes/salaryRoutes.js';
 import complianceRuleRoutes from './routes/complianceRuleRoutes.js';
 import auditRoutes from './routes/auditRoutes.js';
 import payrollRunRoutes from './routes/payrollRunRoutes.js';
-import { runScopedRouter, snapshotRouter } from './routes/payrollSnapshotRoutes.js';
+import {
+  runScopedRouter,
+  snapshotRouter,
+} from './routes/payrollSnapshotRoutes.js';
 
 /**
  * Express Application Setup
- * 
+ *
  * Production standards:
  * - CORS configured for frontend security
  * - JSON body parsing with size limits
@@ -25,8 +30,9 @@ import { runScopedRouter, snapshotRouter } from './routes/payrollSnapshotRoutes.
 const app = express();
 
 // Middleware: CORS
-// Browsers treat localhost and 127.0.0.1 as different origins. Support both
-// local development URLs so the Vite dev server can be opened either way.
+// Browsers treat localhost and 127.0.0.1 as different origins.
+// Support local development URLs so the Vite dev server can be opened
+// using the configured frontend URL or common local ports.
 const allowedOrigins = new Set([
   config.frontendUrl,
   'http://localhost:5173',
@@ -38,10 +44,12 @@ const allowedOrigins = new Set([
 app.use(
   cors({
     origin(origin, callback) {
-      // Requests without an Origin header (health checks, CLI clients) are safe.
+      // Requests without an Origin header (health checks, CLI clients)
+      // are safe.
       if (!origin || allowedOrigins.has(origin)) {
         return callback(null, true);
       }
+
       return callback(new Error('Origin not allowed by CORS'));
     },
     credentials: true,
@@ -53,7 +61,7 @@ app.use(
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Health check route (for load balancers and monitoring)
+// Health check route
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'healthy',
@@ -71,6 +79,9 @@ app.use('/api/employees', salaryRoutes);
 
 // Employee routes
 app.use('/api/employees', employeeRoutes);
+
+// Employee login account routes
+app.use('/api/employee-accounts', employeeAccountRoutes);
 
 // Read-only statutory rule and audit history APIs
 app.use('/api/compliance/rules', complianceRuleRoutes);

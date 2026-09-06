@@ -4,25 +4,25 @@ import apiClient from '../services/api';
 import { AuthContext } from '../contexts/AuthContext';
 
 /**
- * Home Page
+ * PayGuard Landing Page
  *
- * Landing page showing API health status and authentication state.
+ * Professional landing page for the PayGuard payroll platform.
+ * Existing authentication and backend health-check functionality
+ * is preserved.
  */
 
 export default function Home() {
   const { user, logout } = useContext(AuthContext);
+
   const [apiStatus, setApiStatus] = useState(null);
   const [apiLoading, setApiLoading] = useState(true);
-  const [apiError, setApiError] = useState(null);
 
   useEffect(() => {
     const checkAPI = async () => {
       try {
         const response = await apiClient.get('/health');
         setApiStatus(response.data);
-        setApiError(null);
       } catch (err) {
-        setApiError(err.message);
         setApiStatus(null);
       } finally {
         setApiLoading(false);
@@ -32,172 +32,391 @@ export default function Home() {
     checkAPI();
   }, []);
 
-  return (
-    <div className="min-h-screen bg-slate-950">
-      {/* Gradient accent bar */}
-      <div className="h-1 bg-gradient-to-r from-violet-600 via-indigo-500 to-violet-600" />
+  const isAPIOnline = !apiLoading && apiStatus;
 
-      {/* Navbar */}
-      <nav className="bg-slate-900 border-b border-slate-800">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
-              <span className="text-white text-xs font-bold">EMS</span>
+  return (
+    <div className="min-h-screen bg-[#FFFDF8] text-[#241F20]">
+
+      {/* =========================================================
+          NAVIGATION
+      ========================================================== */}
+      <nav className="border-b border-[#E7D8D5] bg-[#FFFDF8]">
+        <div className="mx-auto flex h-[78px] max-w-[1450px] items-center justify-between px-8 lg:px-16">
+
+          {/* PayGuard Logo */}
+          <Link
+            to="/"
+            className="flex items-center gap-3"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#A6192E] shadow-[0_6px_16px_rgba(60,25,30,0.12)]">
+              <span className="text-lg font-semibold text-white">
+                P
+              </span>
             </div>
-            <span className="text-white font-semibold">PAYGUARD</span>
+
+            <span className="text-[19px] font-semibold tracking-[-0.025em] text-[#241F20]">
+              PayGuard
+            </span>
+          </Link>
+
+          {/* Navigation Links */}
+          <div className="hidden items-center gap-12 md:flex">
+            <a
+              href="#features"
+              className="text-[14px] font-medium text-[#6F6565] transition-colors hover:text-[#A6192E]"
+            >
+              Features
+            </a>
+
+            <a
+              href="#security"
+              className="text-[14px] font-medium text-[#6F6565] transition-colors hover:text-[#A6192E]"
+            >
+              Security
+            </a>
+
+            <a
+              href="#compliance"
+              className="text-[14px] font-medium text-[#6F6565] transition-colors hover:text-[#A6192E]"
+            >
+              Compliance
+            </a>
           </div>
+
+          {/* Authentication */}
           <div className="flex items-center gap-3">
             {user ? (
               <>
-                <span className="text-slate-400 text-sm hidden sm:block">
+                <span className="hidden text-sm text-[#6F6565] lg:block">
                   {user.name}
-                  <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 font-medium">
-                    {user.role}
-                  </span>
                 </span>
+
                 <Link
                   to="/dashboard"
-                  className="px-4 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-sm font-semibold transition-all"
+                  className="rounded-[9px] bg-[#A6192E] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#7D1022]"
                 >
                   Dashboard
                 </Link>
+
                 <button
                   type="button"
                   onClick={logout}
-                  className="text-sm text-slate-400 hover:text-white transition-colors px-3 py-1.5 rounded-lg hover:bg-slate-800"
+                  className="rounded-[9px] border border-[#E7D8D5] bg-white px-5 py-2.5 text-sm font-semibold text-[#A6192E] transition hover:border-[#A6192E] hover:bg-[#F8E8EA]"
                 >
-                  Sign out
+                  Sign Out
                 </button>
               </>
             ) : (
-              <>
-                <Link
-                  to="/login"
-                  className="text-sm text-slate-300 hover:text-white transition-colors px-3 py-1.5 rounded-lg hover:bg-slate-800"
-                >
-                  Sign In
-                </Link>
-                <Link
-                  to="/register"
-                  className="px-4 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-sm font-semibold transition-all"
-                >
-                  Get Started
-                </Link>
-              </>
+              <Link
+                to="/login"
+                className="rounded-[9px] border border-[#E7D8D5] bg-white px-6 py-2.5 text-sm font-semibold text-[#A6192E] transition hover:border-[#A6192E] hover:bg-[#F8E8EA]"
+              >
+                Sign In
+              </Link>
             )}
           </div>
         </div>
       </nav>
 
-      {/* Main Content */}
-      <div className="max-w-5xl mx-auto px-6 py-20">
-        {/* Hero */}
-        <div className="text-center mb-16">
-          <h1 className="text-5xl font-bold text-white mb-4">
-            Payroll operations
-            <span className="block bg-gradient-to-r from-violet-400 to-indigo-400 bg-clip-text text-transparent">
-              Made Simple
-            </span>
-          </h1>
-          <p className="text-lg text-slate-400 max-w-2xl mx-auto">
-              Transparent payroll, versioned compliance, and accounting-grade integrity for Indian MSMEs.
-          </p>
-          <div className="flex items-center justify-center gap-4 mt-8">
-            {user ? (
-              <Link
-                to="/dashboard"
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold transition-all shadow-lg shadow-violet-500/25"
-              >
-                Open Dashboard →
-              </Link>
-            ) : (
-              <>
-                <Link
-                  to="/register"
-                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold transition-all shadow-lg shadow-violet-500/25"
-                >
-                  Get Started
-                </Link>
+      {/* =========================================================
+          MAIN CONTENT
+      ========================================================== */}
+      <main>
+
+        {/* =======================================================
+            HERO
+        ======================================================== */}
+        <section className="mx-auto max-w-[1450px] px-8 pb-16 pt-16 lg:px-16 lg:pb-20 lg:pt-18">
+
+          <div className="grid items-center gap-14 lg:grid-cols-[1fr_0.94fr] lg:gap-16">
+
+            {/* =================================================
+                LEFT SIDE
+            ================================================== */}
+            <div>
+
+              {/* Eyebrow */}
+              <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-[#E7D8D5] bg-[#F8E8EA] px-4 py-2">
+                <span className="h-2 w-2 rounded-full bg-[#2E7D32]" />
+
+                <span className="text-xs font-semibold tracking-[0.04em] text-[#A6192E]">
+                  Intelligent Payroll Infrastructure
+                </span>
+              </div>
+
+              {/* Main Brand Heading */}
+              <h1 className="text-[48px] font-semibold leading-[1.05] tracking-[-0.04em] text-[#241F20] sm:text-[54px] lg:text-[60px]">
+                Pay<span className="text-[#A6192E]">Guard</span>
+              </h1>
+
+              {/* Tagline */}
+              <p className="mt-5 text-[20px] font-semibold tracking-[-0.015em] text-[#A6192E] sm:text-[22px]">
+                Detect. Explain. Predict. Protect.
+              </p>
+
+              {/* Main Project Description */}
+              <h2 className="mt-6 max-w-[720px] text-[17px] font-semibold leading-7 text-[#241F20]">
+                Immutable Payroll Engine with ML-Based Anomaly Detection &
+                Versioned Statutory Compliance
+              </h2>
+
+              <p className="mt-4 max-w-[690px] text-[16px] leading-7 text-[#6F6565]">
+                A unified platform built around payroll engineering,
+                machine learning, data integrity, and statutory compliance.
+              </p>
+
+              {/* CTA Buttons */}
+              <div className="mt-8 flex flex-wrap items-center gap-4">
+
+                {user ? (
+                  <Link
+                    to="/dashboard"
+                    className="rounded-[10px] bg-[#A6192E] px-7 py-4 text-[15px] font-semibold text-white shadow-[0_10px_22px_rgba(60,25,30,0.12)] transition duration-200 hover:-translate-y-0.5 hover:bg-[#7D1022]"
+                  >
+                    Explore PayGuard
+                    <span className="ml-3">
+                      →
+                    </span>
+                  </Link>
+                ) : (
+                  <Link
+                    to="/register"
+                    className="rounded-[10px] bg-[#A6192E] px-7 py-4 text-[15px] font-semibold text-white shadow-[0_10px_22px_rgba(60,25,30,0.12)] transition duration-200 hover:-translate-y-0.5 hover:bg-[#7D1022]"
+                  >
+                    Explore PayGuard
+                    <span className="ml-3">
+                      →
+                    </span>
+                  </Link>
+                )}
+
                 <Link
                   to="/login"
-                  className="px-6 py-3 rounded-xl border border-slate-700 hover:border-slate-500 text-slate-300 hover:text-white font-semibold transition-all"
+                  className="rounded-[10px] border border-[#E7D8D5] bg-white px-7 py-4 text-[15px] font-semibold text-[#241F20] transition duration-200 hover:border-[#A6192E] hover:bg-[#F8E8EA] hover:text-[#A6192E]"
                 >
                   Sign In
                 </Link>
-              </>
-            )}
+              </div>
+
+              {/* Trust Statement */}
+              <div className="mt-7 flex items-center gap-2 text-sm text-[#6F6565]">
+                <span className="text-base font-bold text-[#2E7D32]">
+                  ✓
+                </span>
+
+                <span>
+                  Built for secure and accountable payroll operations
+                </span>
+              </div>
+            </div>
+
+            {/* =================================================
+                RIGHT PAYROLL CARD
+            ================================================== */}
+            <div className="relative">
+
+              {/* Decorative Glow */}
+              <div className="absolute -right-8 -top-10 h-64 w-64 rounded-full bg-[#F8E8EA] opacity-50 blur-3xl" />
+
+              {/* Main Card */}
+              <div className="relative overflow-hidden rounded-[22px] border border-[#E7D8D5] bg-white p-7 shadow-[0_22px_55px_rgba(60,25,30,0.08)] sm:p-8">
+
+                {/* Card Header */}
+                <div className="flex items-start justify-between">
+
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#A6192E]">
+                      Payroll Health
+                    </p>
+
+                    <h2 className="mt-2 text-[22px] font-semibold tracking-[-0.025em] text-[#241F20]">
+                      Payroll Overview
+                    </h2>
+                  </div>
+
+                  {/* API Status */}
+                  <div className="flex items-center gap-2 rounded-full bg-[#F3F8F3] px-3 py-1.5">
+
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        apiLoading
+                          ? 'bg-[#B7791F]'
+                          : isAPIOnline
+                          ? 'animate-pulse bg-[#2E7D32]'
+                          : 'bg-[#B7791F]'
+                      }`}
+                    />
+
+                    <span className="text-xs font-semibold text-[#2E7D32]">
+                      {apiLoading
+                        ? 'Checking'
+                        : isAPIOnline
+                        ? 'Live'
+                        : 'Offline'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Payroll Metric */}
+                <div className="mt-7">
+
+                  <p className="text-[42px] font-bold tracking-[-0.04em] text-[#241F20]">
+                    ₹24.8L
+                  </p>
+
+                  <p className="mt-1 text-sm text-[#6F6565]">
+                    Current payroll volume
+                  </p>
+                </div>
+
+                {/* Payroll Chart */}
+                <div className="mt-8">
+
+                  <div className="flex h-[135px] items-end gap-3 border-b border-[#E7D8D5] px-1 pb-2">
+
+                    {[
+                      '42%',
+                      '54%',
+                      '48%',
+                      '68%',
+                      '59%',
+                      '77%',
+                      '88%',
+                    ].map((height, index) => (
+                      <div
+                        key={index}
+                        className="flex-1 rounded-t-[5px] bg-[#A6192E] transition duration-200 hover:bg-[#7D1022]"
+                        style={{ height }}
+                      />
+                    ))}
+
+                  </div>
+                </div>
+
+                {/* Integrity Status */}
+                <div className="mt-6 flex items-center justify-between">
+
+                  <div className="flex items-center gap-3">
+
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F3F8F3]">
+                      <span className="text-lg font-bold text-[#2E7D32]">
+                        ✓
+                      </span>
+                    </div>
+
+                    <div>
+                      <p className="text-sm font-semibold text-[#241F20]">
+                        Integrity verified
+                      </p>
+
+                      <p className="mt-0.5 text-xs text-[#6F6565]">
+                        Payroll snapshot secure
+                      </p>
+                    </div>
+
+                  </div>
+
+                  <span className="text-sm font-semibold text-[#2E7D32]">
+                    +8.4%
+                  </span>
+
+                </div>
+              </div>
+            </div>
           </div>
+        </section>
+
+        {/* =======================================================
+            FEATURE STRIP
+        ======================================================== */}
+        <section
+          id="features"
+          className="border-t border-[#E7D8D5] bg-white"
+        >
+          <div className="mx-auto grid max-w-[1450px] grid-cols-1 px-8 py-9 sm:grid-cols-3 lg:px-16">
+
+            {/* Feature 1 */}
+            <div className="border-b border-[#E7D8D5] px-5 py-5 sm:border-b-0 sm:border-r">
+
+              <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#A6192E]">
+                Intelligent
+              </p>
+
+              <h3 className="mt-2 text-lg font-semibold tracking-[-0.015em] text-[#241F20]">
+                ML-Based Anomaly Detection
+              </h3>
+
+              <p className="mt-2 text-sm leading-6 text-[#6F6565]">
+                Identify unusual payroll patterns and explain suspicious
+                salary variations.
+              </p>
+
+            </div>
+
+            {/* Feature 2 */}
+            <div
+              id="security"
+              className="border-b border-[#E7D8D5] px-5 py-5 sm:border-b-0 sm:border-r"
+            >
+
+              <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#A6192E]">
+                Secure
+              </p>
+
+              <h3 className="mt-2 text-lg font-semibold tracking-[-0.015em] text-[#241F20]">
+                Immutable Payroll Integrity
+              </h3>
+
+              <p className="mt-2 text-sm leading-6 text-[#6F6565]">
+                Tamper-evident payroll snapshots and audit trails provide
+                trustworthy data lineage.
+              </p>
+
+            </div>
+
+            {/* Feature 3 */}
+            <div
+              id="compliance"
+              className="px-5 py-5"
+            >
+
+              <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#A6192E]">
+                Compliant
+              </p>
+
+              <h3 className="mt-2 text-lg font-semibold tracking-[-0.015em] text-[#241F20]">
+                Versioned Statutory Rules
+              </h3>
+
+              <p className="mt-2 text-sm leading-6 text-[#6F6565]">
+                Effective-dated compliance rules help keep payroll processing
+                transparent and accountable.
+              </p>
+
+            </div>
+
+          </div>
+        </section>
+      </main>
+
+      {/* =========================================================
+          FOOTER
+      ========================================================== */}
+      <footer className="border-t border-[#E7D8D5] bg-[#FFFDF8]">
+
+        <div className="mx-auto flex max-w-[1450px] flex-col items-center justify-between gap-3 px-8 py-6 text-sm text-[#6F6565] sm:flex-row lg:px-16">
+
+          <p>
+            © {new Date().getFullYear()} PayGuard
+          </p>
+
+          <p>
+            Detect. Explain. Predict. Protect.
+          </p>
+
         </div>
 
-        {/* Status Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-          {/* API Status */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-colors">
-            <h2 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              Backend API Status
-            </h2>
-            {apiLoading && <p className="text-slate-500 text-sm">Checking connection…</p>}
-            {apiError && (
-              <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4">
-                <p className="text-red-400 font-medium text-sm">Connection Error</p>
-                <p className="text-red-400/70 text-xs mt-1">{apiError}</p>
-              </div>
-            )}
-            {apiStatus && (
-              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-4">
-                <p className="text-emerald-400 font-medium text-sm">✓ Connected</p>
-                <p className="text-emerald-400/70 text-xs mt-1">Status: {apiStatus.status}</p>
-                <p className="text-emerald-400/70 text-xs">Uptime: {apiStatus.uptime?.toFixed(1)}s</p>
-              </div>
-            )}
-          </div>
-
-          {/* Auth Status */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-colors">
-            <h2 className="text-base font-semibold text-white mb-4 flex items-center gap-2">
-              <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-              </svg>
-              Authentication Status
-            </h2>
-            {user ? (
-              <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-4">
-                <p className="text-emerald-400 font-medium text-sm">✓ Authenticated</p>
-                <p className="text-emerald-400/70 text-xs mt-1">{user.email}</p>
-                <p className="text-emerald-400/70 text-xs">Role: {user.role}</p>
-              </div>
-            ) : (
-              <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-4">
-                <p className="text-slate-300 font-medium text-sm">Not signed in</p>
-                <p className="text-slate-500 text-xs mt-1">Sign in to manage employees</p>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Feature List */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <h3 className="text-base font-semibold text-white mb-4">Features</h3>
-          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {[
-              { done: true, label: 'Admin authentication (JWT + bcrypt)' },
-              { done: true, label: 'Register & login with validation' },
-              { done: true, label: 'Protected routes' },
-              { done: true, label: 'Employee CRUD (Create, Read, Update, Delete)' },
-              { done: true, label: 'Search & filter employees' },
-              { done: true, label: 'Pagination & sorting' },
-              { done: true, label: 'Dashboard statistics' },
-              { done: true, label: 'Rate limiting & input validation' },
-            ].map((f) => (
-              <li key={f.label} className="flex items-center gap-2 text-sm">
-                <span className={`w-2 h-2 rounded-full flex-shrink-0 ${f.done ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-                <span className={f.done ? 'text-slate-300' : 'text-slate-500'}>{f.label}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
+      </footer>
     </div>
   );
 }

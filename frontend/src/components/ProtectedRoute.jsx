@@ -8,18 +8,37 @@ import { AuthContext } from '../contexts/AuthContext';
  * Guards routes that require authentication.
  *
  * Behavior:
- * 1. While auth state is loading (token verification in progress) → show spinner.
- *    This prevents premature redirects on page refresh.
+ * 1. While auth state is loading → show themed loading screen.
  * 2. If user is authenticated → render the nested <Outlet />.
  * 3. If not authenticated → redirect to /login.
  */
 
 function LoadingSpinner() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-950">
-      <div className="flex flex-col items-center gap-4">
-        <div className="w-12 h-12 rounded-full border-4 border-violet-500 border-t-transparent animate-spin" />
-        <p className="text-slate-400 text-sm tracking-wide">Verifying session…</p>
+    <div className="flex min-h-screen items-center justify-center bg-[#FFFDF8]">
+      <div className="flex flex-col items-center gap-5">
+
+        {/* PayGuard mark */}
+        <div className="flex h-12 w-12 items-center justify-center rounded-[12px] bg-[#A6192E] text-lg font-semibold text-white shadow-sm">
+          P
+        </div>
+
+        {/* Loading spinner */}
+        <div
+          className="h-9 w-9 animate-spin rounded-full border-4 border-[#F8E8EA] border-t-[#A6192E]"
+          aria-label="Loading"
+        />
+
+        <div className="text-center">
+          <p className="text-sm font-medium text-[#241F20]">
+            Verifying session
+          </p>
+
+          <p className="mt-1 text-xs tracking-wide text-[#6F6565]">
+            Please wait…
+          </p>
+        </div>
+
       </div>
     </div>
   );
@@ -28,8 +47,13 @@ function LoadingSpinner() {
 export default function ProtectedRoute() {
   const { user, loading } = useContext(AuthContext);
 
-  if (loading) return <LoadingSpinner />;
-  if (!user) return <Navigate to="/login" replace />;
+  if (loading) {
+    return <LoadingSpinner />;
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
 
   return <Outlet />;
 }

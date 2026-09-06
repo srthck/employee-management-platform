@@ -3,16 +3,375 @@ import { Link } from 'react-router-dom';
 import * as employeeService from '../services/employeeService';
 import * as payrollRunService from '../services/payrollRunService';
 
-const money = (value) => typeof value === 'number' ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2 }).format(value) : 'Not available';
-const monthName = (month, year) => month && year ? new Date(year, month - 1, 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) : 'No payroll run';
-const statusTone = { DRAFT: 'neutral', PROCESSING: 'info', READY_FOR_FINALIZATION: 'warn', FINALIZED: 'success', DISBURSED: 'success', FAILED: 'danger', CANCELLED: 'neutral' };
-export function Status({ value }) { const tone = statusTone[value] || 'neutral'; return <span className={`status status-${tone}`}><span aria-hidden="true">{tone === 'success' ? '✓' : tone === 'warn' ? '⚠' : tone === 'danger' ? '✕' : '●'}</span>{value?.replaceAll('_', ' ') || 'UNKNOWN'}</span>; }
-function Metric({ label, value, note }) { return <div className="border-l-2 border-[#55b9c6] pl-4"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#6d8188]">{label}</p><p className="mt-2 text-2xl font-semibold tracking-tight">{value}</p>{note && <p className="mt-1 text-xs text-[#82949a]">{note}</p>}</div>; }
-function Health({ label, state, tone }) { const good = state === 'resolved' || state.includes('eligible'); return <div className="flex items-center justify-between border-b border-[#edf1f2] py-3 text-sm"><span>{label}</span><span className={`health health-${tone || (good ? 'good' : 'warn')}`}><span aria-hidden="true">{tone === 'muted' ? '○' : good ? '✓' : '⚠'}</span>{state}</span></div>; }
-export default function Overview() {
-  const [runs, setRuns] = useState([]); const [stats, setStats] = useState(null); const [loading, setLoading] = useState(true); const [error, setError] = useState('');
-  useEffect(() => { Promise.all([payrollRunService.listPayrollRuns({ limit: 10 }), employeeService.getEmployeeStats()]).then(([runData, statData]) => { setRuns(runData.data?.runs || []); setStats(statData.data?.stats ? { ...statData.data.stats, salary: null } : null); }).catch((err) => setError(err.response?.data?.message || 'Unable to load payroll overview.')).finally(() => setLoading(false)); }, []);
-  const currentRun = runs[0];
-  return <div className="space-y-8"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="eyebrow">Operations overview</p><h1 className="page-title">Payroll Overview</h1><p className="page-subtitle">Current payroll and compliance status.</p></div><Link to="/payroll" className="btn btn-primary">View payroll runs <span aria-hidden="true">→</span></Link></div>{error && <div className="alert alert-danger" role="alert">{error}</div>}{loading ? <div className="panel py-16 text-center text-sm text-[#6d8188]" role="status">Loading payroll overview...</div> : <><section className="panel"><div className="flex flex-col justify-between gap-4 border-b border-[#e3eaec] pb-5 sm:flex-row sm:items-start"><div><p className="eyebrow">Current payroll run</p><h2 className="section-title">{monthName(currentRun?.periodMonth, currentRun?.periodYear)}</h2></div>{currentRun && <Status value={currentRun.status} />}</div>{currentRun ? <div className="mt-7 grid gap-8 sm:grid-cols-2 lg:grid-cols-4"><Metric label="Employees" value={currentRun.employeeCount ?? 'Not available'} note="Expected in run" /><Metric label="Eligible" value={currentRun.successfulEmployeeCount ?? 'Not available'} note="Server-confirmed" /><Metric label="Processed" value={`${currentRun.processedEmployeeCount ?? 0} / ${currentRun.employeeCount ?? 0}`} note="Processing count" /><Metric label="Snapshots" value={currentRun.durableResultCount ?? 'Not available'} note="Durable results" /></div> : <div className="empty-state"><p className="font-semibold">NO PAYROLL RUN</p><p className="mt-1 text-sm">Create a calendar-month run to begin preflight.</p><Link className="btn btn-primary mt-5" to="/payroll">Create payroll run</Link></div>}</section><div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]"><section className="panel"><div className="flex items-center justify-between"><div><p className="eyebrow">Control checks</p><h2 className="section-title">Payroll health</h2></div><span className="text-xs text-[#6d8188]">Declared MVP scope</span></div><div className="mt-5 grid gap-3 sm:grid-cols-2"><Health label="Salary configuration" state={currentRun ? 'resolved' : 'waiting for run'} /><Health label="Compliance rules" state={currentRun?.preflightResult?.canProcess === false ? 'action required' : currentRun ? 'resolved by preflight' : 'waiting for run'} /><Health label="Employee eligibility" state={currentRun ? `${currentRun.successfulEmployeeCount || 0} eligible` : 'not evaluated'} /><Health label="Audit" state="not exposed by API" tone="warn" /><Health label="TDS" state="deferred" tone="muted" /><Health label="Attendance adjustment" state="deferred" tone="muted" /></div></section><section className="panel"><p className="eyebrow">Employee directory</p><h2 className="section-title">Workforce context</h2><div className="mt-6 space-y-5"><Metric label="Total employees" value={stats?.total ?? 'Not available'} note="Active and historical records" /><Metric label="Active employees" value={stats?.active ?? 'Not available'} note="Current employee status" /><Metric label="Configured payroll" value={stats?.salary?.totalPayroll ? money(stats.salary.totalPayroll) : 'Not available'} note="Legacy employee salary field only" /></div><Link to="/employees" className="mt-7 inline-block text-sm font-semibold text-[#187a88] hover:text-[#125b66]">Open employee directory →</Link></section></div></>}</div>;
+const money = (value) =>
+  typeof value === 'number'
+    ? new Intl.NumberFormat('en-IN', {
+        style: 'currency',
+        currency: 'INR',
+        minimumFractionDigits: 2,
+      }).format(value)
+    : 'Not available';
+
+const monthName = (month, year) =>
+  month && year
+    ? new Date(year, month - 1, 1).toLocaleDateString('en-IN', {
+        month: 'long',
+        year: 'numeric',
+      })
+    : 'No payroll run';
+
+const statusTone = {
+  DRAFT: 'neutral',
+  PROCESSING: 'info',
+  READY_FOR_FINALIZATION: 'warn',
+  FINALIZED: 'success',
+  DISBURSED: 'success',
+  FAILED: 'danger',
+  CANCELLED: 'neutral',
+};
+
+export function Status({ value }) {
+  const tone = statusTone[value] || 'neutral';
+
+  return (
+    <span className={`status status-${tone}`}>
+      <span aria-hidden="true">
+        {tone === 'success'
+          ? '✓'
+          : tone === 'warn'
+            ? '⚠'
+            : tone === 'danger'
+              ? '✕'
+              : '●'}
+      </span>
+
+      {value?.replaceAll('_', ' ') || 'UNKNOWN'}
+    </span>
+  );
 }
+
+function Metric({ label, value, note }) {
+  return (
+    <div className="border-l-2 border-[#A6192E] pl-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#6F6565]">
+        {label}
+      </p>
+
+      <p className="mt-2 text-2xl font-semibold tracking-tight text-[#241F20]">
+        {value}
+      </p>
+
+      {note && (
+        <p className="mt-1 text-xs text-[#6F6565]">
+          {note}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Health({ label, state, tone }) {
+  const good =
+    state === 'resolved' ||
+    state.includes('eligible');
+
+  return (
+    <div className="flex items-center justify-between border-b border-[#E7D8D5] py-3 text-sm">
+      <span className="text-[#241F20]">{label}</span>
+
+      <span
+        className={`health health-${
+          tone || (good ? 'good' : 'warn')
+        }`}
+      >
+        <span aria-hidden="true">
+          {tone === 'muted'
+            ? '○'
+            : good
+              ? '✓'
+              : '⚠'}
+        </span>
+
+        {state}
+      </span>
+    </div>
+  );
+}
+
+export default function Overview() {
+  const [runs, setRuns] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    Promise.all([
+      payrollRunService.listPayrollRuns({ limit: 10 }),
+      employeeService.getEmployeeStats(),
+    ])
+      .then(([runData, statData]) => {
+        setRuns(runData.data?.runs || []);
+        setStats(statData.data?.stats || null);
+      })
+      .catch((err) =>
+        setError(
+          err.response?.data?.message ||
+            'Unable to load payroll overview.'
+        )
+      )
+      .finally(() => setLoading(false));
+  }, []);
+
+  const currentRun = runs[0];
+
+  return (
+    <div className="space-y-8">
+      {/* PAGE HEADER */}
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div>
+          <p className="eyebrow">Operations overview</p>
+
+          <h1 className="page-title">
+            Payroll Overview
+          </h1>
+
+          <p className="page-subtitle">
+            Current payroll and compliance status.
+          </p>
+        </div>
+
+        <Link
+          to="/payroll"
+          className="btn btn-primary"
+        >
+          View payroll runs
+          <span aria-hidden="true">→</span>
+        </Link>
+      </div>
+
+      {/* ERROR */}
+      {error && (
+        <div
+          className="alert alert-danger"
+          role="alert"
+        >
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <div
+          className="panel py-16 text-center text-sm text-[#6F6565]"
+          role="status"
+        >
+          Loading payroll overview...
+        </div>
+      ) : (
+        <>
+          {/* CURRENT PAYROLL RUN */}
+          <section className="panel">
+            <div className="flex flex-col justify-between gap-4 border-b border-[#E7D8D5] pb-5 sm:flex-row sm:items-start">
+              <div>
+                <p className="eyebrow">
+                  Current payroll run
+                </p>
+
+                <h2 className="section-title">
+                  {monthName(
+                    currentRun?.periodMonth,
+                    currentRun?.periodYear
+                  )}
+                </h2>
+              </div>
+
+              {currentRun && (
+                <Status value={currentRun.status} />
+              )}
+            </div>
+
+            {currentRun ? (
+              <div className="mt-7 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+                <Metric
+                  label="Employees"
+                  value={
+                    currentRun.employeeCount ??
+                    'Not available'
+                  }
+                  note="Expected in run"
+                />
+
+                <Metric
+                  label="Eligible"
+                  value={
+                    currentRun.successfulEmployeeCount ??
+                    'Not available'
+                  }
+                  note="Server-confirmed"
+                />
+
+                <Metric
+                  label="Processed"
+                  value={`${currentRun.processedEmployeeCount ?? 0} / ${
+                    currentRun.employeeCount ?? 0
+                  }`}
+                  note="Processing count"
+                />
+
+                <Metric
+                  label="Snapshots"
+                  value={
+                    currentRun.durableResultCount ??
+                    'Not available'
+                  }
+                  note="Durable results"
+                />
+              </div>
+            ) : (
+              <div className="empty-state">
+                <p className="font-semibold">
+                  NO PAYROLL RUN
+                </p>
+
+                <p className="mt-1 text-sm">
+                  Create a calendar-month run to begin
+                  preflight.
+                </p>
+
+                <Link
+                  className="btn btn-primary mt-5"
+                  to="/payroll"
+                >
+                  Create payroll run
+                </Link>
+              </div>
+            )}
+          </section>
+
+          {/* PAYROLL HEALTH + WORKFORCE */}
+          <div className="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+            {/* PAYROLL HEALTH */}
+            <section className="panel">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="eyebrow">
+                    Control checks
+                  </p>
+
+                  <h2 className="section-title">
+                    Payroll health
+                  </h2>
+                </div>
+
+                <span className="text-xs text-[#6F6565]">
+                  Declared MVP scope
+                </span>
+              </div>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <Health
+                  label="Salary configuration"
+                  state={
+                    currentRun
+                      ? 'resolved'
+                      : 'waiting for run'
+                  }
+                />
+
+                <Health
+                  label="Compliance rules"
+                  state={
+                    currentRun?.preflightResult
+                      ?.canProcess === false
+                      ? 'action required'
+                      : currentRun
+                        ? 'resolved by preflight'
+                        : 'waiting for run'
+                  }
+                />
+
+                <Health
+                  label="Employee eligibility"
+                  state={
+                    currentRun
+                      ? `${currentRun.successfulEmployeeCount || 0} eligible`
+                      : 'not evaluated'
+                  }
+                />
+
+                <Health
+                  label="Audit"
+                  state="not exposed by API"
+                  tone="warn"
+                />
+
+                <Health
+                  label="TDS"
+                  state="deferred"
+                  tone="muted"
+                />
+
+                <Health
+                  label="Attendance adjustment"
+                  state="deferred"
+                  tone="muted"
+                />
+              </div>
+            </section>
+
+            {/* WORKFORCE CONTEXT */}
+            <section className="panel">
+              <p className="eyebrow">
+                Employee directory
+              </p>
+
+              <h2 className="section-title">
+                Workforce context
+              </h2>
+
+              <div className="mt-6 space-y-5">
+                <Metric
+                  label="Total employees"
+                  value={
+                    stats?.total ??
+                    'Not available'
+                  }
+                  note="Active and historical records"
+                />
+
+                <Metric
+                  label="Active employees"
+                  value={
+                    stats?.active ??
+                    'Not available'
+                  }
+                  note="Current employee status"
+                />
+
+                <Metric
+                  label="Configured payroll"
+                  value={
+                    stats?.salary?.totalPayroll
+                      ? money(
+                          stats.salary.totalPayroll
+                        )
+                      : 'Not available'
+                  }
+                  note="Employee salary context"
+                />
+              </div>
+
+              <Link
+                to="/employees"
+                className="mt-7 inline-block text-sm font-semibold text-[#A6192E] transition hover:text-[#7D1022]"
+              >
+                Open employee directory →
+              </Link>
+            </section>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export { money, monthName };

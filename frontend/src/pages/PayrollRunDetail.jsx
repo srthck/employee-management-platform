@@ -1,18 +1,419 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import * as payrollRunService from '../services/payrollRunService';
-import * as snapshotService from '../services/payrollSnapshotService';
-import { Status, monthName, money } from './Overview';
 
-export default function PayrollRunDetail() {
-  const { id } = useParams(); const navigate = useNavigate(); const [run, setRun] = useState(null); const [preflight, setPreflight] = useState(null); const [snapshots, setSnapshots] = useState([]); const [loading, setLoading] = useState(true); const [working, setWorking] = useState(''); const [error, setError] = useState(''); const [confirm, setConfirm] = useState(false);
-  const load = async () => { setLoading(true); try { const result = await payrollRunService.getPayrollRun(id); setRun(result.data?.run); if (result.data?.run?.status === 'FINALIZED' || result.data?.run?.status === 'DISBURSED') { const snap = await snapshotService.getRunSnapshots(id); setSnapshots(snap.data?.snapshots || []); } } catch (e) { setError(e.response?.data?.message || 'Unable to load payroll run.'); } finally { setLoading(false); } };
-  useEffect(() => { load(); }, [id]);
-  const runAction = async (action) => { setWorking(action); setError(''); try { const result = action === 'preflight' ? await payrollRunService.preflightPayrollRun(id) : action === 'process' ? await payrollRunService.processPayrollRun(id, { idempotencyKey: `process-${id}` }) : await payrollRunService.finalizePayrollRun(id); if (action === 'preflight') setPreflight(result.data); else setRun(result.data?.run); if (action !== 'preflight') await load(); } catch (e) { setError(e.response?.data?.message || 'Payroll action failed.'); } finally { setWorking(''); setConfirm(false); } };
-  if (loading) return <div className="panel py-16 text-center text-sm text-[#6d8188]">Loading payroll run...</div>;
-  if (!run) return <div className="alert alert-danger">{error || 'Payroll run not found.'}</div>;
-  const pf = preflight || run.preflightResult; const canFinalize = run.status === 'READY_FOR_FINALIZATION'; const canProcess = run.status === 'DRAFT' || run.status === 'FAILED';
-  return <div className="space-y-8"><Link to="/payroll" className="text-sm font-semibold text-[#187a88]">← Payroll runs</Link><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="eyebrow">Payroll run detail</p><h1 className="page-title">{monthName(run.periodMonth, run.periodYear)} Payroll</h1><p className="page-subtitle">{run.periodStart ? new Date(run.periodStart).toLocaleDateString('en-IN') : 'Calendar month'} — {run.periodEnd ? new Date(run.periodEnd).toLocaleDateString('en-IN') : 'period end'}</p></div><Status value={run.status} /></div>{error && <div className="alert alert-danger">{error}</div>}<section className="panel"><div className="grid gap-7 sm:grid-cols-2 lg:grid-cols-5"><Item label="Employees" value={run.employeeCount} /><Item label="Eligible" value={run.successfulEmployeeCount} /><Item label="Processed" value={run.processedEmployeeCount} /><Item label="Durable results" value={run.durableResultCount} /><Item label="Finalized" value={run.finalizedAt ? new Date(run.finalizedAt).toLocaleDateString('en-IN') : 'Not finalized'} /></div><div className="mt-7 flex flex-wrap gap-3 border-t border-[#e3eaec] pt-6"><button type="button" className="btn" disabled={Boolean(working)} onClick={() => runAction('preflight')}>{working === 'preflight' ? 'Running preflight...' : 'Run preflight'}</button>{canProcess && <button type="button" className="btn btn-primary" disabled={Boolean(working)} onClick={() => runAction('process')}>{working === 'process' ? 'Processing...' : 'Process payroll'}</button>}{canFinalize && <button type="button" className="btn btn-primary" onClick={() => setConfirm(true)}>Finalize payroll</button>}</div></section><section className="panel"><p className="eyebrow">Preflight</p><h2 className="section-title">Eligibility and configuration checks</h2>{pf ? <div className="mt-5 grid gap-6 lg:grid-cols-2"><div><Check label="Eligible employees" value={pf.eligibleEmployees ?? pf.eligibleEmployeeCount} /><Check label="Blocked employees" value={pf.blockedEmployees ?? pf.blockedEmployeeCount} tone={(pf.blockedEmployees ?? pf.blockedEmployeeCount) > 0 ? 'bad' : ''} /><Check label="Can process" value={pf.canProcess ? 'YES' : 'NO'} tone={pf.canProcess ? '' : 'bad'} /></div><div><p className="label">Blocking errors</p>{(pf.blockingErrors || []).length ? <ul className="list-disc space-y-2 pl-5 text-sm text-[#a33d35]">{pf.blockingErrors.map((item, i) => <li key={i}>{item}</li>)}</ul> : <p className="text-sm text-[#26765f]">No blocking errors returned.</p>}<p className="label mt-5">Warnings</p>{(pf.warnings || []).length ? <ul className="list-disc space-y-2 pl-5 text-sm text-[#9a6700]">{pf.warnings.map((item, i) => <li key={i}>{item}</li>)}</ul> : <p className="text-sm text-[#687a81]">No warnings returned.</p>}</div></div> : <div className="empty-state"><p className="font-semibold">Preflight has not been run.</p><p className="mt-1 text-sm">Run the server-side check to resolve employee eligibility and rules.</p></div>}</section>{(run.status === 'PROCESSING') && <section className="panel"><p className="eyebrow">Processing</p><h2 className="section-title">Payroll processing</h2><p className="mt-4 text-sm text-[#687a81]">PROCESSING. The API currently exposes coarse run status rather than a progress stream; no percentage is inferred.</p></section>}{snapshots.length > 0 && <section className="panel"><div className="flex items-center justify-between"><div><p className="eyebrow">Immutable records</p><h2 className="section-title">Employee snapshots</h2></div><Status value="FINALIZED" /></div><div className="pg-scrollbar mt-5 overflow-x-auto"><table className="data-table"><thead><tr><th>Employee</th><th>Gross</th><th>Employee deductions</th><th>Net before TDS</th><th>Status</th><th /></tr></thead><tbody>{snapshots.map((snapshot) => <tr key={snapshot._id}><td className="font-semibold">{snapshot.employeeSnapshot?.fullName}<span className="block text-xs font-normal text-[#7b8d93]">{snapshot.employeeSnapshot?.department || 'Not available'}</span></td><td>{money(snapshot.salarySnapshot?.grossMonthly)}</td><td>{money(snapshot.payrollResults?.totalEmployeeDeductions)}</td><td>{money(snapshot.payrollResults?.netPayBeforeTDS)}</td><td><Status value={snapshot.snapshotStatus} /></td><td className="text-right"><Link className="btn btn-small" to={`/snapshots/${snapshot._id}`}>View snapshot</Link></td></tr>)}</tbody></table></div></section>}{confirm && <div className="dialog-backdrop"><div role="dialog" aria-modal="true" className="dialog"><p className="eyebrow">Financial operation</p><h2 className="section-title">Finalize payroll?</h2><p className="mt-4 text-sm leading-6 text-[#687a81]">You are about to finalize {monthName(run.periodMonth, run.periodYear)} for {run.employeeCount} employees. The server will decide whether the run can transition. Once finalized, payroll records are immutable.</p><div className="mt-7 flex justify-end gap-3"><button type="button" className="btn" onClick={() => setConfirm(false)}>Cancel</button><button type="button" className="btn btn-primary" disabled={Boolean(working)} onClick={() => runAction('finalize')}>{working === 'finalize' ? 'Finalizing...' : 'Finalize payroll'}</button></div></div></div>}</div>;
+const statusTone = {
+  DRAFT: 'neutral',
+  PROCESSING: 'info',
+  READY_FOR_FINALIZATION: 'warn',
+  FINALIZED: 'success',
+  DISBURSED: 'success',
+  FAILED: 'danger',
+  CANCELLED: 'neutral',
+};
+
+function StatusBadge({ value }) {
+  const tone = statusTone[value] || 'neutral';
+
+  const icon =
+    tone === 'success'
+      ? '✓'
+      : tone === 'warn'
+        ? '⚠'
+        : tone === 'danger'
+          ? '✕'
+          : '●';
+
+  return (
+    <span className={`status status-${tone}`}>
+      <span aria-hidden="true">{icon}</span>
+      {value?.replaceAll('_', ' ') || 'UNKNOWN'}
+    </span>
+  );
 }
-function Item({ label, value }) { return <div><p className="label">{label}</p><p className="mt-2 text-xl font-semibold">{value ?? 'Not available'}</p></div>; }
-function Check({ label, value, tone }) { return <div className="flex justify-between border-b border-[#edf1f2] py-3 text-sm"><span>{label}</span><span className={tone === 'bad' ? 'text-[#a33d35]' : 'font-semibold text-[#26765f]'}>{tone === 'bad' ? '⚠ ' : '✓ '}{value ?? 'Not available'}</span></div>; }
+
+function monthName(month, year) {
+  if (!month || !year) return 'Unknown period';
+
+  return new Date(year, month - 1, 1).toLocaleDateString('en-IN', {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function Metric({ label, value, note }) {
+  return (
+    <div className="border-l-2 border-[#A6192E] pl-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#6F6565]">
+        {label}
+      </p>
+
+      <p className="mt-2 text-2xl font-semibold tracking-tight text-[#241F20]">
+        {value}
+      </p>
+
+      {note && (
+        <p className="mt-1 text-xs text-[#6F6565]">
+          {note}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export default function PayrollDetails() {
+  const { id } = useParams();
+
+  const [run, setRun] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const [actionLoading, setActionLoading] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  const loadRun = async () => {
+    try {
+      setLoading(true);
+      setError('');
+
+      const response = await payrollRunService.getPayrollRun(id);
+
+      setRun(response?.data?.run || response?.run || null);
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        err.response?.data?.message ||
+          err.message ||
+          'Unable to load payroll run.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRun();
+  }, [id]);
+
+  const runAction = async (action, actionFunction, successMessage) => {
+    try {
+      setActionLoading(action);
+      setError('');
+      setSuccess('');
+
+      await actionFunction(id);
+
+      setSuccess(successMessage);
+
+      await loadRun();
+    } catch (err) {
+      console.error(err);
+
+      setError(
+        err.response?.data?.message ||
+          err.message ||
+          `Unable to ${action.toLowerCase()} payroll run.`
+      );
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  const handlePreflight = () =>
+    runAction(
+      'Preflight',
+      payrollRunService.preflightPayrollRun,
+      'Preflight completed successfully.'
+    );
+
+  const handleProcess = () =>
+    runAction(
+      'Process',
+      payrollRunService.processPayrollRun,
+      'Payroll processing completed successfully.'
+    );
+
+  const handleFinalize = () =>
+    runAction(
+      'Finalize',
+      payrollRunService.finalizePayrollRun,
+      'Payroll run finalized successfully.'
+    );
+
+  if (loading) {
+    return (
+      <div className="panel py-16 text-center text-sm text-[#6F6565]">
+        Loading payroll run...
+      </div>
+    );
+  }
+
+  if (!run) {
+    return (
+      <div className="space-y-6">
+        <Link
+          to="/payroll"
+          className="text-sm font-semibold text-[#A6192E] transition hover:text-[#7D1022]"
+        >
+          ← Back to payroll runs
+        </Link>
+
+        <div className="alert alert-danger">
+          {error || 'Payroll run not found.'}
+        </div>
+      </div>
+    );
+  }
+
+  const canPreflight =
+    run.status === 'DRAFT' ||
+    run.status === 'FAILED';
+
+  const canProcess =
+    run.status === 'DRAFT' ||
+    run.status === 'READY_FOR_FINALIZATION';
+
+  const canFinalize =
+    run.status === 'READY_FOR_FINALIZATION';
+
+  return (
+    <div className="space-y-8">
+
+      {/* Header */}
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+
+        <div>
+          <Link
+            to="/payroll"
+            className="text-sm font-semibold text-[#A6192E] transition hover:text-[#7D1022]"
+          >
+            ← Back to payroll runs
+          </Link>
+
+          <p className="eyebrow mt-5">
+            Payroll operation
+          </p>
+
+          <h1 className="page-title">
+            {monthName(run.periodMonth, run.periodYear)}
+          </h1>
+
+          <p className="page-subtitle">
+            Review, preflight, process and finalize this payroll run.
+          </p>
+        </div>
+
+        <StatusBadge value={run.status} />
+
+      </div>
+
+      {/* Messages */}
+      {error && (
+        <div className="alert alert-danger" role="alert">
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="alert alert-success" role="status">
+          {success}
+        </div>
+      )}
+
+      {/* Summary */}
+      <section className="panel">
+
+        <div className="border-b border-[#E7D8D5] pb-5">
+          <p className="eyebrow">
+            Run summary
+          </p>
+
+          <h2 className="section-title">
+            Payroll status
+          </h2>
+        </div>
+
+        <div className="mt-7 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+
+          <Metric
+            label="Employees"
+            value={run.employeeCount ?? 0}
+            note="Employees included in run"
+          />
+
+          <Metric
+            label="Eligible"
+            value={run.successfulEmployeeCount ?? 0}
+            note="Server-confirmed"
+          />
+
+          <Metric
+            label="Processed"
+            value={`${run.processedEmployeeCount ?? 0} / ${run.employeeCount ?? 0}`}
+            note="Processing progress"
+          />
+
+          <Metric
+            label="Snapshots"
+            value={run.durableResultCount ?? 0}
+            note="Durable payroll results"
+          />
+
+        </div>
+
+      </section>
+
+      {/* Preflight */}
+      <section className="panel">
+
+        <div>
+          <p className="eyebrow">
+            Step 1
+          </p>
+
+          <h2 className="section-title">
+            Preflight checks
+          </h2>
+
+          <p className="mt-2 text-sm text-[#6F6565]">
+            Validate employee eligibility, salary configuration and
+            compliance requirements before processing payroll.
+          </p>
+        </div>
+
+        {run.preflightResult && (
+          <div className="mt-5 rounded-[10px] border border-[#E7D8D5] bg-[#FFF7F0] p-5">
+
+            <p className="text-sm font-semibold text-[#241F20]">
+              Preflight result
+            </p>
+
+            <p className="mt-2 text-sm text-[#6F6565]">
+              {run.preflightResult.canProcess === false
+                ? 'Action required before payroll can be processed.'
+                : 'Payroll is eligible for processing.'}
+            </p>
+
+          </div>
+        )}
+
+        <div className="mt-6">
+
+          <button
+            type="button"
+            onClick={handlePreflight}
+            disabled={!canPreflight || actionLoading !== ''}
+            className="btn btn-primary"
+          >
+            {actionLoading === 'Preflight'
+              ? 'Running preflight...'
+              : 'Run Preflight'}
+          </button>
+
+        </div>
+
+      </section>
+
+      {/* Processing */}
+      <section className="panel">
+
+        <div>
+          <p className="eyebrow">
+            Step 2
+          </p>
+
+          <h2 className="section-title">
+            Process payroll
+          </h2>
+
+          <p className="mt-2 text-sm text-[#6F6565]">
+            Calculate payroll for all eligible employees and create
+            durable payroll results.
+          </p>
+        </div>
+
+        <div className="mt-6">
+
+          <button
+            type="button"
+            onClick={handleProcess}
+            disabled={!canProcess || actionLoading !== ''}
+            className="btn btn-primary"
+          >
+            {actionLoading === 'Process'
+              ? 'Processing payroll...'
+              : 'Process Payroll'}
+          </button>
+
+        </div>
+
+      </section>
+
+      {/* Finalization */}
+      <section className="panel">
+
+        <div>
+          <p className="eyebrow">
+            Step 3
+          </p>
+
+          <h2 className="section-title">
+            Finalize payroll
+          </h2>
+
+          <p className="mt-2 text-sm text-[#6F6565]">
+            Lock the completed payroll run after successful processing.
+          </p>
+        </div>
+
+        <div className="mt-6">
+
+          <button
+            type="button"
+            onClick={handleFinalize}
+            disabled={!canFinalize || actionLoading !== ''}
+            className="btn btn-primary"
+          >
+            {actionLoading === 'Finalize'
+              ? 'Finalizing...'
+              : 'Finalize Payroll'}
+          </button>
+
+        </div>
+
+      </section>
+
+      {/* Snapshots */}
+      <section className="panel">
+
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+
+          <div>
+            <p className="eyebrow">
+              Payroll results
+            </p>
+
+            <h2 className="section-title">
+              Payroll Snapshots
+            </h2>
+
+            <p className="mt-2 text-sm text-[#6F6565]">
+              View the immutable payroll results generated for this run.
+            </p>
+          </div>
+
+          <Link
+            to={`/snapshots?payrollRunId=${run._id || run.id}`}
+            className="btn btn-secondary"
+          >
+            View Snapshots →
+          </Link>
+
+        </div>
+
+      </section>
+
+    </div>
+  );
+}

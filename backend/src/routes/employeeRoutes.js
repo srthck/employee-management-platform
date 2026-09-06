@@ -1,5 +1,6 @@
 import express from 'express';
-import authMiddleware from '../middleware/authMiddleware.js';
+import authMiddleware, { requireRole } from '../middleware/authMiddleware.js';
+
 import {
   getEmployees,
   getEmployeeStats,
@@ -8,6 +9,7 @@ import {
   updateEmployee,
   deleteEmployee,
 } from '../controllers/employeeController.js';
+
 import {
   validateCreateEmployee,
   validateUpdateEmployee,
@@ -19,28 +21,45 @@ import {
 /**
  * Employee Routes
  *
- * All routes require a valid JWT (authMiddleware).
+ * All routes require authentication.
  *
- * GET    /api/employees         – paginated list with search/filter
- * GET    /api/employees/stats   – dashboard statistics
- * GET    /api/employees/:id     – single employee
- * POST   /api/employees         – create employee
- * PUT    /api/employees/:id     – update employee
- * DELETE /api/employees/:id     – delete employee
+ * RBAC:
+ *   admin   → full employee management
+ *   manager → employee viewing, creation and updating
+ *
+ * DELETE is restricted to admin.
+ *
+ * GET    /api/employees
+ * GET    /api/employees/stats
+ * GET    /api/employees/:id
+ * POST   /api/employees
+ * PUT    /api/employees/:id
+ * DELETE /api/employees/:id
  */
 
 const router = express.Router();
 
-// All employee routes are protected
+// ─────────────────────────────────────────────────────────────────────────────
+// Authentication
+// ─────────────────────────────────────────────────────────────────────────────
+
+// All employee routes require a valid JWT.
 router.use(authMiddleware);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Read Operations
+// Admin + Manager
+// ─────────────────────────────────────────────────────────────────────────────
 
 router.get(
   '/stats',
+  requireRole('admin', 'manager'),
   getEmployeeStats
 );
 
 router.get(
   '/',
+  requireRole('admin', 'manager'),
   validateEmployeeQuery,
   handleValidationErrors,
   getEmployees
@@ -48,13 +67,20 @@ router.get(
 
 router.get(
   '/:id',
+  requireRole('admin', 'manager'),
   validateEmployeeId,
   handleValidationErrors,
   getEmployee
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Create / Update
+// Admin + Manager
+// ─────────────────────────────────────────────────────────────────────────────
+
 router.post(
   '/',
+  requireRole('admin', 'manager'),
   validateCreateEmployee,
   handleValidationErrors,
   createEmployee
@@ -62,14 +88,21 @@ router.post(
 
 router.put(
   '/:id',
+  requireRole('admin', 'manager'),
   validateEmployeeId,
   validateUpdateEmployee,
   handleValidationErrors,
   updateEmployee
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Delete
+// Admin only
+// ─────────────────────────────────────────────────────────────────────────────
+
 router.delete(
   '/:id',
+  requireRole('admin'),
   validateEmployeeId,
   handleValidationErrors,
   deleteEmployee

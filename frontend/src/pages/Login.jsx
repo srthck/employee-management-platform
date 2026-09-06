@@ -17,32 +17,60 @@ export default function Login() {
   const { login } = useContext(AuthContext);
   const navigate = useNavigate();
 
-  const [form, setForm] = useState({ email: '', password: '' });
+  const [form, setForm] = useState({
+    email: '',
+    password: '',
+  });
+
   const [errors, setErrors] = useState({});
   const [apiError, setApiError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   // ─── Client-side validation ────────────────────────────────────────────────
+
   const validate = () => {
     const errs = {};
-    if (!form.email.trim()) errs.email = 'Email is required';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
+
+    if (!form.email.trim()) {
+      errs.email = 'Email is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
       errs.email = 'Enter a valid email address';
-    if (!form.password) errs.password = 'Password is required';
+    }
+
+    if (!form.password) {
+      errs.password = 'Password is required';
+    }
+
     return errs;
   };
 
+  // ─── Input change ──────────────────────────────────────────────────────────
+
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
-    // Clear field-level error on change
-    if (errors[name]) setErrors((prev) => ({ ...prev, [name]: '' }));
+
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+
+    if (errors[name]) {
+      setErrors((prev) => ({
+        ...prev,
+        [name]: '',
+      }));
+    }
+
     setApiError('');
   };
 
+  // ─── Submit ────────────────────────────────────────────────────────────────
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+
     const errs = validate();
+
     if (Object.keys(errs).length) {
       setErrors(errs);
       return;
@@ -52,11 +80,17 @@ export default function Login() {
     setApiError('');
 
     try {
-      await login({ email: form.email, password: form.password });
+      await login({
+        email: form.email,
+        password: form.password,
+      });
+
       navigate('/dashboard');
     } catch (err) {
       const message =
-        err.response?.data?.message || 'Login failed. Please try again.';
+        err.response?.data?.message ||
+        'Login failed. Please try again.';
+
       setApiError(message);
     } finally {
       setIsLoading(false);
@@ -64,45 +98,126 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
-      {/* Background gradient orbs */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -left-40 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -right-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl" />
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#FFFDF8] px-4 py-10">
+
+      {/* =========================================================
+          BACKGROUND DECORATION
+      ========================================================== */}
+
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+
+        {/* Top-right warm glow */}
+        <div className="absolute -right-40 -top-40 h-[420px] w-[420px] rounded-full bg-[#F8E8EA] opacity-45 blur-3xl" />
+
+        {/* Bottom-left warm glow */}
+        <div className="absolute -bottom-40 -left-40 h-[420px] w-[420px] rounded-full bg-[#FFF7F0] opacity-70 blur-3xl" />
+
       </div>
 
-      <div className="relative w-full max-w-md">
-        {/* Card */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl shadow-black/50">
-          {/* Header */}
-          <div className="mb-8">
-            <div className="flex items-center gap-2 mb-6">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
-                <span className="text-white text-xs font-bold">EMS</span>
-              </div>
-              <span className="text-slate-400 text-sm font-medium">PAYGUARD · Payroll operations</span>
+      {/* =========================================================
+          LOGIN CONTAINER
+      ========================================================== */}
+
+      <div className="relative w-full max-w-[440px]">
+
+        {/* =======================================================
+            BRAND
+        ======================================================== */}
+
+        <div className="mb-7 flex justify-center">
+
+          <Link
+            to="/"
+            className="flex items-center gap-3"
+          >
+
+            <div className="flex h-10 w-10 items-center justify-center rounded-[11px] bg-[#A6192E] shadow-[0_7px_18px_rgba(60,25,30,0.12)]">
+              <span className="text-lg font-semibold text-white">
+                P
+              </span>
             </div>
-            <h1 className="text-2xl font-bold text-white">Welcome back</h1>
-            <p className="text-slate-400 text-sm mt-1">Sign in to your admin account</p>
+
+            <span className="text-[20px] font-semibold tracking-[-0.025em] text-[#241F20]">
+              PayGuard
+            </span>
+
+          </Link>
+
+        </div>
+
+        {/* =======================================================
+            LOGIN CARD
+        ======================================================== */}
+
+        <div className="rounded-[16px] border border-[#E7D8D5] bg-white p-7 shadow-[0_18px_50px_rgba(60,25,30,0.08)] sm:p-8">
+
+          {/* -----------------------------------------------------
+              HEADER
+          ------------------------------------------------------ */}
+
+          <div className="mb-7 text-center">
+
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#A6192E]">
+              PayGuard Portal
+            </p>
+
+            <h1 className="mt-2 text-[28px] font-semibold tracking-[-0.035em] text-[#241F20]">
+              Welcome back
+            </h1>
+
+            <p className="mt-2 text-sm text-[#6F6565]">
+              Sign in to your PayGuard account
+            </p>
+
           </div>
 
-          {/* API Error Banner */}
+          {/* =====================================================
+              API ERROR
+          ====================================================== */}
+
           {apiError && (
-            <div className="mb-6 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-center gap-2">
-              <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            <div className="mb-6 flex items-start gap-2.5 rounded-[9px] border border-[#E7D8D5] bg-[#F8E8EA] px-4 py-3 text-sm text-[#9B1C31]">
+
+              <svg
+                className="mt-0.5 h-4 w-4 flex-shrink-0"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                  clipRule="evenodd"
+                />
               </svg>
-              {apiError}
+
+              <span>{apiError}</span>
+
             </div>
           )}
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} noValidate className="space-y-5">
-            {/* Email */}
+          {/* =====================================================
+              LOGIN FORM
+          ====================================================== */}
+
+          <form
+            onSubmit={handleSubmit}
+            noValidate
+            className="space-y-5"
+          >
+
+            {/* ---------------------------------------------------
+                EMAIL
+            ---------------------------------------------------- */}
+
             <div>
-              <label htmlFor="login-email" className="block text-sm font-medium text-slate-300 mb-1.5">
+
+              <label
+                htmlFor="login-email"
+                className="mb-2 block text-sm font-semibold text-[#241F20]"
+              >
                 Email address
               </label>
+
               <input
                 id="login-email"
                 name="email"
@@ -111,20 +226,34 @@ export default function Login() {
                 value={form.email}
                 onChange={handleChange}
                 placeholder="admin@example.com"
-                className={`w-full px-4 py-2.5 rounded-lg bg-slate-800 border text-white placeholder-slate-500 text-sm outline-none transition-all duration-200
-                  focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500
-                  ${errors.email ? 'border-red-500/60 focus:ring-red-500/30 focus:border-red-500' : 'border-slate-700 hover:border-slate-600'}`}
+                className={`w-full rounded-[9px] border bg-white px-4 py-3 text-sm text-[#241F20] placeholder-[#A59A96] outline-none transition-all duration-200 ${
+                  errors.email
+                    ? 'border-[#9B1C31] focus:border-[#9B1C31] focus:ring-2 focus:ring-[#A6192E]/10'
+                    : 'border-[#E7D8D5] hover:border-[#CDBBB7] focus:border-[#A6192E] focus:ring-2 focus:ring-[#A6192E]/10'
+                }`}
               />
+
               {errors.email && (
-                <p className="mt-1.5 text-xs text-red-400">{errors.email}</p>
+                <p className="mt-1.5 text-xs font-medium text-[#9B1C31]">
+                  {errors.email}
+                </p>
               )}
+
             </div>
 
-            {/* Password */}
+            {/* ---------------------------------------------------
+                PASSWORD
+            ---------------------------------------------------- */}
+
             <div>
-              <label htmlFor="login-password" className="block text-sm font-medium text-slate-300 mb-1.5">
+
+              <label
+                htmlFor="login-password"
+                className="mb-2 block text-sm font-semibold text-[#241F20]"
+              >
                 Password
               </label>
+
               <input
                 id="login-password"
                 name="password"
@@ -133,44 +262,89 @@ export default function Login() {
                 value={form.password}
                 onChange={handleChange}
                 placeholder="••••••••"
-                className={`w-full px-4 py-2.5 rounded-lg bg-slate-800 border text-white placeholder-slate-500 text-sm outline-none transition-all duration-200
-                  focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500
-                  ${errors.password ? 'border-red-500/60 focus:ring-red-500/30 focus:border-red-500' : 'border-slate-700 hover:border-slate-600'}`}
+                className={`w-full rounded-[9px] border bg-white px-4 py-3 text-sm text-[#241F20] placeholder-[#A59A96] outline-none transition-all duration-200 ${
+                  errors.password
+                    ? 'border-[#9B1C31] focus:border-[#9B1C31] focus:ring-2 focus:ring-[#A6192E]/10'
+                    : 'border-[#E7D8D5] hover:border-[#CDBBB7] focus:border-[#A6192E] focus:ring-2 focus:ring-[#A6192E]/10'
+                }`}
               />
+
               {errors.password && (
-                <p className="mt-1.5 text-xs text-red-400">{errors.password}</p>
+                <p className="mt-1.5 text-xs font-medium text-[#9B1C31]">
+                  {errors.password}
+                </p>
               )}
+
             </div>
 
-            {/* Submit */}
+            {/* ---------------------------------------------------
+                SUBMIT BUTTON
+            ---------------------------------------------------- */}
+
             <button
               id="login-submit"
               type="submit"
               disabled={isLoading}
-              className="w-full mt-2 py-2.5 px-4 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500
-                text-white text-sm font-semibold tracking-wide transition-all duration-200 shadow-lg shadow-violet-500/25
-                disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-[9px] bg-[#A6192E] px-4 py-3 text-sm font-semibold tracking-wide text-white shadow-[0_10px_22px_rgba(60,25,30,0.12)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#7D1022] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
             >
+
               {isLoading ? (
                 <>
-                  <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                   Signing in…
                 </>
               ) : (
-                'Sign in'
+                <>
+                  Sign in
+                  <span className="ml-1">
+                    →
+                  </span>
+                </>
               )}
+
             </button>
+
           </form>
 
-          {/* Footer */}
-          <p className="mt-6 text-center text-sm text-slate-500">
-            Don&apos;t have an account?{' '}
-            <Link to="/register" className="text-violet-400 hover:text-violet-300 font-medium transition-colors">
-              Create one
-            </Link>
-          </p>
+          {/* =====================================================
+              REGISTER LINK
+          ====================================================== */}
+
+          <div className="mt-7 border-t border-[#E7D8D5] pt-6 text-center">
+
+            <p className="text-sm text-[#6F6565]">
+              Don&apos;t have an account?{' '}
+
+              <Link
+                to="/register"
+                className="font-semibold text-[#A6192E] transition-colors hover:text-[#7D1022]"
+              >
+                Create one
+              </Link>
+            </p>
+
+          </div>
+
         </div>
+
+        {/* =======================================================
+            SECURITY NOTE
+        ======================================================== */}
+
+        <div className="mt-5 flex items-center justify-center gap-2 text-xs text-[#6F6565]">
+
+          <span className="font-bold text-[#2E7D32]">
+            ✓
+          </span>
+
+          <span>
+            Secure access to PayGuard payroll operations
+          </span>
+
+        </div>
+
       </div>
+
     </div>
   );
 }

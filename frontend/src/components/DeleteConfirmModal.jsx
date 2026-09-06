@@ -1,66 +1,115 @@
-/**
- * DeleteConfirmModal
- *
- * Confirmation dialog before deleting an employee.
- *
- * Props:
- *   employee  – the employee to delete (used for display)
- *   onConfirm – called when user confirms deletion
- *   onClose   – called to dismiss without deleting
- */
-export default function DeleteConfirmModal({ employee, onConfirm, onClose }) {
+export default function DeleteConfirmModal({
+  employee,
+  onConfirm,
+  onCancel,
+}) {
   const handleBackdropClick = (e) => {
-    if (e.target === e.currentTarget) onClose();
+    if (e.target === e.currentTarget) {
+      onCancel();
+    }
   };
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#241F20]/40 p-4 backdrop-blur-sm"
       onClick={handleBackdropClick}
     >
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-sm">
-        {/* Header */}
-        <div className="px-6 pt-6 pb-4">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-full bg-red-500/15 flex items-center justify-center flex-shrink-0">
-              <svg className="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+      <div
+        className="w-full max-w-sm rounded-[14px] border border-[#E7D8D5] bg-[#FFFDF8] shadow-[0_12px_40px_rgba(60,25,30,0.16)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-employee-title"
+      >
+
+        {/* HEADER */}
+        <div className="px-6 pb-4 pt-6">
+
+          <div className="mb-4 flex items-center gap-3">
+
+            {/* Warning icon */}
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-[#F8E8EA] text-[#9B1C31]">
+              <svg
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                />
               </svg>
             </div>
+
             <div>
-              <h3 className="text-base font-semibold text-white">Delete Employee</h3>
-              <p className="text-sm text-slate-400 mt-0.5">This action cannot be undone.</p>
+              <h3
+                id="delete-employee-title"
+                className="text-base font-semibold text-[#241F20]"
+              >
+                Deactivate Employee
+              </h3>
+
+              <p className="mt-0.5 text-sm text-[#6F6565]">
+                Please confirm this action.
+              </p>
             </div>
+
           </div>
 
-          <p className="text-sm text-slate-300">
-            Are you sure you want to delete{' '}
-            <span className="font-semibold text-white">
-              {employee.firstName} {employee.lastName}
-            </span>?
-            All their data will be permanently removed.
+          <p className="text-sm leading-6 text-[#5F5555]">
+            Are you sure you want to deactivate{' '}
+            <span className="font-semibold text-[#241F20]">
+              {employee?.firstName} {employee?.lastName}
+            </span>
+            ?
           </p>
+
+          <div className="mt-4 rounded-[10px] border border-[#E7D8D5] bg-[#FFF7F0] px-4 py-3">
+            <p className="text-xs leading-5 text-[#6F6565]">
+              The employee record will be removed from active payroll
+              eligibility. Historical payroll records remain preserved.
+            </p>
+          </div>
+
         </div>
 
-        {/* Actions */}
+        {/* ACTIONS */}
         <div className="flex items-center justify-end gap-3 px-6 pb-6">
+
           <button
             type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            onClick={onCancel}
+            className="rounded-[8px] border border-[#E7D8D5] bg-white px-4 py-2 text-sm font-medium text-[#6F6565] transition hover:border-[#A6192E] hover:bg-[#F8E8EA] hover:text-[#A6192E]"
           >
             Cancel
           </button>
+
           <button
             type="button"
             onClick={onConfirm}
-            className="flex items-center gap-2 px-5 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-semibold transition-colors"
+            className="flex items-center gap-2 rounded-[8px] bg-[#A6192E] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[#7D1022] disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+              />
             </svg>
-            Delete Employee
+
+            Deactivate Employee
           </button>
+
         </div>
       </div>
     </div>

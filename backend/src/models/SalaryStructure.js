@@ -28,26 +28,31 @@ const salaryComponentSchema = new mongoose.Schema(
       required: [true, 'Basic salary component is required'],
       min: [0, 'Basic salary cannot be negative'],
     },
+
     hra: {
       type: Number,
       default: 0,
       min: [0, 'HRA cannot be negative'],
     },
+
     conveyanceAllowance: {
       type: Number,
       default: 0,
       min: [0, 'Conveyance allowance cannot be negative'],
     },
+
     medicalAllowance: {
       type: Number,
       default: 0,
       min: [0, 'Medical allowance cannot be negative'],
     },
+
     specialAllowance: {
       type: Number,
       default: 0,
       min: [0, 'Special allowance cannot be negative'],
     },
+
     otherAllowances: {
       type: Number,
       default: 0,
@@ -67,79 +72,84 @@ const salaryStructureSchema = new mongoose.Schema(
       index: true,
     },
 
-    // ─── Valid-time interval ─────────────────────────────────────────────
+    // ─── Valid-time interval ────────────────────────────────────────────────
     effectiveFrom: {
       type: Date,
       required: [true, 'Effective from date is required'],
     },
+
     effectiveTo: {
       type: Date,
-      default: null, // null = currently active
+      default: null,
     },
 
-    // ─── Salary components ────────────────────────────────────────────────
+    // ─── Salary components ──────────────────────────────────────────────────
     components: {
       type: salaryComponentSchema,
       required: [true, 'Salary components are required'],
     },
 
-    // ─── Derived gross (stored for fast querying, computed on create/update) ─
+    // ─── Derived gross ──────────────────────────────────────────────────────
+    // Stored for fast querying and consistency.
+    // Automatically calculated from salary components.
     grossMonthly: {
       type: Number,
       required: [true, 'Gross monthly salary is required'],
       min: [0, 'Gross salary cannot be negative'],
     },
 
-    // ─── Currency and pay frequency ──────────────────────────────────────
+    // ─── Currency and pay frequency ─────────────────────────────────────────
     currency: {
       type: String,
       default: 'INR',
       uppercase: true,
       trim: true,
     },
+
     payFrequency: {
       type: String,
       enum: ['monthly', 'semi-monthly', 'bi-weekly', 'weekly'],
       default: 'monthly',
     },
 
-    // ─── Work state / jurisdiction for PT resolution ─────────────────────
+    // ─── Work state / jurisdiction for PT resolution ────────────────────────
     workState: {
       type: String,
       trim: true,
       uppercase: true,
-      default: 'MH', // Maharashtra default; required for PT calculation
+      default: 'MH',
     },
 
-    // ─── Statutory flags ─────────────────────────────────────────────────
+    // ─── Statutory flags ────────────────────────────────────────────────────
     pfEnrolled: {
       type: Boolean,
       default: true,
     },
+
     esiEnrolled: {
       type: Boolean,
-      default: true, // ESI eligibility is also driven by gross threshold
+      default: true,
     },
+
     ptEnrolled: {
       type: Boolean,
       default: true,
     },
 
-    // ─── PF-specific metadata ─────────────────────────────────────────────
+    // ─── PF-specific metadata ───────────────────────────────────────────────
     pfWageOverride: {
-      // If set, PF is calculated on this wage instead of basic.
-      // null = use basic from components.
       type: Number,
       default: null,
       min: [0, 'PF wage override cannot be negative'],
     },
 
-    // ─── Metadata ─────────────────────────────────────────────────────────
+    // ─── Metadata ───────────────────────────────────────────────────────────
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Admin',
       required: true,
     },
+
     remarks: {
       type: String,
       trim: true,
@@ -152,43 +162,103 @@ const salaryStructureSchema = new mongoose.Schema(
 );
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
-// Primary query: find salary valid for a payroll period for an employee
-salaryStructureSchema.index({ employeeId: 1, effectiveFrom: 1 });
-salaryStructureSchema.index({ employeeId: 1, effectiveTo: 1 });
-// Find current (open-ended) salary for an employee
-salaryStructureSchema.index({ employeeId: 1, effectiveTo: 1, effectiveFrom: -1 });
 
-// ─── Pre-validation: compute grossMonthly from components ─────────────────────
+salaryStructureSchema.index({
+  employeeId: 1,
+  effectiveFrom: 1,
+});
+
+salaryStructureSchema.index({
+  employeeId: 1,
+  effectiveTo: 1,
+});
+
+salaryStructureSchema.index({
+  employeeId: 1,
+  effectiveTo: 1,
+  effectiveFrom: -1,
+});
+
+// ─── Gross salary calculation helper ─────────────────────────────────────────
+
+function calculateGrossMonthly(components) {
+  if (!components) {
+    return 0;
+  }
+
+  return (
+    (components.basic || 0) +
+    (components.hra || 0) +
+    (components.conveyanceAllowance || 0) +
+    (components.medicalAllowance || 0) +
+    (components.specialAllowance || 0) +
+    (components.otherAllowances || 0)
+  );
+}
+
+// ─── Pre-validation: compute grossMonthly ────────────────────────────────────
+//
+// This keeps validation behavior intact and ensures grossMonthly is calculated
+// before Mongoose validation runs.
+
 salaryStructureSchema.pre('validate', function (next) {
   if (this.components) {
-    this.grossMonthly =
-      (this.components.basic || 0) +
-      (this.components.hra || 0) +
-      (this.components.conveyanceAllowance || 0) +
-      (this.components.medicalAllowance || 0) +
-      (this.components.specialAllowance || 0) +
-      (this.components.otherAllowances || 0);
+    this.grossMonthly = calculateGrossMonthly(this.components);
   }
+
+  next();
+});
+
+// ─── Pre-save: compute grossMonthly ──────────────────────────────────────────
+//
+// Phase 3 requires grossMonthly to be computed through a save hook as well.
+// This also protects the stored value whenever a SalaryStructure document
+// is created or saved.
+
+salaryStructureSchema.pre('save', function (next) {
+  if (this.components) {
+    this.grossMonthly = calculateGrossMonthly(this.components);
+  }
+
   next();
 });
 
 // ─── Static: resolve salary valid for a given date ────────────────────────────
+
 /**
  * Find the salary structure that was valid on a specific date for an employee.
  *
  * @param {ObjectId|string} employeeId
- * @param {Date} onDate - The date the salary must be valid for (e.g., period end)
+ * @param {Date} onDate
  * @returns {Promise<SalaryStructureDocument|null>}
  */
-salaryStructureSchema.statics.findValidForDate = function (employeeId, onDate) {
+salaryStructureSchema.statics.findValidForDate = function (
+  employeeId,
+  onDate
+) {
   return this.findOne({
     employeeId,
-    effectiveFrom: { $lte: onDate },
+
+    effectiveFrom: {
+      $lte: onDate,
+    },
+
     $or: [
-      { effectiveTo: null },
-      { effectiveTo: { $gte: onDate } },
+      {
+        effectiveTo: null,
+      },
+      {
+        effectiveTo: {
+          $gte: onDate,
+        },
+      },
     ],
-  }).sort({ effectiveFrom: -1 }); // most recent effective version if overlap
+  }).sort({
+    effectiveFrom: -1,
+  });
 };
 
-export default mongoose.model('SalaryStructure', salaryStructureSchema);
+export default mongoose.model(
+  'SalaryStructure',
+  salaryStructureSchema
+);

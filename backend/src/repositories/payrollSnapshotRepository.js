@@ -9,80 +9,102 @@ import PayrollSnapshot from '../models/PayrollSnapshot.js';
  *     - updateSnapshot()
  *     - deleteSnapshot()
  *     - replaceSnapshot()
- *   These methods are absent by design. A finalized snapshot has no ordinary
- *   mutation path. Future correction/versioning will be introduced explicitly
- *   if required, with its own controlled architecture.
  *
- *   The ONLY writable method after snapshot creation is:
- *     - markFinalized() — changes snapshotStatus from PENDING_FINALIZATION
- *       to FINALIZED, and records finalizedAt + finalizedBy.
- *       This is the ONE legitimate post-creation mutation.
+ *   These methods are absent by design.
+ *
+ *   The ONLY writable methods after snapshot creation are:
+ *     - markFinalized()
+ *     - bulkMarkFinalized()
+ *
+ *   These only perform the controlled transition:
+ *
+ *     PENDING_FINALIZATION → FINALIZED
  *
  * ─── EXPOSED METHODS ────────────────────────────────────────────────────────
- *   create           — insert a new PENDING_FINALIZATION snapshot
- *   findById         — read by _id
- *   findByRunAndEmployee — read one snapshot for a run+employee
- *   findByRun        — paginated list for a run
- *   findByEmployee   — paginated history for an employee
- *   countByRun       — count snapshots for a run (completeness check)
- *   countFinalizedByRun — count FINALIZED snapshots for a run
- *   findDuplicates   — detect duplicate employee snapshots in a run
- *   markFinalized    — PENDING_FINALIZATION → FINALIZED (short transaction)
- *   bulkMarkFinalized — batch finalization within a transaction
+ *   create
+ *   findById
+ *   findByRunAndEmployee
+ *   findByRun
+ *   findByEmployee
+ *   countByRun
+ *   countFinalizedByRun
+ *   findDuplicates
+ *   markFinalized
+ *   bulkMarkFinalized
+ *
+ * ─── EMPLOYEE SELF-SERVICE ─────────────────────────────────────────────────
+ *   findByEmployee() supports an optional snapshotStatus filter.
+ *
+ *   This allows employee self-service to request:
+ *
+ *     snapshotStatus: 'FINALIZED'
+ *
+ *   so employees only see finalized payroll snapshots.
  */
 
 const payrollSnapshotRepository = {
-
   /**
-   * Create a new PENDING_FINALIZATION snapshot.
-   * Uses insertOne via save() so unique index violations surface cleanly.
+   * Create a new immutable payroll snapshot.
    *
-   * @param {object} data - Snapshot fields (including snapshotHash)
-   * @param {ClientSession} [session]
-   * @returns {Promise<PayrollSnapshot>}
+   * New snapshots always begin as PENDING_FINALIZATION.
    */
   async create(data, session = null) {
     const snap = new PayrollSnapshot(data);
+
     await snap.save(session ? { session } : {});
+
     return snap;
   },
 
   /**
-   * Find a snapshot by _id.
+   * Find a snapshot by its MongoDB ID.
    */
   async findById(id, session = null) {
     const q = PayrollSnapshot.findById(id);
-    if (session) q.session(session);
+
+    if (session) {
+      q.session(session);
+    }
+
     return q.exec();
   },
 
   /**
-   * Find the single snapshot for a specific run + employee combination.
-   * Returns null if none exists.
+   * Find one snapshot belonging to a specific payroll run
+   * and employee.
    */
   async findByRunAndEmployee(payrollRunId, employeeId, session = null) {
     const q = PayrollSnapshot.findOne({
       payrollRunId,
       'employeeSnapshot.employeeId': new mongoose.Types.ObjectId(employeeId),
     });
-    if (session) q.session(session);
+
+    if (session) {
+      q.session(session);
+    }
+
     return q.exec();
   },
 
   /**
-   * List all snapshots for a run (paginated).
+   * Find snapshots belonging to a payroll run.
    *
-   * @param {string|ObjectId} payrollRunId
-   * @param {object} [opts]
-   * @param {string}  [opts.snapshotStatus]
-   * @param {number}  [opts.limit=50]
-   * @param {number}  [opts.skip=0]
-   * @returns {Promise<PayrollSnapshot[]>}
+   * Optional snapshotStatus filter is supported.
    */
   async findByRun(payrollRunId, opts = {}) {
-    const { snapshotStatus, limit = 50, skip = 0 } = opts;
-    const filter = { payrollRunId };
-    if (snapshotStatus) filter.snapshotStatus = snapshotStatus;
+    const {
+      snapshotStatus = null,
+      limit = 50,
+      skip = 0,
+    } = opts;
+
+    const filter = {
+      payrollRunId,
+    };
+
+    if (snapshotStatus) {
+      filter.snapshotStatus = snapshotStatus;
+    }
 
     return PayrollSnapshot.find(filter)
       .sort({ 'employeeSnapshot.fullName': 1 })
@@ -93,18 +115,34 @@ const payrollSnapshotRepository = {
   },
 
   /**
-   * List snapshots for an employee (payslip history), paginated.
+   * Find payroll snapshot history for an employee.
    *
-   * @param {string|ObjectId} employeeId
-   * @param {object} [opts]
-   * @param {number}  [opts.limit=12]
-   * @param {number}  [opts.skip=0]
+   * snapshotStatus is optional.
+   *
+   * Examples:
+   *
+   *   findByEmployee(employeeId)
+   *
+   *   findByEmployee(employeeId, {
+   *     snapshotStatus: 'FINALIZED'
+   *   })
    */
   async findByEmployee(employeeId, opts = {}) {
-    const { limit = 12, skip = 0 } = opts;
-    return PayrollSnapshot.find({
+    const {
+      snapshotStatus = null,
+      limit = 12,
+      skip = 0,
+    } = opts;
+
+    const filter = {
       'employeeSnapshot.employeeId': new mongoose.Types.ObjectId(employeeId),
-    })
+    };
+
+    if (snapshotStatus) {
+      filter.snapshotStatus = snapshotStatus;
+    }
+
+    return PayrollSnapshot.find(filter)
       .sort({ periodYear: -1, periodMonth: -1 })
       .skip(skip)
       .limit(limit)
@@ -113,69 +151,106 @@ const payrollSnapshotRepository = {
   },
 
   /**
-   * Count all snapshots for a run (optionally by status).
+   * Count snapshots belonging to a payroll run.
+   *
+   * Optional snapshotStatus filter is supported.
    */
   async countByRun(payrollRunId, snapshotStatus = null) {
-    const filter = { payrollRunId };
-    if (snapshotStatus) filter.snapshotStatus = snapshotStatus;
+    const filter = {
+      payrollRunId,
+    };
+
+    if (snapshotStatus) {
+      filter.snapshotStatus = snapshotStatus;
+    }
+
     return PayrollSnapshot.countDocuments(filter);
   },
 
   /**
-   * Count FINALIZED snapshots for a run.
+   * Count finalized snapshots belonging to a payroll run.
    */
   async countFinalizedByRun(payrollRunId) {
     return this.countByRun(payrollRunId, 'FINALIZED');
   },
 
   /**
-   * Detect duplicate employee snapshots in a run (should return empty array).
-   * @returns {Promise<string[]>} employeeIds that appear more than once
+   * Detect duplicate employee snapshots within a payroll run.
    */
   async findDuplicates(payrollRunId) {
     const results = await PayrollSnapshot.aggregate([
-      { $match: { payrollRunId: new mongoose.Types.ObjectId(payrollRunId) } },
-      { $group: { _id: '$employeeSnapshot.employeeId', count: { $sum: 1 } } },
-      { $match: { count: { $gt: 1 } } },
+      {
+        $match: {
+          payrollRunId: new mongoose.Types.ObjectId(payrollRunId),
+        },
+      },
+      {
+        $group: {
+          _id: '$employeeSnapshot.employeeId',
+          count: { $sum: 1 },
+        },
+      },
+      {
+        $match: {
+          count: { $gt: 1 },
+        },
+      },
     ]);
-    return results.map(r => r._id.toString());
+
+    return results.map((r) => r._id.toString());
   },
 
   /**
-   * Mark a single snapshot as FINALIZED.
-   * Only transitions from PENDING_FINALIZATION → FINALIZED.
-   * Uses atomic conditional update for safety.
+   * Finalize one snapshot.
    *
-   * @param {string|ObjectId} snapshotId
-   * @param {string|ObjectId} finalizedBy - actor _id
-   * @param {ClientSession} [session]
-   * @returns {Promise<PayrollSnapshot|null>} - null if already finalized or not found
+   * Only a PENDING_FINALIZATION snapshot can be finalized.
    */
   async markFinalized(snapshotId, finalizedBy, session = null) {
-    const options = { new: true };
-    if (session) options.session = session;
+    const options = {
+      new: true,
+    };
+
+    if (session) {
+      options.session = session;
+    }
 
     return PayrollSnapshot.findOneAndUpdate(
-      { _id: snapshotId, snapshotStatus: 'PENDING_FINALIZATION' },
-      { $set: { snapshotStatus: 'FINALIZED', finalizedAt: new Date(), finalizedBy } },
+      {
+        _id: snapshotId,
+        snapshotStatus: 'PENDING_FINALIZATION',
+      },
+      {
+        $set: {
+          snapshotStatus: 'FINALIZED',
+          finalizedAt: new Date(),
+          finalizedBy,
+        },
+      },
       options
     ).exec();
   },
 
   /**
-   * Bulk mark all PENDING_FINALIZATION snapshots for a run as FINALIZED.
-   * Used inside the finalization transaction.
+   * Finalize all pending snapshots belonging to a payroll run.
    *
-   * @param {string|ObjectId} payrollRunId
-   * @param {string|ObjectId} finalizedBy
-   * @param {ClientSession} session - REQUIRED (called inside transaction)
-   * @returns {Promise<{ modifiedCount: number }>}
+   * Used by Phase 9 finalization transaction.
    */
   async bulkMarkFinalized(payrollRunId, finalizedBy, session) {
     return PayrollSnapshot.updateMany(
-      { payrollRunId, snapshotStatus: 'PENDING_FINALIZATION' },
-      { $set: { snapshotStatus: 'FINALIZED', finalizedAt: new Date(), finalizedBy } },
-      { session }
+      {
+        payrollRunId,
+        snapshotStatus: 'PENDING_FINALIZATION',
+      },
+      {
+        $set: {
+          snapshotStatus: 'FINALIZED',
+          finalizedAt: new Date(),
+          finalizedBy,
+        },
+      },
+      {
+        session,
+      }
     );
   },
 };

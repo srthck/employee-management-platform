@@ -1,22 +1,17 @@
 import { useState, useEffect } from 'react';
 import * as employeeService from '../services/employeeService';
 
-/**
- * EmployeeModal
- *
- * Handles both Create and Edit modes.
- *   employee = null  → Create mode
- *   employee = {...} → Edit mode (fields pre-filled)
- *
- * Props:
- *   employee   – employee object or null
- *   onSuccess  – called after successful save
- *   onClose    – called to dismiss modal
- */
-
 const DEPARTMENTS = [
-  'Engineering', 'Marketing', 'Sales', 'Human Resources',
-  'Finance', 'Operations', 'Design', 'Legal', 'Customer Support', 'Other',
+  'Engineering',
+  'Marketing',
+  'Sales',
+  'Human Resources',
+  'Finance',
+  'Operations',
+  'Design',
+  'Legal',
+  'Customer Support',
+  'Other',
 ];
 
 const EMPTY_FORM = {
@@ -32,9 +27,61 @@ const EMPTY_FORM = {
   notes: '',
 };
 
-const PASSWORD_LIKE_FIELDS = new Set(); // no password fields here
+function Field({
+  id,
+  name,
+  label,
+  type = 'text',
+  placeholder,
+  required,
+  autoComplete,
+  form,
+  errors,
+  handleChange,
+}) {
+  return (
+    <div>
+      <label
+        htmlFor={id}
+        className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-[#6B625E]"
+      >
+        {label}
+        {required && (
+          <span className="ml-1 text-[#C62828]">*</span>
+        )}
+      </label>
 
-export default function EmployeeModal({ employee, onSuccess, onClose }) {
+      <input
+        id={id}
+        name={name}
+        type={type}
+        autoComplete={autoComplete || 'off'}
+        value={form[name]}
+        onChange={handleChange}
+        placeholder={placeholder}
+        className={`w-full rounded-[9px] border bg-white px-3.5 py-2.5 text-sm text-[#1F2937] placeholder-[#AAA09B] outline-none transition-all duration-200
+          focus:border-[#C62828] focus:ring-2 focus:ring-[#C62828]/10
+          ${
+            errors[name]
+              ? 'border-[#C62828] bg-[#FFF8F7]'
+              : 'border-[#DDD2CE] hover:border-[#C8B9B4]'
+          }`}
+      />
+
+      {errors[name] && (
+        <p className="mt-1.5 text-xs font-medium text-[#B91C1C]">
+          {errors[name]}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export default function EmployeeModal({
+  employee,
+  onSuccess,
+  onClose,
+}) {
   const isEdit = Boolean(employee);
 
   const [form, setForm] = useState(EMPTY_FORM);
@@ -42,7 +89,6 @@ export default function EmployeeModal({ employee, onSuccess, onClose }) {
   const [apiError, setApiError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // Pre-fill form in edit mode
   useEffect(() => {
     if (employee) {
       setForm({
@@ -54,52 +100,98 @@ export default function EmployeeModal({ employee, onSuccess, onClose }) {
         position: employee.position || '',
         salary: employee.salary?.toString() || '',
         hireDate: employee.hireDate
-          ? new Date(employee.hireDate).toISOString().split('T')[0]
+          ? new Date(employee.hireDate)
+              .toISOString()
+              .split('T')[0]
           : '',
         status: employee.status || 'active',
         notes: employee.notes || '',
       });
+    } else {
+      setForm(EMPTY_FORM);
     }
+
+    setErrors({});
+    setApiError('');
   }, [employee]);
 
-  // ─── Client-side validation ──────────────────────────────────────────────
   const validate = () => {
     const errs = {};
 
-    if (!form.firstName.trim()) errs.firstName = 'First name is required';
-    else if (form.firstName.trim().length < 2) errs.firstName = 'Must be at least 2 characters';
+    if (!form.firstName.trim()) {
+      errs.firstName = 'First name is required';
+    } else if (form.firstName.trim().length < 2) {
+      errs.firstName = 'Must be at least 2 characters';
+    }
 
-    if (!form.lastName.trim()) errs.lastName = 'Last name is required';
-    else if (form.lastName.trim().length < 2) errs.lastName = 'Must be at least 2 characters';
+    if (!form.lastName.trim()) {
+      errs.lastName = 'Last name is required';
+    } else if (form.lastName.trim().length < 2) {
+      errs.lastName = 'Must be at least 2 characters';
+    }
 
-    if (!form.email.trim()) errs.email = 'Email is required';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) errs.email = 'Invalid email format';
+    if (!form.email.trim()) {
+      errs.email = 'Email is required';
+    } else if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)
+    ) {
+      errs.email = 'Invalid email format';
+    }
 
-    if (form.phone && !/^[\+]?[\d\s\-\(\)]{7,20}$/.test(form.phone.trim())) {
+    if (
+      form.phone &&
+      !/^[+]?[0-9\s\-()]{7,20}$/.test(form.phone.trim())
+    ) {
       errs.phone = 'Invalid phone number';
     }
 
-    if (!form.department) errs.department = 'Department is required';
-    if (!form.position.trim()) errs.position = 'Position is required';
+    if (!form.department) {
+      errs.department = 'Department is required';
+    }
 
-    if (!form.salary) errs.salary = 'Salary is required';
-    else if (isNaN(form.salary) || Number(form.salary) < 0) errs.salary = 'Enter a valid positive salary';
+    if (!form.position.trim()) {
+      errs.position = 'Position is required';
+    }
 
-    if (!form.hireDate) errs.hireDate = 'Hire date is required';
+    if (!form.salary) {
+      errs.salary = 'Salary is required';
+    } else if (
+      isNaN(form.salary) ||
+      Number(form.salary) < 0
+    ) {
+      errs.salary = 'Enter a valid positive salary';
+    }
+
+    if (!form.hireDate) {
+      errs.hireDate = 'Hire date is required';
+    }
 
     return errs;
   };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
-    if (errors[name]) setErrors((prev) => ({ ...prev, [name]: '' }));
+
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+
+    if (errors[name]) {
+      setErrors((prev) => ({
+        ...prev,
+        [name]: '',
+      }));
+    }
+
     setApiError('');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
     const errs = validate();
+
     if (Object.keys(errs).length) {
       setErrors(errs);
       return;
@@ -118,143 +210,297 @@ export default function EmployeeModal({ employee, onSuccess, onClose }) {
       notes: form.notes.trim() || undefined,
     };
 
-    if (isEdit) delete payload.salary;
+    if (isEdit) {
+      delete payload.salary;
+    }
 
     try {
       if (isEdit) {
-        await employeeService.updateEmployee(employee._id, payload);
+        await employeeService.updateEmployee(
+          employee._id,
+          payload
+        );
       } else {
         await employeeService.createEmployee(payload);
       }
+
       onSuccess();
     } catch (err) {
       if (err.response?.data?.errors?.length) {
         const fieldErrors = {};
-        err.response.data.errors.forEach(({ field, message }) => {
-          fieldErrors[field] = message;
-        });
+
+        err.response.data.errors.forEach(
+          ({ field, message }) => {
+            fieldErrors[field] = message;
+          }
+        );
+
         setErrors(fieldErrors);
       } else {
-        setApiError(err.response?.data?.message || 'Save failed. Please try again.');
+        setApiError(
+          err.response?.data?.message ||
+            'Save failed. Please try again.'
+        );
       }
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Close on backdrop click
   const handleBackdropClick = (e) => {
-    if (e.target === e.currentTarget) onClose();
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
   };
-
-  // ─── Field helper ────────────────────────────────────────────────────────
-  const Field = ({ id, name, label, type = 'text', placeholder, required, autoComplete }) => (
-    <div>
-      <label htmlFor={id} className="block text-xs font-medium text-slate-400 mb-1">
-        {label}{required && <span className="text-red-400 ml-0.5">*</span>}
-      </label>
-      <input
-        id={id}
-        name={name}
-        type={type}
-        autoComplete={autoComplete || 'off'}
-        value={form[name]}
-        onChange={handleChange}
-        placeholder={placeholder}
-        className={`w-full px-3 py-2 rounded-lg bg-slate-800 border text-white text-sm placeholder-slate-600 outline-none transition-all
-          focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500
-          ${errors[name] ? 'border-red-500/60' : 'border-slate-700 hover:border-slate-600'}`}
-      />
-      {errors[name] && <p className="mt-1 text-xs text-red-400">{errors[name]}</p>}
-    </div>
-  );
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#3A211F]/35 p-4 backdrop-blur-[3px]"
       onClick={handleBackdropClick}
     >
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
-              <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[16px] border border-[#E6D9D4] bg-[#FFFDF8] shadow-[0_24px_70px_rgba(78,37,31,0.18)]">
+
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-[#EDE2DD] bg-white px-6 py-5">
+          <div className="flex items-center gap-3">
+
+            <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#C62828] shadow-[0_6px_16px_rgba(198,40,40,0.18)]">
+              <svg
+                className="h-4.5 w-4.5 text-white"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
                 {isEdit ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                  />
                 ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
+                  />
                 )}
               </svg>
             </div>
-            <h2 className="text-base font-semibold text-white">
-              {isEdit ? 'Edit Employee' : 'Add New Employee'}
-            </h2>
+
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#C62828]">
+                PayGuard
+              </p>
+
+              <h2 className="mt-0.5 text-lg font-semibold tracking-tight text-[#1F2937]">
+                {isEdit ? 'Edit Employee' : 'Add New Employee'}
+              </h2>
+            </div>
           </div>
+
           <button
             type="button"
             onClick={onClose}
-            className="text-slate-400 hover:text-white transition-colors p-1 rounded-lg hover:bg-slate-800"
+            aria-label="Close"
+            className="rounded-[8px] p-2 text-[#827873] transition-colors hover:bg-[#FDECEC] hover:text-[#C62828]"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            <svg
+              className="h-5 w-5"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M6 18L18 6M6 6l12 12"
+              />
             </svg>
           </button>
         </div>
 
         {/* Form */}
-        <form onSubmit={handleSubmit} noValidate className="px-6 py-5 space-y-5">
+        <form
+          onSubmit={handleSubmit}
+          noValidate
+          className="space-y-6 px-6 py-6"
+        >
+
+          {/* API Error */}
           {apiError && (
-            <div className="px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-center gap-2">
-              <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            <div className="flex items-start gap-2.5 rounded-[10px] border border-[#EDC4C0] bg-[#FFF4F3] px-4 py-3 text-sm text-[#A33D35]">
+              <svg
+                className="mt-0.5 h-4 w-4 flex-shrink-0"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                  clipRule="evenodd"
+                />
               </svg>
-              {apiError}
+
+              <span>{apiError}</span>
             </div>
           )}
 
-          {/* Section: Personal Info */}
-          <div>
-            <p className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-3">Personal Information</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field id="emp-firstName" name="firstName" label="First Name" placeholder="John" required />
-              <Field id="emp-lastName" name="lastName" label="Last Name" placeholder="Doe" required />
-              <Field id="emp-email" name="email" label="Email" type="email" placeholder="john.doe@company.com" required autoComplete="email" />
-              <Field id="emp-phone" name="phone" label="Phone" type="tel" placeholder="+1 555 123 4567" />
-            </div>
-          </div>
+          {/* Personal Information */}
+          <section className="rounded-[12px] border border-[#EDE2DD] bg-white p-5">
+            <div className="mb-4 flex items-center gap-2">
+              <span className="h-5 w-1 rounded-full bg-[#C62828]" />
 
-          {/* Section: Employment Info */}
-          <div>
-            <p className="text-xs text-slate-500 font-medium uppercase tracking-wider mb-3">Employment Information</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p className="text-sm font-semibold text-[#1F2937]">
+                  Personal Information
+                </p>
+
+                <p className="mt-0.5 text-xs text-[#827873]">
+                  Basic employee contact details
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field
+                id="emp-firstName"
+                name="firstName"
+                label="First Name"
+                placeholder="John"
+                required
+                form={form}
+                errors={errors}
+                handleChange={handleChange}
+              />
+
+              <Field
+                id="emp-lastName"
+                name="lastName"
+                label="Last Name"
+                placeholder="Doe"
+                required
+                form={form}
+                errors={errors}
+                handleChange={handleChange}
+              />
+
+              <Field
+                id="emp-email"
+                name="email"
+                label="Email"
+                type="email"
+                placeholder="john.doe@company.com"
+                required
+                autoComplete="email"
+                form={form}
+                errors={errors}
+                handleChange={handleChange}
+              />
+
+              <Field
+                id="emp-phone"
+                name="phone"
+                label="Phone"
+                type="tel"
+                placeholder="+91 98765 43210"
+                form={form}
+                errors={errors}
+                handleChange={handleChange}
+              />
+            </div>
+          </section>
+
+          {/* Employment Information */}
+          <section className="rounded-[12px] border border-[#EDE2DD] bg-white p-5">
+            <div className="mb-4 flex items-center gap-2">
+              <span className="h-5 w-1 rounded-full bg-[#C62828]" />
+
+              <div>
+                <p className="text-sm font-semibold text-[#1F2937]">
+                  Employment Information
+                </p>
+
+                <p className="mt-0.5 text-xs text-[#827873]">
+                  Role, department and employment details
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+
               {/* Department */}
               <div>
-                <label htmlFor="emp-dept" className="block text-xs font-medium text-slate-400 mb-1">
-                  Department <span className="text-red-400">*</span>
+                <label
+                  htmlFor="emp-dept"
+                  className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-[#6B625E]"
+                >
+                  Department
+                  <span className="ml-1 text-[#C62828]">*</span>
                 </label>
+
                 <select
                   id="emp-dept"
                   name="department"
                   value={form.department}
                   onChange={handleChange}
-                  className={`w-full px-3 py-2 rounded-lg bg-slate-800 border text-sm text-white outline-none transition-all
-                    focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500
-                    ${errors.department ? 'border-red-500/60' : 'border-slate-700 hover:border-slate-600'}`}
+                  className={`w-full rounded-[9px] border bg-white px-3.5 py-2.5 text-sm text-[#1F2937] outline-none transition-all
+                    focus:border-[#C62828] focus:ring-2 focus:ring-[#C62828]/10
+                    ${
+                      errors.department
+                        ? 'border-[#C62828] bg-[#FFF8F7]'
+                        : 'border-[#DDD2CE] hover:border-[#C8B9B4]'
+                    }`}
                 >
-                  <option value="">Select department</option>
-                  {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
+                  <option value="">
+                    Select department
+                  </option>
+
+                  {DEPARTMENTS.map((department) => (
+                    <option
+                      key={department}
+                      value={department}
+                    >
+                      {department}
+                    </option>
+                  ))}
                 </select>
-                {errors.department && <p className="mt-1 text-xs text-red-400">{errors.department}</p>}
+
+                {errors.department && (
+                  <p className="mt-1.5 text-xs font-medium text-[#B91C1C]">
+                    {errors.department}
+                  </p>
+                )}
               </div>
 
-              <Field id="emp-position" name="position" label="Position / Job Title" placeholder="Software Engineer" required />
+              <Field
+                id="emp-position"
+                name="position"
+                label="Position / Job Title"
+                placeholder="Software Engineer"
+                required
+                form={form}
+                errors={errors}
+                handleChange={handleChange}
+              />
 
+              {/* Salary */}
               <div>
-                <label htmlFor="emp-salary" className="block text-xs font-medium text-slate-400 mb-1">
-                  {isEdit ? 'Legacy salary field (read-only)' : 'Legacy salary field (backend unit)'} <span className="text-red-400">*</span>
+                <label
+                  htmlFor="emp-salary"
+                  className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-[#6B625E]"
+                >
+                  Salary
+                  <span className="ml-1 text-[#C62828]">*</span>
                 </label>
+
                 <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-[#8A7D77]">
+                    ₹
+                  </span>
+
                   <input
                     id="emp-salary"
                     name="salary"
@@ -266,41 +512,85 @@ export default function EmployeeModal({ employee, onSuccess, onClose }) {
                     readOnly={isEdit}
                     aria-readonly={isEdit}
                     placeholder="60000"
-                    className={`w-full pl-7 pr-3 py-2 rounded-lg bg-slate-800 border text-white text-sm placeholder-slate-600 outline-none transition-all
-                      focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500
-                      ${errors.salary ? 'border-red-500/60' : 'border-slate-700 hover:border-slate-600'}`}
+                    className={`w-full rounded-[9px] border bg-white py-2.5 pl-8 pr-3 text-sm text-[#1F2937] placeholder-[#AAA09B] outline-none transition-all
+                      focus:border-[#C62828] focus:ring-2 focus:ring-[#C62828]/10
+                      ${
+                        errors.salary
+                          ? 'border-[#C62828] bg-[#FFF8F7]'
+                          : 'border-[#DDD2CE] hover:border-[#C8B9B4]'
+                      }
+                      ${isEdit ? 'bg-[#F8F3EF] text-[#746B67]' : ''}`}
                   />
                 </div>
-                {errors.salary && <p className="mt-1 text-xs text-red-400">{errors.salary}</p>}
+
+                {isEdit && (
+                  <p className="mt-1.5 text-[11px] text-[#8A7D77]">
+                    Salary is managed through the versioned salary structure.
+                  </p>
+                )}
+
+                {errors.salary && (
+                  <p className="mt-1.5 text-xs font-medium text-[#B91C1C]">
+                    {errors.salary}
+                  </p>
+                )}
               </div>
 
-              <Field id="emp-hireDate" name="hireDate" label="Hire Date" type="date" required />
+              <Field
+                id="emp-hireDate"
+                name="hireDate"
+                label="Hire Date"
+                type="date"
+                required
+                form={form}
+                errors={errors}
+                handleChange={handleChange}
+              />
 
               {/* Status */}
               <div>
-                <label htmlFor="emp-status" className="block text-xs font-medium text-slate-400 mb-1">
+                <label
+                  htmlFor="emp-status"
+                  className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-[#6B625E]"
+                >
                   Status
                 </label>
+
                 <select
                   id="emp-status"
                   name="status"
                   value={form.status}
                   onChange={handleChange}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 hover:border-slate-600 text-sm text-white outline-none transition-all focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500"
+                  className="w-full rounded-[9px] border border-[#DDD2CE] bg-white px-3.5 py-2.5 text-sm text-[#1F2937] outline-none transition-all hover:border-[#C8B9B4] focus:border-[#C62828] focus:ring-2 focus:ring-[#C62828]/10"
                 >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                  <option value="on-leave">On Leave</option>
+                  <option value="active">
+                    Active
+                  </option>
+
+                  <option value="inactive">
+                    Inactive
+                  </option>
+
+                  <option value="on-leave">
+                    On Leave
+                  </option>
                 </select>
               </div>
             </div>
-          </div>
+          </section>
 
           {/* Notes */}
-          <div>
-            <label htmlFor="emp-notes" className="block text-xs font-medium text-slate-400 mb-1">
-              Notes <span className="text-slate-600 font-normal">(optional)</span>
-            </label>
+          <section className="rounded-[12px] border border-[#EDE2DD] bg-white p-5">
+            <div className="mb-4">
+              <p className="text-sm font-semibold text-[#1F2937]">
+                Notes
+              </p>
+
+              <p className="mt-0.5 text-xs text-[#827873]">
+                Optional information about this employee
+              </p>
+            </div>
+
             <textarea
               id="emp-notes"
               name="notes"
@@ -309,32 +599,39 @@ export default function EmployeeModal({ employee, onSuccess, onClose }) {
               rows={3}
               maxLength={500}
               placeholder="Any additional information…"
-              className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700 hover:border-slate-600 text-white text-sm placeholder-slate-600 outline-none transition-all resize-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500"
+              className="w-full resize-none rounded-[9px] border border-[#DDD2CE] bg-white px-3.5 py-2.5 text-sm text-[#1F2937] placeholder-[#AAA09B] outline-none transition-all hover:border-[#C8B9B4] focus:border-[#C62828] focus:ring-2 focus:ring-[#C62828]/10"
             />
-            <p className="mt-1 text-xs text-slate-600 text-right">{form.notes.length}/500</p>
-          </div>
 
-          {/* Footer Buttons */}
-          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+            <p className="mt-1.5 text-right text-[11px] text-[#968A85]">
+              {form.notes.length}/500
+            </p>
+          </section>
+
+          {/* Footer */}
+          <div className="flex items-center justify-end gap-3 border-t border-[#EDE2DD] pt-5">
+
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              className="rounded-[9px] border border-[#DDD2CE] bg-white px-4 py-2.5 text-sm font-semibold text-[#625954] transition-all hover:border-[#C8B9B4] hover:bg-[#FFF8F3]"
             >
               Cancel
             </button>
+
             <button
               type="submit"
               disabled={isLoading}
-              className="flex items-center gap-2 px-5 py-2 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-sm font-semibold transition-all shadow-lg shadow-violet-500/20 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 rounded-[9px] bg-[#C62828] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(198,40,40,0.18)] transition-all hover:-translate-y-0.5 hover:bg-[#8E1B1B] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
             >
               {isLoading ? (
                 <>
-                  <div className="w-3.5 h-3.5 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                   Saving…
                 </>
               ) : (
-                <>{isEdit ? 'Save Changes' : 'Add Employee'}</>
+                <>
+                  {isEdit ? 'Save Changes' : 'Add Employee'}
+                </>
               )}
             </button>
           </div>

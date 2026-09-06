@@ -3,12 +3,7 @@ import axios from 'axios';
 /**
  * Centralized Axios Instance
  *
- * All API calls go through this instance.
- * Request interceptor automatically injects the JWT Bearer token.
- * Response interceptor handles global 401 (token expired / invalid).
- *
- * Portfolio implementation:
- * Authentication is browser-managed through an HttpOnly cookie.
+ * Authentication is handled through an HttpOnly cookie.
  */
 
 const axiosInstance = axios.create({
@@ -21,22 +16,43 @@ const axiosInstance = axios.create({
 });
 
 // ─── Request Interceptor ────────────────────────────────────────────────────
+
 axiosInstance.interceptors.request.use(
   (config) => config,
   (error) => Promise.reject(error)
 );
 
 // ─── Response Interceptor ───────────────────────────────────────────────────
-// Globally handle 401 Unauthorized (expired / invalid token)
+
+// Handle 401 Unauthorized for protected API requests.
+//
+// IMPORTANT:
+// /auth/me is intentionally excluded because a 401 response from /auth/me
+// simply means that the user is currently not logged in. It should NOT
+// automatically redirect a public page such as the Home page to /login.
+
 axiosInstance.interceptors.response.use(
   (response) => response,
+
   (error) => {
-    if (error.response?.status === 401) {
-      // Avoid circular imports: use window.location for hard redirect
+    const status = error.response?.status;
+    const requestUrl = error.config?.url || '';
+
+    const isAuthCheck = requestUrl.includes('/auth/me');
+    const isLoginRequest = requestUrl.includes('/auth/login');
+    const isRegisterRequest = requestUrl.includes('/auth/register');
+
+    if (
+      status === 401 &&
+      !isAuthCheck &&
+      !isLoginRequest &&
+      !isRegisterRequest
+    ) {
       if (window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
     }
+
     return Promise.reject(error);
   }
 );

@@ -8,7 +8,7 @@ import { AuthContext } from '../contexts/AuthContext';
  * Features:
  * - Name, email, password, confirmPassword form
  * - Client-side validation mirroring backend rules:
- *   · Name: 2-50 chars, letters/spaces/hyphens/apostrophes
+ *   · Name: 2-50 chars
  *   · Email: standard format
  *   · Password: 8-64 chars, 1 uppercase, 1 lowercase, 1 digit
  *   · ConfirmPassword: must match password
@@ -29,49 +29,76 @@ export default function Register() {
     password: '',
     confirmPassword: '',
   });
+
   const [errors, setErrors] = useState({});
   const [apiError, setApiError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  // ─── Client-side validation (mirrors backend authValidator rules) ──────────
+  // ─── Client-side validation ────────────────────────────────────────────────
   const validate = () => {
     const errs = {};
 
     // Name
     const trimmedName = form.name.trim();
-    if (!trimmedName) errs.name = 'Name is required';
-    else if (trimmedName.length < 2) errs.name = 'Name must be at least 2 characters';
-    else if (trimmedName.length > 50) errs.name = 'Name cannot exceed 50 characters';
+
+    if (!trimmedName) {
+      errs.name = 'Name is required';
+    } else if (trimmedName.length < 2) {
+      errs.name = 'Name must be at least 2 characters';
+    } else if (trimmedName.length > 50) {
+      errs.name = 'Name cannot exceed 50 characters';
+    }
 
     // Email
-    if (!form.email.trim()) errs.email = 'Email is required';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email))
+    if (!form.email.trim()) {
+      errs.email = 'Email is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
       errs.email = 'Enter a valid email address';
+    }
 
     // Password
-    if (!form.password) errs.password = 'Password is required';
-    else if (!PASSWORD_REGEX.test(form.password))
+    if (!form.password) {
+      errs.password = 'Password is required';
+    } else if (!PASSWORD_REGEX.test(form.password)) {
       errs.password =
         'Password must be 8-64 characters with at least one uppercase letter, one lowercase letter, and one digit';
+    }
 
-    // Confirm Password
-    if (!form.confirmPassword) errs.confirmPassword = 'Please confirm your password';
-    else if (form.password !== form.confirmPassword)
+    // Confirm password
+    if (!form.confirmPassword) {
+      errs.confirmPassword = 'Please confirm your password';
+    } else if (form.password !== form.confirmPassword) {
       errs.confirmPassword = 'Passwords do not match';
+    }
 
     return errs;
   };
 
+  // ─── Input change ──────────────────────────────────────────────────────────
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
-    if (errors[name]) setErrors((prev) => ({ ...prev, [name]: '' }));
+
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+
+    if (errors[name]) {
+      setErrors((prev) => ({
+        ...prev,
+        [name]: '',
+      }));
+    }
+
     setApiError('');
   };
 
+  // ─── Submit ────────────────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
+
     const errs = validate();
+
     if (Object.keys(errs).length) {
       setErrors(errs);
       return;
@@ -87,18 +114,23 @@ export default function Register() {
         password: form.password,
         confirmPassword: form.confirmPassword,
       });
+
       navigate('/dashboard');
     } catch (err) {
       // Handle structured validation errors from backend
       if (err.response?.data?.errors?.length) {
         const fieldErrors = {};
+
         err.response.data.errors.forEach(({ field, message }) => {
           fieldErrors[field] = message;
         });
+
         setErrors(fieldErrors);
       } else {
         const message =
-          err.response?.data?.message || 'Registration failed. Please try again.';
+          err.response?.data?.message ||
+          'Registration failed. Please try again.';
+
         setApiError(message);
       }
     } finally {
@@ -106,12 +138,23 @@ export default function Register() {
     }
   };
 
-  // ─── Reusable input field renderer ─────────────────────────────────────────
-  const renderField = (id, name, label, type, placeholder, autoComplete) => (
+  // ─── Reusable input renderer ──────────────────────────────────────────────
+  const renderField = (
+    id,
+    name,
+    label,
+    type,
+    placeholder,
+    autoComplete
+  ) => (
     <div>
-      <label htmlFor={id} className="block text-sm font-medium text-slate-300 mb-1.5">
+      <label
+        htmlFor={id}
+        className="mb-2 block text-sm font-semibold text-[#241F20]"
+      >
         {label}
       </label>
+
       <input
         id={id}
         name={name}
@@ -120,102 +163,269 @@ export default function Register() {
         value={form[name]}
         onChange={handleChange}
         placeholder={placeholder}
-        className={`w-full px-4 py-2.5 rounded-lg bg-slate-800 border text-white placeholder-slate-500 text-sm outline-none transition-all duration-200
-          focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500
-          ${errors[name] ? 'border-red-500/60 focus:ring-red-500/30 focus:border-red-500' : 'border-slate-700 hover:border-slate-600'}`}
+        className={`w-full rounded-[9px] border bg-white px-4 py-3 text-sm text-[#241F20] placeholder-[#A59A96] outline-none transition-all duration-200 ${
+          errors[name]
+            ? 'border-[#9B1C31] focus:border-[#9B1C31] focus:ring-2 focus:ring-[#A6192E]/10'
+            : 'border-[#E7D8D5] hover:border-[#D5BFBB] focus:border-[#A6192E] focus:ring-2 focus:ring-[#A6192E]/10'
+        }`}
       />
+
       {errors[name] && (
-        <p className="mt-1.5 text-xs text-red-400">{errors[name]}</p>
+        <p className="mt-1.5 text-xs font-medium text-[#9B1C31]">
+          {errors[name]}
+        </p>
       )}
     </div>
   );
 
+  // ─── Page ──────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-slate-950 flex items-center justify-center px-4">
-      {/* Background gradient orbs */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-violet-600/20 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-3xl" />
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#FFFDF8] px-4 py-10">
+      {/* =========================================================
+          BACKGROUND DECORATION
+      ========================================================== */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        {/* Top-right warm glow */}
+        <div className="absolute -right-40 -top-40 h-[420px] w-[420px] rounded-full bg-[#F8E8EA] opacity-60 blur-3xl" />
+
+        {/* Bottom-left warm glow */}
+        <div className="absolute -bottom-40 -left-40 h-[420px] w-[420px] rounded-full bg-[#FFF7F0] opacity-80 blur-3xl" />
       </div>
 
-      <div className="relative w-full max-w-md">
-        {/* Card */}
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl shadow-black/50">
-          {/* Header */}
-          <div className="mb-8">
-            <div className="flex items-center gap-2 mb-6">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
-                <span className="text-white text-xs font-bold">EMS</span>
-              </div>
-              <span className="text-slate-400 text-sm font-medium">PAYGUARD · Payroll operations</span>
+      {/* =========================================================
+          MAIN CONTAINER
+      ========================================================== */}
+      <div className="relative w-full max-w-[440px]">
+
+        {/* =======================================================
+            BRAND
+        ======================================================== */}
+        <div className="mb-7 flex justify-center">
+          <Link
+            to="/"
+            className="flex items-center gap-3"
+          >
+            <div className="flex h-11 w-11 items-center justify-center rounded-[12px] bg-[#A6192E] shadow-[0_8px_20px_rgba(125,16,34,0.18)]">
+              <span className="text-xl font-bold text-white">
+                P
+              </span>
             </div>
-            <h1 className="text-2xl font-bold text-white">Create your account</h1>
-            <p className="text-slate-400 text-sm mt-1">Set up your admin credentials to get started</p>
+
+            <span className="text-[22px] font-semibold tracking-[-0.03em] text-[#241F20]">
+              PayGuard
+            </span>
+          </Link>
+        </div>
+
+        {/* =======================================================
+            REGISTER CARD
+        ======================================================== */}
+        <div className="rounded-[16px] border border-[#E7D8D5] bg-white p-7 shadow-[0_18px_50px_rgba(60,25,30,0.08)] sm:p-8">
+
+          {/* -----------------------------------------------------
+              HEADER
+          ------------------------------------------------------ */}
+          <div className="mb-7 text-center">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#A6192E]">
+              PayGuard Portal
+            </p>
+
+            <h1 className="mt-2 text-[28px] font-bold tracking-[-0.035em] text-[#241F20]">
+              Create your account
+            </h1>
+
+            <p className="mt-2 text-sm text-[#6F6565]">
+              Set up your PayGuard account to get started
+            </p>
           </div>
 
-          {/* API Error Banner */}
+          {/* =====================================================
+              API ERROR
+          ====================================================== */}
           {apiError && (
-            <div className="mb-6 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-center gap-2">
-              <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            <div className="mb-6 flex items-start gap-2.5 rounded-[9px] border border-[#E6BFC4] bg-[#FDF1F3] px-4 py-3 text-sm text-[#9B1C31]">
+              <svg
+                className="mt-0.5 h-4 w-4 flex-shrink-0"
+                fill="currentColor"
+                viewBox="0 0 20 20"
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z"
+                  clipRule="evenodd"
+                />
               </svg>
-              {apiError}
+
+              <span>{apiError}</span>
             </div>
           )}
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} noValidate className="space-y-5">
-            {renderField('register-name', 'name', 'Full name', 'text', 'John Doe', 'name')}
-            {renderField('register-email', 'email', 'Email address', 'email', 'admin@example.com', 'email')}
-            {renderField('register-password', 'password', 'Password', 'password', '••••••••', 'new-password')}
-            {renderField('register-confirm', 'confirmPassword', 'Confirm password', 'password', '••••••••', 'new-password')}
+          {/* =====================================================
+              REGISTRATION FORM
+          ====================================================== */}
+          <form
+            onSubmit={handleSubmit}
+            noValidate
+            className="space-y-5"
+          >
+            {renderField(
+              'register-name',
+              'name',
+              'Full name',
+              'text',
+              'John Doe',
+              'name'
+            )}
 
-            {/* Password requirements hint */}
-            <div className="rounded-lg bg-slate-800/50 border border-slate-700/50 px-4 py-3">
-              <p className="text-xs text-slate-500 font-medium mb-1.5">Password requirements</p>
-              <ul className="text-xs text-slate-500 space-y-0.5 list-disc list-inside">
-                <li className={form.password.length >= 8 && form.password.length <= 64 ? 'text-emerald-400' : ''}>
+            {renderField(
+              'register-email',
+              'email',
+              'Email address',
+              'email',
+              'admin@example.com',
+              'email'
+            )}
+
+            {renderField(
+              'register-password',
+              'password',
+              'Password',
+              'password',
+              '••••••••',
+              'new-password'
+            )}
+
+            {renderField(
+              'register-confirm',
+              'confirmPassword',
+              'Confirm password',
+              'password',
+              '••••••••',
+              'new-password'
+            )}
+
+            {/* ===================================================
+                PASSWORD REQUIREMENTS
+            ==================================================== */}
+            <div className="rounded-[10px] border border-[#E7D8D5] bg-[#FFF7F0] px-4 py-3.5">
+              <p className="mb-2 text-xs font-semibold text-[#6F6565]">
+                Password requirements
+              </p>
+
+              <ul className="space-y-1 text-xs">
+
+                <li
+                  className={
+                    form.password.length >= 8 &&
+                    form.password.length <= 64
+                      ? 'text-[#2E7D32]'
+                      : 'text-[#8A807C]'
+                  }
+                >
+                  <span className="mr-1.5">
+                    {form.password.length >= 8 &&
+                    form.password.length <= 64
+                      ? '✓'
+                      : '•'}
+                  </span>
                   8–64 characters
                 </li>
-                <li className={/[A-Z]/.test(form.password) ? 'text-emerald-400' : ''}>
+
+                <li
+                  className={
+                    /[A-Z]/.test(form.password)
+                      ? 'text-[#2E7D32]'
+                      : 'text-[#8A807C]'
+                  }
+                >
+                  <span className="mr-1.5">
+                    {/[A-Z]/.test(form.password) ? '✓' : '•'}
+                  </span>
                   At least one uppercase letter
                 </li>
-                <li className={/[a-z]/.test(form.password) ? 'text-emerald-400' : ''}>
+
+                <li
+                  className={
+                    /[a-z]/.test(form.password)
+                      ? 'text-[#2E7D32]'
+                      : 'text-[#8A807C]'
+                  }
+                >
+                  <span className="mr-1.5">
+                    {/[a-z]/.test(form.password) ? '✓' : '•'}
+                  </span>
                   At least one lowercase letter
                 </li>
-                <li className={/\d/.test(form.password) ? 'text-emerald-400' : ''}>
+
+                <li
+                  className={
+                    /\d/.test(form.password)
+                      ? 'text-[#2E7D32]'
+                      : 'text-[#8A807C]'
+                  }
+                >
+                  <span className="mr-1.5">
+                    {/\d/.test(form.password) ? '✓' : '•'}
+                  </span>
                   At least one digit
                 </li>
+
               </ul>
             </div>
 
-            {/* Submit */}
+            {/* ===================================================
+                SUBMIT BUTTON
+            ==================================================== */}
             <button
               id="register-submit"
               type="submit"
               disabled={isLoading}
-              className="w-full mt-2 py-2.5 px-4 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500
-                text-white text-sm font-semibold tracking-wide transition-all duration-200 shadow-lg shadow-violet-500/25
-                disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              className="mt-2 flex w-full items-center justify-center gap-2 rounded-[9px] bg-[#A6192E] px-4 py-3 text-sm font-bold tracking-wide text-white shadow-[0_10px_22px_rgba(125,16,34,0.17)] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#7D1022] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
             >
               {isLoading ? (
                 <>
-                  <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
                   Creating account…
                 </>
               ) : (
-                'Create account'
+                <>
+                  Create account
+                  <span className="ml-1">
+                    →
+                  </span>
+                </>
               )}
             </button>
           </form>
 
-          {/* Footer */}
-          <p className="mt-6 text-center text-sm text-slate-500">
-            Already have an account?{' '}
-            <Link to="/login" className="text-violet-400 hover:text-violet-300 font-medium transition-colors">
-              Sign in
-            </Link>
-          </p>
+          {/* =====================================================
+              LOGIN LINK
+          ====================================================== */}
+          <div className="mt-7 border-t border-[#E7D8D5] pt-6 text-center">
+            <p className="text-sm text-[#6F6565]">
+              Already have an account?{' '}
+
+              <Link
+                to="/login"
+                className="font-semibold text-[#A6192E] transition-colors hover:text-[#7D1022]"
+              >
+                Sign in
+              </Link>
+            </p>
+          </div>
+        </div>
+
+        {/* =======================================================
+            SECURITY NOTE
+        ======================================================== */}
+        <div className="mt-5 flex items-center justify-center gap-2 text-xs text-[#8A807C]">
+          <span className="font-bold text-[#2E7D32]">
+            ✓
+          </span>
+
+          <span>
+            Secure account creation for PayGuard payroll operations
+          </span>
         </div>
       </div>
     </div>
