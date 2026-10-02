@@ -2,7 +2,8 @@ import PayrollRun from '../models/PayrollRun.js';
 import ComplianceRuleVersion from '../models/ComplianceRuleVersion.js';
 import compensationComponentService from './compensationComponentService.js';
 import { estimateStatutory, ctcTotals, notAppliedLines, versionView } from './compensationService.js';
-import { evaluateCompensationLines, roundToPaise as round2 } from './compensationEvaluator.js';
+import { evaluateCompensationLines } from './compensationEvaluator.js';
+import { roundToPaise as round2 } from '../utils/money.js';
 import { httpError, startOfUtcDay, dateOnly, isValidDate } from './employeeScope.js';
 
 /**

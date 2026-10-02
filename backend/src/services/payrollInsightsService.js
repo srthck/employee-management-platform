@@ -2,6 +2,7 @@ import PayrollRun, { PAYROLL_STATUS } from '../models/PayrollRun.js';
 import PayrollStagingResult from '../models/PayrollStagingResult.js';
 import PayrollSnapshot from '../models/PayrollSnapshot.js';
 import config from '../config/environment.js';
+import { roundToPaise as round2 } from '../utils/money.js';
 
 /**
  * payrollInsightsService — pre-finalization controls on a payroll run.
@@ -32,7 +33,6 @@ import config from '../config/environment.js';
  * READY_FOR_FINALIZATION, finalized snapshots otherwise.
  */
 
-const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
 const SEVERITY_ORDER = { critical: 0, high: 1, warning: 2, info: 3 };
 
 const CAUSE_LABELS = {

@@ -121,6 +121,7 @@ import auditService from './auditService.js';
 import { canTransition, PAYROLL_STATUS } from '../models/PayrollRun.js';
 import { runInTransaction } from '../utils/transaction.js';
 import { computePayPeriodDays, payrollBasisFrom, proratedAmount } from '../utils/payBasis.js';
+import { roundToPaise as round2 } from '../utils/money.js';
 
 // Actor recorded for automatic (non-human) operations such as stuck-run recovery.
 export const SYSTEM_ACTOR = Object.freeze({
@@ -132,8 +133,6 @@ export const SYSTEM_ACTOR = Object.freeze({
 // Heartbeat every N employees keeps writes low while staying far below the
 // stuck-run threshold.
 const HEARTBEAT_EVERY = 25;
-
-const round2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
 const conflict = (message) => Object.assign(new Error(message), { statusCode: 409 });
 

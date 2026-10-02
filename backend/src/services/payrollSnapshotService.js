@@ -62,6 +62,7 @@ import auditService from './auditService.js';
 import { computeSnapshotHash, verifySnapshotHash } from '../models/PayrollSnapshot.js';
 import { PAYROLL_STATUS } from '../models/PayrollRun.js';
 import { runInTransaction } from '../utils/transaction.js';
+import { roundToPaiseNoEpsilon } from '../utils/money.js';
 
 const runNotFound = () => Object.assign(new Error('Payroll run not found.'), { statusCode: 404 });
 const snapshotNotFound = () => Object.assign(new Error('Snapshot not found.'), { statusCode: 404 });
@@ -163,7 +164,7 @@ function buildSnapshotPayloadFromStaging(staging, run) {
     esi: staging.esi,
     pt:  staging.pt,
     totalEmployeeDeductions: staging.totalEmployeeDeductions,
-    employerTotalContribution: Math.round((epfEmployerContrib + esiEmployerContrib) * 100) / 100,
+    employerTotalContribution: roundToPaiseNoEpsilon(epfEmployerContrib + esiEmployerContrib),
     // Honest field name: netPayBeforeTDS — NOT "final net pay"
     netPayBeforeTDS: staging.netPayBeforeTDS,
     tdsStatus:       'DEFERRED',

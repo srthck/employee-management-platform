@@ -36,8 +36,7 @@ const startOfUtcDay = (value) => {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 };
 
-const round2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
-const round6 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 1e6) / 1e6;
+import { roundToPaise as round2, roundProrationFactor as round6 } from './money.js';
 
 const inclusiveDays = (from, to) => (to < from ? 0 : Math.round((to - from) / DAY_MS) + 1);
 

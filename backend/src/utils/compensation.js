@@ -191,7 +191,7 @@ export const LEGACY_COMPONENT_BUCKETS = Object.freeze({
   SPECIAL: 'specialAllowance',
 });
 
-const round2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+import { roundToPaise as round2 } from './money.js';
 
 /**
  * Validate a declarative formula tree.

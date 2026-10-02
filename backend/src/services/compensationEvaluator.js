@@ -5,6 +5,7 @@ import {
   evaluateFormula,
 } from '../utils/compensation.js';
 import { httpError } from './employeeScope.js';
+import { roundToPaise as round2, formatRupees as money } from '../utils/money.js';
 
 /**
  * compensationEvaluator — turns requested component lines into amounts.
@@ -20,8 +21,6 @@ import { httpError } from './employeeScope.js';
  * therefore never depend on each other, and the result cannot be ambiguous.
  */
 
-const round2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
-const money = (value) => `₹${round2(value).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const isGrossLine = (line) => line.type === 'EARNING' && line.recurrence === 'RECURRING';
 

@@ -44,20 +44,15 @@
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+// Rounding lives in utils/money.js. This calculator uses the STRICT variant on
+// purpose: a missing amount stays NaN instead of silently becoming zero.
+import {
+  roundToPaiseStrict as round2,
+  applyStatutoryRounding as applyRounding,
+  ROUNDING_MODES,
+} from '../utils/money.js';
 
-export const ROUNDING_MODES = Object.freeze({
-  PAISE: 'PAISE',
-  NEAREST_RUPEE: 'NEAREST_RUPEE',
-  CEIL_RUPEE: 'CEIL_RUPEE',
-});
-
-const applyRounding = (amount, mode = ROUNDING_MODES.PAISE) => {
-  const paise = round2(amount);
-  if (mode === ROUNDING_MODES.NEAREST_RUPEE) return Math.round(paise);
-  if (mode === ROUNDING_MODES.CEIL_RUPEE) return Math.ceil(paise);
-  return paise;
-};
+export { ROUNDING_MODES };
 
 const complianceCalculationService = {
   /**

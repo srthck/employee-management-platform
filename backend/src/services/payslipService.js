@@ -1,4 +1,5 @@
 import { verifySnapshotHash } from '../models/PayrollSnapshot.js';
+import { roundToPaise as round2, formatRupees as inr, formatRatePercent as percent } from '../utils/money.js';
 
 /**
  * payslipService — explainable payslips built only from a PayrollSnapshot.
@@ -18,9 +19,6 @@ import { verifySnapshotHash } from '../models/PayrollSnapshot.js';
  * been altered since it was written.
  */
 
-const round2 = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
-const inr = (n) => `₹${round2(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const percent = (rate) => `${Number((Number(rate) * 100).toFixed(4))}%`;
 const nearlyEqual = (a, b) => Math.abs(round2(a) - round2(b)) < 0.011;
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];

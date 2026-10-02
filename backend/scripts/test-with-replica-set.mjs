@@ -25,6 +25,7 @@ const TEST_FILES = [
   'test_wave2.js',
   'test_wave3.js',
   'test_wave35.js',
+  'test_rounding.js',
 ];
 
 const base = new URL(process.argv[2] || process.env.REPLICA_SET_URI || 'mongodb://127.0.0.1:27018/?replicaSet=rs0');
