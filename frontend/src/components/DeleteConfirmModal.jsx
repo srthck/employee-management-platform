@@ -49,7 +49,7 @@ export default function DeleteConfirmModal({
                 id="delete-employee-title"
                 className="text-base font-semibold text-[#241F20]"
               >
-                Deactivate Employee
+                Archive employee
               </h3>
 
               <p className="mt-0.5 text-sm text-[#6F6565]">
@@ -60,7 +60,7 @@ export default function DeleteConfirmModal({
           </div>
 
           <p className="text-sm leading-6 text-[#5F5555]">
-            Are you sure you want to deactivate{' '}
+            Are you sure you want to archive{' '}
             <span className="font-semibold text-[#241F20]">
               {employee?.firstName} {employee?.lastName}
             </span>
@@ -69,8 +69,9 @@ export default function DeleteConfirmModal({
 
           <div className="mt-4 rounded-[10px] border border-[#E7D8D5] bg-[#FFF7F0] px-4 py-3">
             <p className="text-xs leading-5 text-[#6F6565]">
-              The employee record will be removed from active payroll
-              eligibility. Historical payroll records remain preserved.
+              The employee leaves future payroll runs and loses login
+              access. Finalized payslips stay preserved, and the record can
+              be restored from the archived view.
             </p>
           </div>
 
@@ -107,7 +108,7 @@ export default function DeleteConfirmModal({
               />
             </svg>
 
-            Deactivate Employee
+            Archive employee
           </button>
 
         </div>

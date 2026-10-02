@@ -4,9 +4,10 @@ import {
   login,
   getCurrentUser,
   logout,
+  logoutAll,
 } from '../controllers/authController.js';
 import authMiddleware from '../middleware/authMiddleware.js';
-import { authRateLimiter } from '../middleware/rateLimiter.js';
+import { authRateLimiter, registerRateLimiter } from '../middleware/rateLimiter.js';
 import {
   validateRegister,
   validateLogin,
@@ -15,63 +16,29 @@ import {
 
 /**
  * Authentication Routes
- * 
- * POST   /api/auth/register  - Register new user
- * POST   /api/auth/login     - Login user
- * GET    /api/auth/me        - Get current user (protected)
+ *
+ * POST   /api/auth/register    - Register new admin (creates a company workspace)
+ * POST   /api/auth/login       - Login (admin, manager or employee)
+ * POST   /api/auth/logout      - Clear this browser's session cookie
+ * POST   /api/auth/logout-all  - Revoke every session for this account (protected)
+ * GET    /api/auth/me          - Get current user (protected)
+ *
+ * Request / response contract:
+ *   register: { name, email, password, confirmPassword } → { data: { user } }
+ *   login:    { email, password }                         → { data: { user } }
+ * The session JWT is delivered only as an HttpOnly cookie, never in the body.
  */
 
 const router = express.Router();
 
-/**
- * POST /api/auth/register
- * 
- * Register a new admin user
- * 
- * Request body:
- * {
- *   "name": "John Doe",
- *   "email": "john@example.com",
- *   "password": "SecurePass123!",
- *   "confirmPassword": "SecurePass123!"
- * }
- * 
- * Response:
- * {
- *   "success": true,
- *   "data": {
- *     "user": { id, name, email, role },
- *     "token": "eyJhbGc..."
- *   }
- * }
- */
 router.post(
   '/register',
+  registerRateLimiter,
   validateRegister,
   handleValidationErrors,
   register
 );
 
-/**
- * POST /api/auth/login
- * 
- * Authenticate user and receive JWT token
- * 
- * Request body:
- * {
- *   "email": "john@example.com",
- *   "password": "SecurePass123!"
- * }
- * 
- * Response:
- * {
- *   "success": true,
- *   "data": {
- *     "user": { id, name, email, role },
- *     "token": "eyJhbGc..."
- *   }
- * }
- */
 router.post(
   '/login',
   authRateLimiter,
@@ -82,22 +49,8 @@ router.post(
 
 router.post('/logout', logout);
 
-/**
- * GET /api/auth/me
- * 
- * Fetch current authenticated user
- * 
- * Headers:
- * Authorization: Bearer eyJhbGc...
- * 
- * Response:
- * {
- *   "success": true,
- *   "data": {
- *     "user": { id, name, email, role }
- *   }
- * }
- */
+router.post('/logout-all', authMiddleware, logoutAll);
+
 router.get(
   '/me',
   authMiddleware,

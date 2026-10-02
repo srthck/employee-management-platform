@@ -80,12 +80,15 @@ export default function Login() {
     setApiError('');
 
     try {
-      await login({
+      const result = await login({
         email: form.email,
         password: form.password,
       });
 
-      navigate('/dashboard');
+      // Employees land on self-service; admins and managers on operations.
+      navigate(
+        result?.data?.user?.role === 'employee' ? '/my/payslips' : '/dashboard'
+      );
     } catch (err) {
       const message =
         err.response?.data?.message ||

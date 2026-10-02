@@ -1,19 +1,24 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useContext, useState } from 'react';
 import { AuthContext } from '../contexts/AuthContext';
+import { can, roleLabel } from '../utils/permissions';
 
-const links = [
-  { to: '/dashboard', label: 'Overview', icon: '▦' },
-  { to: '/employees', label: 'Employees', icon: '♙' },
-  { to: '/payroll', label: 'Payroll runs', icon: '₹' },
-  { to: '/compliance', label: 'Compliance', icon: '✓' },
-  { to: '/audit', label: 'Audit trail', icon: '⌁' },
+const allLinks = [
+  { to: '/dashboard', label: 'Overview', icon: '▦', permission: 'payroll.read' },
+  { to: '/employees', label: 'Employees', icon: '♙', permission: 'employee.read' },
+  { to: '/payroll', label: 'Payroll runs', icon: '₹', permission: 'payroll.read' },
+  { to: '/compensation', label: 'Compensation', icon: '⌸', permission: 'compensation.read' },
+  { to: '/compliance', label: 'Compliance', icon: '✓', permission: 'compliance.read' },
+  { to: '/audit', label: 'Audit trail', icon: '⌁', permission: 'audit.read' },
+  { to: '/my/payslips', label: 'My payslips', icon: '₹', permission: 'self.service' },
 ];
 
 export default function PayGuardLayout() {
-  const { user, logout } = useContext(AuthContext);
+  const { user, logout, logoutAll } = useContext(AuthContext);
   const [open, setOpen] = useState(false);
   const location = useLocation();
+
+  const links = allLinks.filter((link) => can(user, link.permission));
 
   const current = links.find((link) =>
     location.pathname.startsWith(link.to)
@@ -117,7 +122,7 @@ export default function PayGuardLayout() {
             </p>
 
             <p className="mt-1 text-xs text-[#EFC9CF]">
-              {user?.role || 'Admin'} · single tenant
+              {roleLabel(user?.role)}
             </p>
 
             <button
@@ -126,6 +131,14 @@ export default function PayGuardLayout() {
               className="mt-4 w-full rounded-[8px] border border-white/20 px-3 py-2 text-left text-xs text-[#F8E8EA] transition hover:bg-white/10 hover:text-white"
             >
               Sign out
+            </button>
+
+            <button
+              type="button"
+              onClick={logoutAll}
+              className="mt-2 w-full rounded-[8px] px-3 py-1.5 text-left text-[11px] text-[#EFC9CF] transition hover:bg-white/10 hover:text-white"
+            >
+              Sign out on all devices
             </button>
 
           </div>

@@ -1,4 +1,5 @@
 import axiosInstance from './axiosInstance';
+import { postIdempotent } from './idempotency';
 
 /**
  * Employee Service
@@ -37,10 +38,7 @@ export const getEmployee = async (id) => {
  * Create a new employee.
  * @param {Object} data - Employee fields
  */
-export const createEmployee = async (data) => {
-  const response = await axiosInstance.post('/employees', data);
-  return response.data;
-};
+export const createEmployee = (data) => postIdempotent('/employees', data);
 
 /**
  * Update an existing employee.
@@ -53,10 +51,22 @@ export const updateEmployee = async (id, data) => {
 };
 
 /**
- * Delete an employee.
+ * Archive an employee (soft delete). The record and payroll history are kept.
+ * @param {string} id
+ * @param {string} [reason]
+ */
+export const deleteEmployee = async (id, reason) => {
+  const response = await axiosInstance.delete(`/employees/${id}`, {
+    data: reason ? { reason } : {},
+  });
+  return response.data;
+};
+
+/**
+ * Restore an archived employee (restored as inactive).
  * @param {string} id
  */
-export const deleteEmployee = async (id) => {
-  const response = await axiosInstance.delete(`/employees/${id}`);
+export const restoreEmployee = async (id) => {
+  const response = await axiosInstance.post(`/employees/${id}/restore`);
   return response.data;
 };

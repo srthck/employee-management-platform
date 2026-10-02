@@ -48,6 +48,13 @@ export const validateRegister = [
   body('confirmPassword')
     .custom((value, { req }) => value === req.body.password)
     .withMessage('Passwords do not match'),
+
+  body('companyName')
+    .optional({ checkFalsy: true })
+    .isString()
+    .trim()
+    .isLength({ min: 2, max: 120 })
+    .withMessage('Company name must be 2–120 characters'),
 ];
 
 /**

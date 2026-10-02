@@ -1,7 +1,7 @@
 /**
  * payrollSnapshotController — HTTP layer for PayrollSnapshot operations.
  *
- * THIN layer: extract input, derive actor from JWT, delegate to service.
+ * THIN layer: extract input, derive actor from the session, delegate to service.
  *
  * PROTECTED FIELDS (never accepted from client):
  *   snapshotStatus, finalizedAt, finalizedBy, snapshotHash, payrollRunId,
@@ -14,16 +14,19 @@
  *   GET  /api/payroll-runs/:runId/snapshots/:empId — employee's snapshot
  *   GET  /api/payroll-snapshots/:id               — get single snapshot
  *   GET  /api/payroll-snapshots/:id/verify        — verify hash integrity
+ *   GET  /api/payroll-snapshots/:id/explain       — explained payslip
  */
 
 import payrollSnapshotService from '../services/payrollSnapshotService.js';
+import payrollFinalizationService from '../services/payrollFinalizationService.js';
+import payslipService from '../services/payslipService.js';
 
 function actorFromRequest(req) {
   return { id: req.user.id, email: req.user.email, role: req.user.role };
 }
 
 function companyIdFromRequest(req) {
-  return req.user.id;  // single-tenant: companyId = Admin._id
+  return req.user.companyId || req.user.id;
 }
 
 // ─── POST /api/payroll-runs/:runId/materialize ────────────────────────────────
@@ -56,10 +59,13 @@ export const finalizeRun = async (req, res) => {
   const actor     = actorFromRequest(req);
   const companyId = companyIdFromRequest(req);
 
-  const { run, snapshotCount } = await payrollSnapshotService.finalizeRun(
+  // Same controls as POST /payroll-runs/:id/finalize: segregation of duties,
+  // variance gate and override are enforced for every finalization path.
+  const { run, snapshotCount } = await payrollFinalizationService.finalize(
     req.params.runId,
     companyId,
-    actor
+    actor,
+    { override: req.body?.override || null }
   );
 
   return res.status(200).json({
@@ -119,10 +125,20 @@ export const getSnapshot = async (req, res) => {
 
 // ─── GET /api/payroll-snapshots/:id/verify ────────────────────────────────────
 export const verifySnapshot = async (req, res) => {
-  const result = await payrollSnapshotService.verifySnapshot(req.params.id);
+  const result = await payrollSnapshotService.verifySnapshot(req.params.id, companyIdFromRequest(req));
 
   return res.status(result.valid ? 200 : 409).json({
     success: result.valid,
     data: result,
+  });
+};
+
+// ─── GET /api/payroll-snapshots/:id/explain ───────────────────────────────────
+export const explainSnapshot = async (req, res) => {
+  const snapshot = await payrollSnapshotService.getSnapshot(req.params.id, companyIdFromRequest(req));
+
+  return res.status(200).json({
+    success: true,
+    data: { payslip: payslipService.buildPayslip(snapshot) },
   });
 };

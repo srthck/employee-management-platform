@@ -16,12 +16,13 @@ import axiosInstance from './axiosInstance';
  * Register a new admin account.
  * @returns {{ user, token }}
  */
-export const register = async ({ name, email, password, confirmPassword }) => {
+export const register = async ({ name, email, password, confirmPassword, companyName }) => {
   const response = await axiosInstance.post('/auth/register', {
     name,
     email,
     password,
     confirmPassword,
+    ...(companyName && { companyName }),
   });
   return response.data;
 };
@@ -37,6 +38,14 @@ export const login = async ({ email, password }) => {
 
 export const logout = async () => {
   const response = await axiosInstance.post('/auth/logout');
+  return response.data;
+};
+
+/**
+ * Revoke every session for this account, on all devices.
+ */
+export const logoutAll = async () => {
+  const response = await axiosInstance.post('/auth/logout-all');
   return response.data;
 };
 

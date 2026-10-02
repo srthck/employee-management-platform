@@ -1,9 +1,16 @@
 import express from 'express';
-import authMiddleware, { requireRole } from '../middleware/authMiddleware.js';
+import { body, query } from 'express-validator';
+import authMiddleware, { requirePermission } from '../middleware/authMiddleware.js';
+import { payrollActionRateLimiter } from '../middleware/rateLimiter.js';
+import { idempotent } from '../middleware/idempotency.js';
+import { PERMISSIONS } from '../utils/permissions.js';
 import {
   createPayrollRun,
   listPayrollRuns,
   getPayrollRun,
+  getPayrollRegister,
+  getVarianceReport,
+  getFinalizationReadiness,
   runPreflight,
   processPayrollRun,
   finalizePayrollRun,
@@ -20,22 +27,25 @@ import {
 /**
  * PayrollRun Routes
  *
- * All routes require valid JWT (authMiddleware).
- *
- * RBAC (current Admin model roles: 'admin' | 'manager'):
- *   admin   — full access (create, process, finalize, cancel, recover, view)
- *   manager — read only (list, get, preflight)
+ * All routes require authentication and are scoped to the caller's company.
+ * Access is permission-based (utils/permissions.js):
  *
  * ─────────────────────────────────────────────────────────────────────────
- * POST   /api/payroll-runs                  – Create DRAFT run (admin)
- * GET    /api/payroll-runs                  – List runs (admin, manager)
- * GET    /api/payroll-runs/:id              – Get single run (admin, manager)
- * POST   /api/payroll-runs/:id/preflight    – Preflight check (admin, manager)
- * POST   /api/payroll-runs/:id/process      – DRAFT/FAILED → PROCESSING → READY_FOR_FINALIZATION (admin)
- * POST   /api/payroll-runs/:id/finalize     – READY_FOR_FINALIZATION → FINALIZED (admin / Phase 9 gate)
- * POST   /api/payroll-runs/:id/cancel       – FAILED → CANCELLED (admin)
- * POST   /api/payroll-runs/:id/recover      – Recover stuck PROCESSING run → FAILED (admin)
+ * POST   /api/payroll-runs                             payroll.prepare
+ * GET    /api/payroll-runs                             payroll.read
+ * GET    /api/payroll-runs/:id                         payroll.read
+ * GET    /api/payroll-runs/:id/register                payroll.read
+ * GET    /api/payroll-runs/:id/variance                payroll.read
+ * GET    /api/payroll-runs/:id/finalization-readiness  payroll.read
+ * POST   /api/payroll-runs/:id/preflight               payroll.preflight
+ * POST   /api/payroll-runs/:id/process                 payroll.prepare
+ * POST   /api/payroll-runs/:id/finalize                payroll.finalize (+ override: payroll.variance.override)
+ * POST   /api/payroll-runs/:id/cancel                  payroll.prepare
+ * POST   /api/payroll-runs/:id/recover                 payroll.prepare
  * ─────────────────────────────────────────────────────────────────────────
+ *
+ * State-changing actions accept an Idempotency-Key header: retries replay the
+ * original response instead of acting twice.
  *
  * INTENTIONALLY ABSENT:
  *   PUT  /api/payroll-runs/:id           — NEVER expose. State machine owns status.
@@ -44,14 +54,25 @@ import {
  */
 
 const router = express.Router();
+const P = PERMISSIONS;
 
 // All payroll routes require authentication
 router.use(authMiddleware);
 
-// ─── Write routes (admin only) ────────────────────────────────────────────────
+const validateThreshold = [
+  query('thresholdPercent').optional().isInt({ min: 1, max: 100 }).withMessage('thresholdPercent must be 1–100.').toInt(),
+];
+
+const validateFinalize = [
+  body('override').optional({ nullable: true }).isObject().withMessage('override must be an object.'),
+  body('override.reason').optional().isString().isLength({ max: 1000 }).withMessage('Override reason cannot exceed 1000 characters.'),
+];
+
+// ─── Write routes ─────────────────────────────────────────────────────────────
 router.post(
   '/',
-  requireRole('admin'),
+  requirePermission(P.PAYROLL_PREPARE),
+  idempotent(),
   validateCreatePayrollRun,
   handleValidationErrors,
   createPayrollRun
@@ -59,7 +80,9 @@ router.post(
 
 router.post(
   '/:id/process',
-  requireRole('admin'),
+  requirePermission(P.PAYROLL_PREPARE),
+  payrollActionRateLimiter,
+  idempotent(),
   validateRunId,
   handleValidationErrors,
   processPayrollRun
@@ -67,15 +90,20 @@ router.post(
 
 router.post(
   '/:id/finalize',
-  requireRole('admin'),
+  requirePermission(P.PAYROLL_FINALIZE),
+  payrollActionRateLimiter,
+  idempotent(),
   validateRunId,
+  validateFinalize,
   handleValidationErrors,
   finalizePayrollRun
 );
 
 router.post(
   '/:id/cancel',
-  requireRole('admin'),
+  requirePermission(P.PAYROLL_PREPARE),
+  payrollActionRateLimiter,
+  idempotent(),
   validateRunId,
   handleValidationErrors,
   cancelPayrollRun
@@ -83,16 +111,17 @@ router.post(
 
 router.post(
   '/:id/recover',
-  requireRole('admin'),
+  requirePermission(P.PAYROLL_PREPARE),
+  payrollActionRateLimiter,
   validateRunId,
   handleValidationErrors,
   recoverStuckRun
 );
 
-// ─── Read routes (admin + manager) ───────────────────────────────────────────
+// ─── Read routes ──────────────────────────────────────────────────────────────
 router.get(
   '/',
-  requireRole('admin', 'manager'),
+  requirePermission(P.PAYROLL_READ),
   validateListRuns,
   handleValidationErrors,
   listPayrollRuns
@@ -100,15 +129,40 @@ router.get(
 
 router.get(
   '/:id',
-  requireRole('admin', 'manager'),
+  requirePermission(P.PAYROLL_READ),
   validateRunId,
   handleValidationErrors,
   getPayrollRun
 );
 
+router.get(
+  '/:id/register',
+  requirePermission(P.PAYROLL_READ),
+  validateRunId,
+  handleValidationErrors,
+  getPayrollRegister
+);
+
+router.get(
+  '/:id/variance',
+  requirePermission(P.PAYROLL_READ),
+  validateRunId,
+  validateThreshold,
+  handleValidationErrors,
+  getVarianceReport
+);
+
+router.get(
+  '/:id/finalization-readiness',
+  requirePermission(P.PAYROLL_READ),
+  validateRunId,
+  handleValidationErrors,
+  getFinalizationReadiness
+);
+
 router.post(
   '/:id/preflight',
-  requireRole('admin', 'manager'),
+  requirePermission(P.PAYROLL_PREFLIGHT),
   validateRunId,
   handleValidationErrors,
   runPreflight

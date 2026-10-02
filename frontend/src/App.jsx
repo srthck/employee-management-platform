@@ -1,6 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import RequirePermission from './components/RequirePermission';
 import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -10,10 +11,12 @@ import Employees from './pages/Employees';
 import EmployeeProfile from './pages/EmployeeProfile';
 import PayrollRuns from './pages/PayrollRuns';
 import PayrollRunDetail from './pages/PayrollRunDetail';
+import Compensation from './pages/Compensation';
 import Snapshot from './pages/Snapshot';
 import Compliance from './pages/Compliance';
 import Audit from './pages/Audit';
 import Settings from './pages/Settings';
+import MyPayslips from './pages/MyPayslips';
 import './index.css';
 
 /**
@@ -25,8 +28,11 @@ import './index.css';
  *     /login     → Login page
  *     /register  → Register page
  *
- *   Protected (requires valid JWT):
- *     /dashboard → PayGuard payroll overview
+ *   Protected (requires a valid session; access is permission-based):
+ *     staff (admin, payroll admin/approver, HR manager, auditor)
+ *                     → payroll operations (/dashboard, /employees, /payroll, ...)
+ *     employee        → self-service (/my/payslips)
+ *     everyone        → /settings
  *
  *   Catch-all   → redirect to /
  */
@@ -43,14 +49,23 @@ function AppRoutes() {
       {/* Protected routes — ProtectedRoute renders <Outlet /> */}
       <Route element={<ProtectedRoute />}>
         <Route element={<PayGuardLayout />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/employees" element={<Employees />} />
-          <Route path="/employees/:id" element={<EmployeeProfile />} />
-          <Route path="/payroll" element={<PayrollRuns />} />
-          <Route path="/payroll/:id" element={<PayrollRunDetail />} />
-          <Route path="/snapshots/:id" element={<Snapshot />} />
-          <Route path="/compliance" element={<Compliance />} />
-          <Route path="/audit" element={<Audit />} />
+          <Route element={<RequirePermission anyOf={['payroll.read', 'employee.read']} fallback="/my/payslips" />}>
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/employees" element={<Employees />} />
+            <Route path="/employees/:id" element={<EmployeeProfile />} />
+            <Route path="/payroll" element={<PayrollRuns />} />
+            <Route path="/payroll/:id" element={<PayrollRunDetail />} />
+            <Route path="/compensation" element={<Compensation />} />
+            <Route path="/snapshots/:id" element={<Snapshot />} />
+            <Route path="/compliance" element={<Compliance />} />
+            <Route path="/audit" element={<Audit />} />
+          </Route>
+
+          <Route element={<RequirePermission anyOf={['self.service']} fallback="/dashboard" />}>
+            <Route path="/my/payslips" element={<MyPayslips />} />
+            <Route path="/my/payslips/:id" element={<MyPayslips />} />
+          </Route>
+
           <Route path="/settings" element={<Settings />} />
         </Route>
       </Route>

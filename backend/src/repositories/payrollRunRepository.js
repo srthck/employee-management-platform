@@ -29,11 +29,16 @@ const payrollRunRepository = {
     return q.exec();
   },
 
+  /**
+   * Find the run occupying a company's period slot. CANCELLED runs are
+   * retained history and never occupy the slot.
+   */
   async findByCompanyPeriod(companyId, periodYear, periodMonth, session = null) {
     const q = PayrollRun.findOne({
       companyId,
       periodYear,
       periodMonth,
+      status: { $ne: 'CANCELLED' },
     });
 
     if (session) q.session(session);
@@ -97,6 +102,64 @@ const payrollRunRepository = {
         status: fromStatus,
       },
       update,
+      options
+    ).exec();
+  },
+
+  /**
+   * PROCESSING runs whose heartbeat is older than `cutoff`.
+   */
+  async findStuckProcessingRuns(cutoff, limit = 100) {
+    return PayrollRun.find({
+      status: 'PROCESSING',
+      $or: [
+        { lastActivityAt: { $lt: cutoff } },
+        { lastActivityAt: null, startedAt: { $lt: cutoff } },
+      ],
+    })
+      .limit(limit)
+      .lean()
+      .exec();
+  },
+
+  /**
+   * Atomically fail a PROCESSING run only if its heartbeat is still older than
+   * `cutoff`. A worker that heartbeats between detection and this update wins,
+   * so a slow-but-alive run is never failed.
+   */
+  async markStuckRunFailed(runId, cutoff, failureReason, transitionEntry = {}, session = null) {
+    const now = new Date();
+    const options = { new: true };
+    if (session) options.session = session;
+
+    return PayrollRun.findOneAndUpdate(
+      {
+        _id: runId,
+        status: 'PROCESSING',
+        $or: [
+          { lastActivityAt: { $lt: cutoff } },
+          { lastActivityAt: null },
+        ],
+      },
+      {
+        $set: {
+          status: 'FAILED',
+          failureReason,
+          failedAt: now,
+          completedAt: now,
+          lastActivityAt: now,
+        },
+        $push: {
+          transitions: {
+            fromStatus: 'PROCESSING',
+            toStatus: 'FAILED',
+            actorId: transitionEntry.actorId,
+            actorEmail: transitionEntry.actorEmail || null,
+            reason: transitionEntry.reason || null,
+            timestamp: now,
+          },
+        },
+      },
       options
     ).exec();
   },
@@ -233,6 +296,7 @@ const payrollRunRepository = {
     const {
       finalizedBy,
       resolvedRuleVersionIds = {},
+      finalizationControls = null,
     } = finalizationData;
 
     return this.transitionStateAtomically(
@@ -243,6 +307,7 @@ const payrollRunRepository = {
         finalizedAt: new Date(),
         finalizedBy,
         resolvedRuleVersionIds,
+        finalizationControls,
       },
       transitionEntry,
       session

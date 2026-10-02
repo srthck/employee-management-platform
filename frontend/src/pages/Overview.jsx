@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as employeeService from '../services/employeeService';
 import * as payrollRunService from '../services/payrollRunService';
+import * as auditService from '../services/auditService';
 
 const money = (value) =>
   typeof value === 'number'
@@ -71,9 +72,9 @@ function Metric({ label, value, note }) {
 }
 
 function Health({ label, state, tone }) {
-  const good =
-    state === 'resolved' ||
-    state.includes('eligible');
+  const good = tone
+    ? tone === 'good'
+    : state.startsWith('resolved') || state.includes('eligible');
 
   return (
     <div className="flex items-center justify-between border-b border-[#E7D8D5] py-3 text-sm">
@@ -101,6 +102,7 @@ function Health({ label, state, tone }) {
 export default function Overview() {
   const [runs, setRuns] = useState([]);
   const [stats, setStats] = useState(null);
+  const [auditChain, setAuditChain] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -108,10 +110,16 @@ export default function Overview() {
     Promise.all([
       payrollRunService.listPayrollRuns({ limit: 10 }),
       employeeService.getEmployeeStats(),
+      // A broken chain answers 409 with the verification result in the body.
+      auditService
+        .verifyAuditChain()
+        .then((result) => result.data)
+        .catch((err) => err.response?.data?.data || null),
     ])
-      .then(([runData, statData]) => {
+      .then(([runData, statData, chain]) => {
         setRuns(runData.data?.runs || []);
         setStats(statData.data?.stats || null);
+        setAuditChain(chain);
       })
       .catch((err) =>
         setError(
@@ -299,9 +307,15 @@ export default function Overview() {
                 />
 
                 <Health
-                  label="Audit"
-                  state="not exposed by API"
-                  tone="warn"
+                  label="Audit chain"
+                  state={
+                    auditChain
+                      ? auditChain.valid
+                        ? `verified · ${auditChain.checkedRecords} records`
+                        : `broken at #${auditChain.firstBrokenSequence}`
+                      : 'not checked'
+                  }
+                  tone={auditChain?.valid ? 'good' : 'warn'}
                 />
 
                 <Health

@@ -1,5 +1,8 @@
 import express from 'express';
-import authMiddleware, { requireRole } from '../middleware/authMiddleware.js';
+import authMiddleware, { requirePermission } from '../middleware/authMiddleware.js';
+import { payrollActionRateLimiter } from '../middleware/rateLimiter.js';
+import { idempotent } from '../middleware/idempotency.js';
+import { PERMISSIONS } from '../utils/permissions.js';
 import { param, query, validationResult } from 'express-validator';
 import {
   materializeSnapshots,
@@ -8,28 +11,24 @@ import {
   getEmployeeSnapshot,
   getSnapshot,
   verifySnapshot,
+  explainSnapshot,
 } from '../controllers/payrollSnapshotController.js';
 
 /**
- * PayrollSnapshot Routes
- *
- * RBAC (Admin roles: 'admin' | 'manager'):
- *   admin   — full access (materialize, finalize, read, verify)
- *   manager — read + verify only
+ * PayrollSnapshot Routes (permission-based, see utils/permissions.js)
  *
  * ──────────────────────────────────────────────────────────────────────────
- * POST /api/payroll-runs/:runId/materialize       – Materialize snapshots (admin)
- * POST /api/payroll-runs/:runId/finalize-run      – Finalize run (admin)
- * GET  /api/payroll-runs/:runId/snapshots         – List run snapshots (admin, manager)
- * GET  /api/payroll-runs/:runId/snapshots/:empId  – Employee snapshot (admin, manager)
- * GET  /api/payroll-snapshots/:id                 – Get single snapshot (admin, manager)
- * GET  /api/payroll-snapshots/:id/verify          – Verify hash integrity (admin, manager)
+ * POST /api/payroll-runs/:runId/materialize       – Materialize snapshots   payroll.prepare
+ * POST /api/payroll-runs/:runId/finalize-run      – Finalize run            payroll.finalize
+ * GET  /api/payroll-runs/:runId/snapshots         – List run snapshots      payroll.read
+ * GET  /api/payroll-runs/:runId/snapshots/:empId  – Employee snapshot       payroll.read
+ * GET  /api/payroll-snapshots/:id                 – Get single snapshot     payroll.read
+ * GET  /api/payroll-snapshots/:id/verify          – Verify hash integrity   payroll.read
+ * GET  /api/payroll-snapshots/:id/explain         – Explained payslip       payroll.read
  * ──────────────────────────────────────────────────────────────────────────
  *
- * INTENTIONALLY ABSENT:
- *   PUT  /api/payroll-snapshots/:id  — NO mutation of finalized snapshots.
- *   PATCH /api/payroll-snapshots/:id — NO mutation of finalized snapshots.
- *   DELETE /api/payroll-snapshots/:id — NO deletion of finalized snapshots.
+ * INTENTIONALLY ABSENT: any route that mutates or removes a snapshot.
+ * Finalized snapshots are never changed.
  */
 
 const handleValidation = (req, res, next) => {
@@ -44,6 +43,7 @@ const handleValidation = (req, res, next) => {
   next();
 };
 
+const P = PERMISSIONS;
 const validateRunId     = [param('runId').isMongoId().withMessage('Invalid run ID.'), handleValidation];
 const validateId        = [param('id').isMongoId().withMessage('Invalid snapshot ID.'), handleValidation];
 const validateEmployeeId = [param('employeeId').isMongoId().withMessage('Invalid employee ID.'), handleValidation];
@@ -59,21 +59,24 @@ runScopedRouter.use(authMiddleware);
 
 runScopedRouter.post(
   '/materialize',
-  requireRole('admin'),
+  requirePermission(P.PAYROLL_PREPARE),
+  payrollActionRateLimiter,
   validateRunId,
   materializeSnapshots
 );
 
 runScopedRouter.post(
   '/finalize-run',
-  requireRole('admin'),
+  requirePermission(P.PAYROLL_FINALIZE),
+  payrollActionRateLimiter,
+  idempotent(),
   validateRunId,
   finalizeRun
 );
 
 runScopedRouter.get(
   '/snapshots',
-  requireRole('admin', 'manager'),
+  requirePermission(P.PAYROLL_READ),
   validateRunId,
   validatePagination,
   getRunSnapshots
@@ -81,7 +84,7 @@ runScopedRouter.get(
 
 runScopedRouter.get(
   '/snapshots/:employeeId',
-  requireRole('admin', 'manager'),
+  requirePermission(P.PAYROLL_READ),
   validateRunId,
   validateEmployeeId,
   getEmployeeSnapshot
@@ -93,16 +96,23 @@ snapshotRouter.use(authMiddleware);
 
 snapshotRouter.get(
   '/:id',
-  requireRole('admin', 'manager'),
+  requirePermission(P.PAYROLL_READ),
   validateId,
   getSnapshot
 );
 
 snapshotRouter.get(
   '/:id/verify',
-  requireRole('admin', 'manager'),
+  requirePermission(P.PAYROLL_READ),
   validateId,
   verifySnapshot
+);
+
+snapshotRouter.get(
+  '/:id/explain',
+  requirePermission(P.PAYROLL_READ),
+  validateId,
+  explainSnapshot
 );
 
 export default { runScopedRouter, snapshotRouter };

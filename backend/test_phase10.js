@@ -29,7 +29,7 @@ import { readFileSync } from 'node:fs';
 // Fully isolated from production. Dropped before and after tests.
 const TEST_DB_URI =
   process.env.PHASE10_MONGO_URI ||
-  'mongodb://localhost:27017/payguard_phase10_test';
+  'mongodb://127.0.0.1:27018/payguard_phase10_test?replicaSet=rs0';
 
 // ─── Import models and services ───────────────────────────────────────────────
 import Admin           from './src/models/Admin.js';
@@ -236,12 +236,20 @@ async function dropTestCollections() {
 // ─── Global setup ─────────────────────────────────────────────────────────────
 before(async () => {
   await connectTestDb();
+  // Mongoose builds each model's indexes in the background once connected.
+  // Let that finish BEFORE cleaning, then rebuild: otherwise the clean-up can
+  // drop a collection after its indexes were built and leave it without them.
+  const models = Object.values(mongoose.models);
+  await Promise.all(models.map((model) => model.init()));
   await dropTestCollections();
+  await Promise.all(models.map((model) => model.createIndexes()));
   console.log('[PHASE 10] Test DB connected and cleaned:', TEST_DB_URI);
 });
 
 after(async () => {
   await dropTestCollections();
+  // Leave no test database behind.
+  await mongoose.connection.dropDatabase();
   await mongoose.disconnect();
   console.log('[PHASE 10] Test DB dropped and disconnected.');
 });
@@ -699,12 +707,14 @@ describe('STEP-22: Idempotent repeat reads produce identical results', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 describe('STEP-25: Direct DB tampering is detected by hash verification', () => {
   let snapId;
+  let originalNet;
   before(async () => {
     const snap = await PayrollSnapshot.findOne({
       'employeeSnapshot.email': 'isolation.emp@payguard.io',
       periodMonth: 7, periodYear: 2026,
     });
     snapId = snap._id.toString();
+    originalNet = snap.payrollResults.netPayBeforeTDS;
   });
 
   test('verifySnapshot returns valid=true before tamper', async () => {
@@ -713,10 +723,20 @@ describe('STEP-25: Direct DB tampering is detected by hash verification', () => 
   });
 
   test('Directly mutating netPayBeforeTDS causes verifySnapshotHash to return valid=false', async () => {
+    // Mongoose cannot reach a finalized snapshot: the model's immutability
+    // guard excludes FINALIZED snapshots from every update filter.
+    const viaModel = await PayrollSnapshot.findByIdAndUpdate(
+      snapId,
+      { $set: { 'payrollResults.netPayBeforeTDS': 99999 } },
+      { new: true }
+    );
+    assert.equal(viaModel, null, 'Model updates must not reach a FINALIZED snapshot');
+
     // Bypass all application logic — write directly to MongoDB (simulates DB-level tamper)
-    await PayrollSnapshot.findByIdAndUpdate(snapId, {
-      $set: { 'payrollResults.netPayBeforeTDS': 99999 },
-    });
+    await PayrollSnapshot.collection.updateOne(
+      { _id: new mongoose.Types.ObjectId(snapId) },
+      { $set: { 'payrollResults.netPayBeforeTDS': 99999 } }
+    );
 
     const tampered = await PayrollSnapshot.findById(snapId).lean();
     const { valid, storedHash, computedHash } = verifySnapshotHash(tampered);
@@ -727,28 +747,16 @@ describe('STEP-25: Direct DB tampering is detected by hash verification', () => 
   });
 
   after(async () => {
-    // Restore the correct value so the snapshot remains consistent for later tests
-    // Note: this restore simulates what a controlled correction mechanism would do.
+    // Restore the exact original value so later tests see a consistent record.
+    // The ORIGINAL stored hash must verify again; the hash is never recomputed
+    // (recomputing it is precisely what a tamperer would do).
     // In production, a tampered record would be quarantined, NOT silently restored.
-    // We restore here only to avoid polluting the test DB for subsequent checks.
-    const snap = await PayrollSnapshot.findById(snapId).lean();
-    const correctNet = snap.payrollResults.totalEmployeeDeductions !== undefined
-      ? snap.payrollResults.netPayBeforeTDS  // already wrong — we need the original
-      : null;
-    // Recompute what the correct netPayBeforeTDS should be from other stored values
-    const grossMonthly = snap.payrollResults.epf?.totalEpf !== undefined
-      ? snap.salarySnapshot?.grossMonthly
-      : null;
-    if (grossMonthly && snap.payrollResults.totalEmployeeDeductions != null) {
-      const correct = Math.round((grossMonthly - snap.payrollResults.totalEmployeeDeductions) * 100) / 100;
-      await PayrollSnapshot.findByIdAndUpdate(snapId, {
-        $set: { 'payrollResults.netPayBeforeTDS': correct },
-      });
-      // Recompute hash from restored payload
-      const restored = await PayrollSnapshot.findById(snapId).lean();
-      const newHash  = computeSnapshotHash(restored);
-      await PayrollSnapshot.findByIdAndUpdate(snapId, { $set: { snapshotHash: newHash } });
-    }
+    await PayrollSnapshot.collection.updateOne(
+      { _id: new mongoose.Types.ObjectId(snapId) },
+      { $set: { 'payrollResults.netPayBeforeTDS': originalNet } }
+    );
+    const restored = await payrollSnapshotService.verifySnapshot(snapId);
+    assert.equal(restored.valid, true, 'Restoring the original value must restore hash validity');
   });
 });
 
@@ -894,7 +902,13 @@ describe('STEP-26: Longitudinal multi-month isolation (M, M+1, M+2)', () => {
     await Employee.findByIdAndUpdate(m2Ctx.employee._id, {
       $set: { department: 'Operations', status: 'inactive' },
     });
-    // Create a new salary version for M+3
+    // Create a new salary version for M+3.
+    // Close the open version first: a unique index allows only one current
+    // salary version per employee.
+    await SalaryStructure.updateOne(
+      { employeeId: m2Ctx.employee._id, effectiveTo: null },
+      { $set: { effectiveTo: new Date(Date.UTC(2026, 3, 1) - 1) } }
+    );
     await SalaryStructure.create({
       employeeId:    m2Ctx.employee._id,
       effectiveFrom: new Date(Date.UTC(2026, 3, 1)),

@@ -1,8 +1,8 @@
 /**
- * PayrollRunService — Phase 8 Corrected Payroll Run Orchestration.
+ * PayrollRunService — Payroll Run Orchestration.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * CORRECTIONS APPLIED IN THIS PASS:
+ * CORRECTIONS APPLIED (Phase 8):
  *
  *   C1. READY_FOR_FINALIZATION state added between PROCESSING and FINALIZED.
  *       PROCESSING → FINALIZED direct transition is forbidden.
@@ -19,12 +19,10 @@
  *       blocks the employee with MISSING_PT_JURISDICTION or
  *       UNSUPPORTED_PT_JURISDICTION. No default state is ever assumed.
  *
- *   C5. finalizePayrollRun (explicit endpoint) now requires the run to be in
- *       READY_FOR_FINALIZATION, not PROCESSING. Phase 9 will own the actual
- *       READY_FOR_FINALIZATION → FINALIZED transition.
+ *   C5. finalizePayrollRun requires READY_FOR_FINALIZATION.
  *
  *   C6. lastActivityAt heartbeat updated during calculation loop for
- *       crash-detection. Recovery documentation added.
+ *       crash-detection.
  *
  *   C7. Retry cleanup: on FAILED → PROCESSING, stale staging results from
  *       the previous attempt are deleted before re-processing.
@@ -33,78 +31,111 @@
  *       in all processing results. The word "attendance-adjusted" is never
  *       used to describe full-month gross.
  *
- * ═══════════════════════════════════════════════════════════════════════════
- * COMPANY IDENTITY (single-tenant MVP):
- *   companyId = Admin._id of the authenticated actor.
- *   FUTURE: replace with real Company entity in multi-tenant architecture.
+ * CORRECTIONS APPLIED (Phase 12 hardening):
+ *
+ *   H1. finalizePayrollRun (POST /payroll-runs/:id/finalize) previously moved
+ *       READY_FOR_FINALIZATION → FINALIZED without materializing or verifying
+ *       snapshots, violating the FINALIZED invariant. It now runs the full
+ *       snapshot path (materialize → completeness + hash checks → finalize).
+ *
+ *   H2. All state transitions + their audit events run through
+ *       runInTransaction (see utils/transaction.js).
+ *
+ *   H3. CANCELLED runs are no longer deleted when a period is re-run. The
+ *       partial unique index excludes CANCELLED, so the history is kept.
+ *
+ *   H4. Eligibility loads salary structures in one query and caches PT rules
+ *       per state (previously 2+ queries per employee).
+ *
+ *   H5. Employees hired after the period end are blocked (HIRED_AFTER_PERIOD).
+ *       Archived (soft-deleted) employees are excluded by the Employee model.
+ *
+ *   H6. Exact rule parameters are frozen into ruleProvenance so every payslip
+ *       line can be explained later without re-reading mutable rules.
+ *
+ *   H7. Stuck PROCESSING runs are recovered automatically by the stuck-run
+ *       monitor (jobs/stuckRunMonitor.js) using a heartbeat-guarded update.
+ *
+ *   H8. A run owned by another company is reported as not found (404), so run
+ *       IDs cannot be probed across tenants.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * STATE MACHINE (this service):
- *   DRAFT → PROCESSING → READY_FOR_FINALIZATION → (Phase 9) → FINALIZED
+ *   DRAFT → PROCESSING → READY_FOR_FINALIZATION → FINALIZED
  *                      ↘ FAILED → PROCESSING (retry)
  *                                ↘ CANCELLED
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * TRANSACTION STRATEGY:
- *   T1 — createPayrollRun:
- *        Session: create PayrollRun + audit write. Short, low-contention.
+ *   T1 — createPayrollRun: create PayrollRun + audit write, one transaction.
  *
  *   T2 — claimProcessing (DRAFT/FAILED → PROCESSING):
- *        Atomic findOneAndUpdate. Single-document atomic — no session needed.
- *        Old staging results deleted in the same logical step (not in a
- *        transaction, since deletion failure does not corrupt the run — it
- *        only affects cleanup; a unique index on (runId, employeeId, version)
- *        prevents duplicate staging writes anyway).
+ *        Atomic conditional findOneAndUpdate. Single-document atomic.
  *
  *   T3 — markReadyForFinalization (PROCESSING → READY_FOR_FINALIZATION):
- *        Session: completeness verified + atomic state transition + audit.
- *        Staging result writes happen outside this session (T-loop below).
- *        The session is short.
+ *        Transaction: atomic state transition + audit, after completeness is
+ *        verified. Staging result writes happen outside it (T-loop below).
  *
  *   T-loop — Per-employee staging result persistence:
- *        Intentionally outside any long-running session.
+ *        Intentionally outside any long-running transaction.
  *        Uses upsert(runId, employeeId, processingVersion) — idempotent.
- *        Crash mid-loop: run stays PROCESSING; retry cleans stale results
- *        and re-calculates all employees.
+ *        Crash mid-loop: run stays PROCESSING until recovered; retry cleans
+ *        stale results and re-calculates all employees.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * PT JURISDICTION POLICY:
- *   Source: salary.workState (set on SalaryStructure, required field).
+ *   Source: salary.workState (set on SalaryStructure, required on revision).
  *   If null, empty, or falsy:   BLOCK with MISSING_PT_JURISDICTION.
- *   If unsupported by Phase 7:  BLOCK with UNSUPPORTED_PT_JURISDICTION.
+ *   If no rule is seeded:       BLOCK with UNSUPPORTED_PT_JURISDICTION.
  *   NO DEFAULT STATE IS EVER USED.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * PROCESS CRASH / RECOVERY:
- *   A run stuck in PROCESSING can be detected by:
- *     status = 'PROCESSING' AND lastActivityAt < (now - stuckThreshold)
- *   Recovery is MANUAL in Phase 8:
- *     An admin must observe the stuck run and call the /process endpoint
- *     again (which transitions PROCESSING → FAILED if the claim fails,
- *     then FAILED → PROCESSING on retry).
- *   Alternatively: use the recovery helper below that marks a stuck
- *   PROCESSING run as FAILED so it can be retried.
- *   No background worker is implemented in Phase 8.
- *
- * ═══════════════════════════════════════════════════════════════════════════
- * ATTENDANCE:
- *   No Attendance subsystem exists. attendanceAdjustment = 'DEFERRED'.
- *   Full-month grossMonthly is used as the payroll gross input.
- *   This is NOT described as "attendance-adjusted salary".
+ * PAY BASIS AND ATTENDANCE:
+ *   Pay is prorated for employees who join or leave inside the period, using
+ *   the company pay basis (payable days; see utils/payBasis.js). Statutory
+ *   amounts are then calculated on what was earned, while ESI eligibility
+ *   still follows the wage for the period.
+ *   Attendance and loss of pay are NOT applied: there is no attendance
+ *   subsystem yet, so paid days equal the days employed. Earned pay is
+ *   therefore NOT attendance-adjusted salary, and is never described as such.
+ *   attendanceAdjustment records which of the two applied to each result.
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * TDS:
  *   Explicitly deferred. tdsDeferred = true on all runs and staging results.
+ *
+ * COMPANY IDENTITY:
+ *   companyId is resolved from the authenticated user by authMiddleware.
  */
 
-import mongoose from 'mongoose';
+import Company from '../models/Company.js';
 import Employee from '../models/Employee.js';
+import EmploymentRecord from '../models/EmploymentRecord.js';
+import CompensationVersion from '../models/CompensationVersion.js';
 import SalaryStructure from '../models/SalaryStructure.js';
 import ComplianceRuleVersion from '../models/ComplianceRuleVersion.js';
 import payrollRunRepository from '../repositories/payrollRunRepository.js';
 import complianceCalculationService from './complianceCalculationService.js';
+import payrollFinalizationService from './payrollFinalizationService.js';
 import auditService from './auditService.js';
 import { canTransition, PAYROLL_STATUS } from '../models/PayrollRun.js';
+import { runInTransaction } from '../utils/transaction.js';
+import { computePayPeriodDays, payrollBasisFrom, proratedAmount } from '../utils/payBasis.js';
+
+// Actor recorded for automatic (non-human) operations such as stuck-run recovery.
+export const SYSTEM_ACTOR = Object.freeze({
+  id: '000000000000000000000000',
+  email: 'system@payguard.internal',
+  role: 'system',
+});
+
+// Heartbeat every N employees keeps writes low while staying far below the
+// stuck-run threshold.
+const HEARTBEAT_EVERY = 25;
+
+const round2 = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+
+const conflict = (message) => Object.assign(new Error(message), { statusCode: 409 });
 
 // ─── Period helpers ───────────────────────────────────────────────────────────
 
@@ -131,6 +162,9 @@ function validatePeriodInput(periodMonth, periodYear) {
   }
 }
 
+/** Plain JSON copy of rule parameters (Mongoose subdocuments included). */
+const frozenParameters = (value) => (value == null ? null : JSON.parse(JSON.stringify(value)));
+
 // ─── PT jurisdiction validation ──────────────────────────────────────────────
 
 /**
@@ -154,18 +188,27 @@ async function resolvePtRule(workState, periodEnd) {
 
   const jurisdiction = workState.trim().toUpperCase();
 
-  // Query Phase 7's ComplianceRuleVersion for this jurisdiction.
-  // If it returns null, the jurisdiction is unsupported (no rule seeded).
+  // If ComplianceRuleVersion returns null, the jurisdiction is unsupported.
   const ptRule = await ComplianceRuleVersion.findValidForDate('PT', jurisdiction, periodEnd);
 
   if (!ptRule) {
     return {
       ptRule: null,
-      blockReason: `UNSUPPORTED_PT_JURISDICTION: No PT rule found for work state '${jurisdiction}' on ${periodEnd.toISOString().slice(0, 10)}. Ensure Phase 7 has seeded rules for this jurisdiction.`,
+      blockReason: `UNSUPPORTED_PT_JURISDICTION: No PT rule found for work state '${jurisdiction}' on ${periodEnd.toISOString().slice(0, 10)}. Seed a PT rule version for this jurisdiction.`,
     };
   }
 
   return { ptRule, blockReason: null };
+}
+
+/** Per-run cache: one PT rule lookup per state instead of per employee. */
+function createPtRuleResolver(periodEnd) {
+  const cache = new Map();
+  return (workState) => {
+    const key = typeof workState === 'string' ? workState.trim().toUpperCase() : '';
+    if (!cache.has(key)) cache.set(key, resolvePtRule(workState, periodEnd));
+    return cache.get(key);
+  };
 }
 
 // ─── Employee eligibility ────────────────────────────────────────────────────
@@ -175,27 +218,74 @@ async function resolvePtRule(workState, periodEnd) {
  *
  * Eligibility rules:
  *   1. Employee.createdBy === companyId (belongs to this company).
- *   2. status in ['active', 'on-leave'] (not inactive/soft-deleted).
- *   3. Valid SalaryStructure exists for periodEnd.
- *   4. salary.workState is non-empty and a supported PT jurisdiction.
- *   5. EPF rule exists if pfEnrolled.
- *   6. ESI rule exists if esiEnrolled.
+ *   2. status in ['active', 'on-leave'] and not archived.
+ *   3. Hired on or before the period end.
+ *   4. Not exited before the period starts (EmploymentRecord exit).
+ *   5. Valid SalaryStructure exists for periodEnd.
+ *   6. salary.workState is non-empty and a supported PT jurisdiction.
+ *   7. EPF rule exists if pfEnrolled.
+ *   8. ESI rule exists if esiEnrolled.
  *
- * CORRECTION C4 applied: workState is never defaulted. Missing = BLOCKED.
+ * Shared with payroll readiness (payrollReadinessService), so what readiness
+ * reports as BLOCKED is exactly what calculation excludes.
  *
+ * @param {{ employeeIds?: Array }} [options] restrict to these employees
  * @returns {{ eligible: Array, blocked: Array, epfRule: object|null, esiRule: object|null }}
  */
-async function resolveEligibleEmployees(companyId, periodStart, periodEnd) {
-  const candidates = await Employee.find({
+export async function resolveEligibleEmployees(companyId, periodStart, periodEnd, { employeeIds = null } = {}) {
+  const filter = {
     createdBy: companyId,
     status: { $in: ['active', 'on-leave'] },
-  }).lean();
+  };
+  if (employeeIds) filter._id = { $in: employeeIds };
+  const candidates = await Employee.find(filter).lean();
+  const candidateIds = candidates.map((candidate) => candidate._id);
 
-  // Nationwide rules resolved once (shared across all employees)
-  const [epfRule, esiRule] = await Promise.all([
+  // Nationwide rules, salary versions and exits resolved in four queries.
+  const [epfRule, esiRule, salaries, exits, compensationVersions] = await Promise.all([
     ComplianceRuleVersion.findValidForDate('EPF', 'IN', periodEnd),
     ComplianceRuleVersion.findValidForDate('ESI', 'IN', periodEnd),
+    SalaryStructure.find({
+      employeeId: { $in: candidateIds },
+      effectiveFrom: { $lte: periodEnd },
+      $or: [{ effectiveTo: null }, { effectiveTo: { $gte: periodEnd } }],
+    }).sort({ effectiveFrom: -1 }).lean(),
+    EmploymentRecord.find({
+      employeeId: { $in: candidateIds },
+      isCurrent: true,
+      lifecycleStatus: 'EXITED',
+    }).select('employeeId exit.lastWorkingDay').lean(),
+    CompensationVersion.find({
+      employeeId: { $in: candidateIds },
+      effectiveFrom: { $lte: periodEnd },
+      $or: [{ effectiveTo: null }, { effectiveTo: { $gte: periodEnd } }],
+    }).sort({ effectiveFrom: -1 }).lean(),
   ]);
+
+  const lastWorkingDayByEmployee = new Map(
+    exits
+      .filter((record) => record.exit && record.exit.lastWorkingDay)
+      .map((record) => [String(record.employeeId), record.exit.lastWorkingDay])
+  );
+
+  // Sorted newest first, so the first version seen per employee is the one in
+  // force at periodEnd. Records written before compensation existed have none.
+  const compensationByEmployee = new Map();
+  for (const version of compensationVersions) {
+    const key = String(version.employeeId);
+    if (!compensationByEmployee.has(key)) compensationByEmployee.set(key, version);
+  }
+
+  // Sorted newest-first, so the first version seen per employee is the one
+  // valid at periodEnd (same rule as SalaryStructure.findValidForDate).
+  const salaryByEmployee = new Map();
+  for (const version of salaries) {
+    const key = String(version.employeeId);
+    if (!salaryByEmployee.has(key)) salaryByEmployee.set(key, version);
+  }
+
+  const resolvePt = createPtRuleResolver(periodEnd);
+  const periodEndLabel = periodEnd.toISOString().slice(0, 10);
 
   const eligible = [];
   const blocked  = [];
@@ -203,20 +293,33 @@ async function resolveEligibleEmployees(companyId, periodStart, periodEnd) {
   for (const emp of candidates) {
     const issues = [];
 
+    if (emp.hireDate && new Date(emp.hireDate) > periodEnd) {
+      issues.push(
+        `HIRED_AFTER_PERIOD: hire date ${new Date(emp.hireDate).toISOString().slice(0, 10)} is after the period end ${periodEndLabel}.`
+      );
+    }
+
+    const lastWorkingDay = lastWorkingDayByEmployee.get(String(emp._id)) || null;
+    // Employed for part of the period is payable (prorated); employed for none
+    // of it is not.
+    if (lastWorkingDay && new Date(lastWorkingDay) < periodStart) {
+      issues.push(
+        `EXITED_BEFORE_PERIOD: last working day ${new Date(lastWorkingDay).toISOString().slice(0, 10)} is before the period start ${periodStart.toISOString().slice(0, 10)}.`
+      );
+    }
+
     // ── Salary resolution ──
-    const salary = await SalaryStructure.findValidForDate(emp._id, periodEnd);
+    const salary = salaryByEmployee.get(String(emp._id)) || null;
 
     if (!salary) {
-      issues.push(
-        `No salary structure valid for period ending ${periodEnd.toISOString().slice(0, 10)}.`
-      );
+      issues.push(`No salary structure valid for period ending ${periodEndLabel}.`);
     }
 
     // ── PT jurisdiction resolution (CORRECTION C4) ──
     let ptRule = null;
     if (salary) {
       // NEVER default workState. Missing = BLOCKED.
-      const { ptRule: resolved, blockReason } = await resolvePtRule(salary.workState, periodEnd);
+      const { ptRule: resolved, blockReason } = await resolvePt(salary.workState);
       if (blockReason) {
         issues.push(blockReason);
       } else {
@@ -226,16 +329,12 @@ async function resolveEligibleEmployees(companyId, periodStart, periodEnd) {
 
     // ── EPF rule check ──
     if (salary && salary.pfEnrolled && !epfRule) {
-      issues.push(
-        `EPF rule version not found for jurisdiction 'IN' on ${periodEnd.toISOString().slice(0, 10)}.`
-      );
+      issues.push(`EPF rule version not found for jurisdiction 'IN' on ${periodEndLabel}.`);
     }
 
     // ── ESI rule check ──
     if (salary && salary.esiEnrolled && !esiRule) {
-      issues.push(
-        `ESI rule version not found for jurisdiction 'IN' on ${periodEnd.toISOString().slice(0, 10)}.`
-      );
+      issues.push(`ESI rule version not found for jurisdiction 'IN' on ${periodEndLabel}.`);
     }
 
     if (issues.length > 0) {
@@ -246,55 +345,60 @@ async function resolveEligibleEmployees(companyId, periodStart, periodEnd) {
         status:       'BLOCKED',
         issues,
       });
-    } else {
-      // Build rule provenance for this employee now, while we have the resolved rule docs.
-      // This allows the staging result to freeze exact rule metadata at processing time.
-      const ruleProvenance = [];
-      if (epfRule && salary.pfEnrolled) {
-        ruleProvenance.push({
-          ruleType:        'EPF',
-          ruleId:          epfRule._id,
-          jurisdiction:    epfRule.jurisdiction,
-          effectiveFrom:   epfRule.effectiveFrom,
-          effectiveTo:     epfRule.effectiveTo,
-          sourceReference: epfRule.description ||
-            `EPF-${epfRule.jurisdiction}-${epfRule.effectiveFrom.toISOString().slice(0, 10)}`,
-        });
-      }
-      if (esiRule && salary.esiEnrolled) {
-        ruleProvenance.push({
-          ruleType:        'ESI',
-          ruleId:          esiRule._id,
-          jurisdiction:    esiRule.jurisdiction,
-          effectiveFrom:   esiRule.effectiveFrom,
-          effectiveTo:     esiRule.effectiveTo,
-          sourceReference: esiRule.description ||
-            `ESI-${esiRule.jurisdiction}-${esiRule.effectiveFrom.toISOString().slice(0, 10)}`,
-        });
-      }
-      if (ptRule && salary.ptEnrolled) {
-        ruleProvenance.push({
-          ruleType:        'PT',
-          ruleId:          ptRule._id,
-          jurisdiction:    ptRule.jurisdiction,
-          effectiveFrom:   ptRule.effectiveFrom,
-          effectiveTo:     ptRule.effectiveTo,
-          sourceReference: ptRule.description ||
-            `PT-${ptRule.jurisdiction}-${ptRule.effectiveFrom.toISOString().slice(0, 10)}`,
-        });
-      }
+      continue;
+    }
 
-      eligible.push({
-        employeeId: emp._id.toString(),
-        name:       `${emp.firstName} ${emp.lastName}`,
-        employee:   emp,          // full lean document — for employeeSnapshot freeze
-        salary,
-        epfRule,
-        esiRule,
-        ptRule,
-        ruleProvenance,           // pre-built provenance array — for ruleProvenance freeze
+    // Freeze exact rule metadata AND parameters at processing time.
+    const ruleProvenance = [];
+    if (epfRule && salary.pfEnrolled) {
+      ruleProvenance.push({
+        ruleType:        'EPF',
+        ruleId:          epfRule._id,
+        jurisdiction:    epfRule.jurisdiction,
+        effectiveFrom:   epfRule.effectiveFrom,
+        effectiveTo:     epfRule.effectiveTo,
+        sourceReference: epfRule.description ||
+          `EPF-${epfRule.jurisdiction}-${epfRule.effectiveFrom.toISOString().slice(0, 10)}`,
+        parameters:      frozenParameters(epfRule.epfParams),
       });
     }
+    if (esiRule && salary.esiEnrolled) {
+      ruleProvenance.push({
+        ruleType:        'ESI',
+        ruleId:          esiRule._id,
+        jurisdiction:    esiRule.jurisdiction,
+        effectiveFrom:   esiRule.effectiveFrom,
+        effectiveTo:     esiRule.effectiveTo,
+        sourceReference: esiRule.description ||
+          `ESI-${esiRule.jurisdiction}-${esiRule.effectiveFrom.toISOString().slice(0, 10)}`,
+        parameters:      frozenParameters(esiRule.esiParams),
+      });
+    }
+    if (ptRule && salary.ptEnrolled) {
+      ruleProvenance.push({
+        ruleType:        'PT',
+        ruleId:          ptRule._id,
+        jurisdiction:    ptRule.jurisdiction,
+        effectiveFrom:   ptRule.effectiveFrom,
+        effectiveTo:     ptRule.effectiveTo,
+        sourceReference: ptRule.description ||
+          `PT-${ptRule.jurisdiction}-${ptRule.effectiveFrom.toISOString().slice(0, 10)}`,
+        parameters:      { slabs: frozenParameters(ptRule.ptSlabs) || [] },
+      });
+    }
+
+    eligible.push({
+      employeeId: emp._id.toString(),
+      name:       `${emp.firstName} ${emp.lastName}`,
+      employee:   emp,          // full lean document — for employeeSnapshot freeze
+      salary,
+      epfRule,
+      esiRule,
+      ptRule,
+      ruleProvenance,           // pre-built provenance array — for ruleProvenance freeze
+      lastWorkingDay,           // for proration when the employee leaves mid-period
+      compensation: compensationByEmployee.get(String(emp._id)) || null,
+    });
   }
 
   return { eligible, blocked, epfRule, esiRule };
@@ -318,64 +422,57 @@ const payrollRunService = {
     const year  = Number(periodYear);
     const { periodStart, periodEnd } = derivePeriodDates(year, month);
 
+    // Only a non-cancelled run occupies the period. A CANCELLED tombstone is
+    // kept as history; the partial unique index ignores it.
     const existing = await payrollRunRepository.findByCompanyPeriod(companyId, year, month);
-
     if (existing) {
-      if (existing.status !== PAYROLL_STATUS.CANCELLED) {
-        return { run: existing, created: false, conflict: true };
-      }
-      // CANCELLED tombstone — delete it so the partial unique index slot is freed
-      await existing.deleteOne();
+      return { run: existing, created: false, conflict: true };
     }
 
-    const session = await mongoose.startSession();
-    let run;
     try {
-      session.startTransaction();
+      const run = await runInTransaction(async (session) => {
+        const created = await payrollRunRepository.create(
+          {
+            companyId,
+            periodMonth: month,
+            periodYear:  year,
+            periodStart,
+            periodEnd,
+            status:              PAYROLL_STATUS.DRAFT,
+            createdBy:           actorId,
+            idempotencyKey:      idempotencyKey || null,
+            tdsDeferred:         true,
+            attendanceAdjustment: 'DEFERRED',
+          },
+          session
+        );
 
-      run = await payrollRunRepository.create(
-        {
-          companyId,
-          periodMonth: month,
-          periodYear:  year,
-          periodStart,
-          periodEnd,
-          status:              PAYROLL_STATUS.DRAFT,
-          createdBy:           actorId,
-          idempotencyKey:      idempotencyKey || null,
-          tdsDeferred:         true,
-          attendanceAdjustment: 'DEFERRED',
-        },
-        session
-      );
+        await auditService.log(
+          {
+            action:     'PAYROLL_RUN_CREATED',
+            actorId,
+            actorEmail,
+            actorRole,
+            entityType: 'PAYROLL_RUN',
+            entityId:   created._id,
+            companyId,
+            newStatus:  PAYROLL_STATUS.DRAFT,
+            meta:       { periodMonth: month, periodYear: year, companyId },
+          },
+          session
+        );
 
-      await auditService.log(
-        {
-          action:     'PAYROLL_RUN_CREATED',
-          actorId,
-          actorEmail,
-          actorRole,
-          entityType: 'PAYROLL_RUN',
-          entityId:   run._id,
-          newStatus:  PAYROLL_STATUS.DRAFT,
-          meta:       { periodMonth: month, periodYear: year, companyId },
-        },
-        session
-      );
+        return created;
+      }, { label: 'payroll.create' });
 
-      await session.commitTransaction();
+      return { run, created: true, conflict: false };
     } catch (err) {
-      await session.abortTransaction();
-      if (err.code === 11000) {
+      if (err.code === 11000 && !err.keyPattern?.sequenceNumber) {
         const fresh = await payrollRunRepository.findByCompanyPeriod(companyId, year, month);
         return { run: fresh, created: false, conflict: true };
       }
       throw err;
-    } finally {
-      session.endSession();
     }
-
-    return { run, created: true, conflict: false };
   },
 
   // ───────────────────────────────────────────────────────────────────────────
@@ -384,14 +481,9 @@ const payrollRunService = {
 
   async getPayrollRun(runId, companyId) {
     const run = await payrollRunRepository.findById(runId);
-    if (!run) {
+    // Another company's run is indistinguishable from a missing run.
+    if (!run || run.companyId.toString() !== companyId.toString()) {
       throw Object.assign(new Error('Payroll run not found.'), { statusCode: 404 });
-    }
-    if (run.companyId.toString() !== companyId.toString()) {
-      throw Object.assign(
-        new Error('Payroll run does not belong to your company.'),
-        { statusCode: 403 }
-      );
     }
     return run;
   },
@@ -410,11 +502,8 @@ const payrollRunService = {
     const run = await this.getPayrollRun(runId, companyId);
 
     if (![PAYROLL_STATUS.DRAFT, PAYROLL_STATUS.FAILED].includes(run.status)) {
-      throw Object.assign(
-        new Error(
-          `Preflight is only available for DRAFT or FAILED runs. Current status: ${run.status}`
-        ),
-        { statusCode: 409 }
+      throw conflict(
+        `Preflight is only available for DRAFT or FAILED runs. Current status: ${run.status}`
       );
     }
 
@@ -447,9 +536,9 @@ const payrollRunService = {
 
     // CORRECTION C8: explicit attendance deferral metadata
     warnings.push(
-      'attendanceAdjustment=DEFERRED: No Attendance subsystem exists. ' +
-      'Full-month grossMonthly from SalaryStructure is used as payroll gross input. ' +
-      'This is NOT attendance-adjusted salary.'
+      'Attendance and loss of pay are not applied: there is no attendance subsystem yet. ' +
+      'Pay IS prorated for employees who join or leave inside the period, using the ' +
+      'company pay basis (payable days).'
     );
     warnings.push('TDS calculation is deferred (tdsDeferred=true) and will not appear in this run.');
 
@@ -471,6 +560,7 @@ const payrollRunService = {
       actorRole:  actor.role,
       entityType: 'PAYROLL_RUN',
       entityId:   run._id,
+      companyId,
       meta: {
         canProcess,
         eligibleEmployeeCount: eligible.length,
@@ -505,20 +595,18 @@ const payrollRunService = {
   /**
    * Process a payroll run.
    *
-   * Corrected flow (C1, C2, C3, C4, C6, C7, C8):
+   * Flow:
    *   1. Load + own run.
    *   2. Validate state permits PROCESSING.
    *   3. Atomically claim PROCESSING.
    *   4. Clean up stale staging results from any prior attempt (C7).
    *   5. Re-resolve eligible employees (fresh read, no stale cache).
-   *   6. Calculate each employee using Phase 7 complianceCalculationService.
+   *   6. Calculate each employee using complianceCalculationService.
    *   7. Durably persist each result as PayrollStagingResult (C2).
-   *      Update lastActivityAt heartbeat after each write (C6).
+   *      Heartbeat lastActivityAt while looping (C6).
    *   8. Verify completeness: durableCount == expected (C3).
    *   9. Check for duplicate staging results (C3).
    *  10. Transition PROCESSING → READY_FOR_FINALIZATION (C1).
-   *      NOT directly to FINALIZED.
-   *  11. Phase 9 will later: verify snapshots, then → FINALIZED.
    */
   async processPayrollRun(runId, companyId, actor, idempotencyKey = null) {
     const run = await this.getPayrollRun(runId, companyId);
@@ -536,11 +624,8 @@ const payrollRunService = {
     }
 
     if (!canTransition(run.status, PAYROLL_STATUS.PROCESSING)) {
-      throw Object.assign(
-        new Error(
-          `Cannot process a run in status '${run.status}'. Allowed from: DRAFT or FAILED.`
-        ),
-        { statusCode: 409 }
+      throw conflict(
+        `Cannot process a run in status '${run.status}'. Allowed from: DRAFT or FAILED.`
       );
     }
 
@@ -575,6 +660,7 @@ const payrollRunService = {
       actorRole:      actor.role,
       entityType:     'PAYROLL_RUN',
       entityId:       run._id,
+      companyId,
       previousStatus: run.status,
       newStatus:      PAYROLL_STATUS.PROCESSING,
       meta:           { periodMonth: run.periodMonth, periodYear: run.periodYear, processingVersion: currentVersion },
@@ -589,7 +675,7 @@ const payrollRunService = {
         run.periodEnd
       ));
     } catch (err) {
-      await this._failRun(runId, `Employee resolution failed: ${err.message}`, actor);
+      await this._failRun(runId, `Employee resolution failed: ${err.message}`, actor, companyId);
       throw Object.assign(
         new Error(`Payroll processing failed during employee resolution: ${err.message}`),
         { statusCode: 500 }
@@ -600,7 +686,8 @@ const payrollRunService = {
       await this._failRun(
         runId,
         'No eligible employees found after eligibility resolution.',
-        actor
+        actor,
+        companyId
       );
       throw Object.assign(
         new Error('Payroll processing failed: No eligible employees.'),
@@ -608,33 +695,121 @@ const payrollRunService = {
       );
     }
 
+    // The pay basis is a company policy: how many days the period pays for.
+    const companyRecord = await Company.findById(companyId).select('settings').lean();
+    const payrollBasis = payrollBasisFrom(companyRecord ? companyRecord.settings : {});
+
     // ── T-loop: Calculate + durably persist results ───────────────────────
     const calcErrors = [];
     let successCount = 0;
+    let processed = 0;
 
     for (const empData of eligible) {
+      processed += 1;
       try {
         const { salary } = empData;
 
+        // ── Pay basis: the days this period pays for, and the days worked ──
+        const period = computePayPeriodDays({
+          periodStart: run.periodStart,
+          periodEnd:   run.periodEnd,
+          basis:       payrollBasis,
+          hireDate:    empData.employee.hireDate,
+          lastWorkingDay: empData.lastWorkingDay,
+        });
+
+        const fullMonthlyGross = salary.grossMonthly;
+        const earnedBasic = proratedAmount(salary.components.basic, period.prorationFactor);
+        const earnedPfWageOverride = salary.pfWageOverride != null
+          ? proratedAmount(salary.pfWageOverride, period.prorationFactor)
+          : null;
+        const compensation = empData.compensation;
+
+        // Earnings, voluntary deductions and employer contributions come from
+        // the compensation version in force. Records written before
+        // compensation existed fall back to the salary structure itself.
+        const earnedLines = ((compensation && compensation.lines) || []).map((line) => ({
+          componentCode: line.componentCode,
+          name: line.name,
+          type: line.type,
+          recurrence: line.recurrence,
+          payrollApplication: line.payrollApplication,
+          amountMonthly: line.amountMonthly,
+          // One-time components are not paid by a monthly run (Wave 8).
+          amountEarned: line.recurrence === 'RECURRING'
+            ? proratedAmount(line.amountMonthly, period.prorationFactor)
+            : 0,
+          explanation: (line.lineage && line.lineage.explanation) || null,
+        }));
+
+        const earnedGross = proratedAmount(fullMonthlyGross, period.prorationFactor);
+
+        // The breakdown must add up to the gross being paid. When it does not,
+        // compensation and its payroll projection have drifted apart; the run
+        // pays the projection and does not freeze a breakdown that would
+        // contradict it. The variance report surfaces the drift as a pay change
+        // nothing explains.
+        const compensationEarningsMonthly = round2(earnedLines
+          .filter((line) => line.type === 'EARNING' && line.recurrence === 'RECURRING')
+          .reduce((total, line) => total + line.amountMonthly, 0));
+        const breakdownReconciles = Boolean(compensation)
+          && Math.abs(compensationEarningsMonthly - fullMonthlyGross) < 0.01;
+        const earnedPfWage = earnedPfWageOverride != null ? earnedPfWageOverride : earnedBasic;
+
+        const voluntaryDeductions = earnedLines
+          .filter((line) => line.type === 'DEDUCTION' && line.recurrence === 'RECURRING' && line.amountEarned > 0)
+          .map((line) => ({
+            componentCode: line.componentCode,
+            name: line.name,
+            amount: line.amountEarned,
+            explanation: line.explanation,
+          }));
+        const employerOtherContributions = earnedLines
+          .filter((line) => ['EMPLOYER_CONTRIBUTION', 'BENEFIT'].includes(line.type)
+            && line.recurrence === 'RECURRING' && line.amountEarned > 0)
+          .map((line) => ({
+            componentCode: line.componentCode,
+            name: line.name,
+            amount: line.amountEarned,
+            explanation: line.explanation,
+          }));
+
         const calcInput = {
-          grossMonthly:   salary.grossMonthly,
-          basicSalary:    salary.components.basic,
-          pfWageOverride: salary.pfWageOverride != null ? salary.pfWageOverride : null,
+          grossMonthly:   earnedGross,
+          basicSalary:    earnedBasic,
+          // The PF wage stays an explicit input: the engine is told the wage,
+          // it never guesses it. Prorated like every other earned amount.
+          pfWageOverride: earnedPfWageOverride,
           pfEnrolled:     salary.pfEnrolled,
           esiEnrolled:    salary.esiEnrolled,
           ptEnrolled:     salary.ptEnrolled,
           epfRule:        empData.epfRule ? empData.epfRule.epfParams : null,
           esiRule:        empData.esiRule ? empData.esiRule.esiParams : null,
           ptSlabs:        empData.ptRule  ? empData.ptRule.ptSlabs    : [],
+          periodMonth:    run.periodMonth,
+          // ESI eligibility follows the wage for the period; the contribution
+          // is charged on what was actually earned.
+          esiCeilingWage: fullMonthlyGross,
+          ptGross: payrollBasis.professionalTaxBasis === 'FULL_MONTHLY_GROSS' ? fullMonthlyGross : earnedGross,
         };
 
-        // Reuse Phase 7 calculator — DO NOT duplicate statutory formulas
+        // Reuse the Phase 7 calculator — DO NOT duplicate statutory formulas
         const result = complianceCalculationService.calculate(calcInput);
 
+        const voluntaryTotal = round2(voluntaryDeductions.reduce((total, line) => total + line.amount, 0));
+        const employerOtherTotal = round2(employerOtherContributions.reduce((total, line) => total + line.amount, 0));
+        const totalEmployeeDeductions = round2(result.totalEmployeeDeductions + voluntaryTotal);
+        const netPayBeforeTDS = round2(earnedGross - totalEmployeeDeductions);
+        if (netPayBeforeTDS < 0) {
+          throw new Error(
+            'deductions ' + totalEmployeeDeductions + ' exceed earnings ' + earnedGross + ' for this period; ' +
+            'reduce the voluntary deductions in compensation before running payroll'
+          );
+        }
+
         // C2: Durably persist result BEFORE advancing run state.
-        // C9 (Phase 9 correction): freeze ALL historical inputs into staging
-        // so Phase 9 never needs to read current Employee, SalaryStructure,
-        // or ComplianceRuleVersion to reconstruct historical payroll state.
+        // Freeze ALL historical inputs into staging so snapshot materialization
+        // never reads current Employee, SalaryStructure, or ComplianceRuleVersion.
         await payrollRunRepository.upsertStagingResult({
           runId:             run._id,
           companyId,
@@ -644,8 +819,6 @@ const payrollRunService = {
           employeeId:        empData.employeeId,
 
           // ── FROZEN EMPLOYEE IDENTITY ──────────────────────────────────
-          // Captured now. If the employee changes department/status/name
-          // after this write, the staging record is unaffected.
           employeeSnapshot: {
             firstName:        empData.employee.firstName,
             lastName:         empData.employee.lastName,
@@ -658,7 +831,6 @@ const payrollRunService = {
           },
 
           // ── FROZEN SALARY SNAPSHOT ────────────────────────────────────
-          // Captured now. New salary versions do not affect this record.
           salarySnapshot: {
             salaryStructureId: salary._id,
             effectiveFrom:     salary.effectiveFrom,
@@ -681,22 +853,27 @@ const payrollRunService = {
             pfWageOverride: salary.pfWageOverride != null ? salary.pfWageOverride : null,
           },
 
-          // ── FROZEN RULE PROVENANCE ────────────────────────────────────
-          // Store ruleType, ruleId, jurisdiction, effectiveFrom, effectiveTo.
-          // Phase 9 never re-queries rules by date.
+          // ── FROZEN RULE PROVENANCE (ids, dates and parameters) ────────
           ruleProvenance: empData.ruleProvenance,
 
           // ── FROZEN PAYROLL INPUTS ─────────────────────────────────────
           payrollInputs: {
-            grossMonthly:         salary.grossMonthly,
-            basicSalary:          salary.components.basic,
-            pfWageOverride:       salary.pfWageOverride != null ? salary.pfWageOverride : null,
+            // What the engine calculated on: earned amounts for this period.
+            grossMonthly:         earnedGross,
+            basicSalary:          earnedBasic,
+            pfWageOverride:       earnedPfWageOverride,
             pfEnrolled:           salary.pfEnrolled,
             esiEnrolled:          salary.esiEnrolled,
             ptEnrolled:           salary.ptEnrolled,
             workState:            salary.workState,
             payrollDate:          run.periodEnd,
-            attendanceAdjustment: 'DEFERRED',
+            attendanceAdjustment: period.prorated ? 'PRORATED_BY_EMPLOYMENT_DATES' : 'DEFERRED',
+            fullMonthlyGross,
+            payableDays:          period.payableDays,
+            paidDays:             period.paidDays,
+            prorationFactor:      period.prorationFactor,
+            payableDaysBasis:     period.payableDaysBasis,
+            professionalTaxBasis: payrollBasis.professionalTaxBasis,
           },
 
           // ── CALCULATION RESULTS ───────────────────────────────────────
@@ -704,8 +881,22 @@ const payrollRunService = {
           esi:               result.esi,
           pt:                result.pt,
           tdsDeferred:       true,
-          totalEmployeeDeductions: result.totalEmployeeDeductions,
-          netPayBeforeTDS:         result.netPay,
+          // Statutory deductions plus what compensation says the employee pays.
+          totalEmployeeDeductions: totalEmployeeDeductions,
+          netPayBeforeTDS:         netPayBeforeTDS,
+          ...(voluntaryDeductions.length > 0 && { voluntaryDeductions }),
+          ...(employerOtherContributions.length > 0 && { employerOtherContributions }),
+          ...(voluntaryTotal > 0 && { voluntaryDeductionsTotal: voluntaryTotal }),
+          ...(employerOtherTotal > 0 && { employerOtherContributionTotal: employerOtherTotal }),
+          ...(breakdownReconciles && {
+            compensationSnapshot: {
+              compensationVersionId: compensation._id,
+              version: compensation.version,
+              effectiveFrom: compensation.effectiveFrom,
+              payBasis: 'MONTHLY',
+              lines: earnedLines,
+            },
+          }),
 
           // Legacy IDs for completeness checks
           resolvedRuleVersionIds: {
@@ -716,16 +907,17 @@ const payrollRunService = {
         });
 
         successCount++;
-
-        // C6: Heartbeat — allows detection of stuck PROCESSING runs
-        await payrollRunRepository.touchActivity(runId);
-
       } catch (calcErr) {
         calcErrors.push({
           employeeId: empData.employeeId,
           name:       empData.name,
           error:      calcErr.message,
         });
+      }
+
+      // C6: Heartbeat — allows detection of stuck PROCESSING runs
+      if (processed % HEARTBEAT_EVERY === 0 || processed === eligible.length) {
+        await payrollRunRepository.touchActivity(runId);
       }
     }
 
@@ -734,7 +926,7 @@ const payrollRunService = {
       const reason =
         `Calculation errors for ${calcErrors.length} employee(s): ` +
         calcErrors.map(e => `${e.name} — ${e.error}`).join('; ');
-      await this._failRun(runId, reason, actor);
+      await this._failRun(runId, reason, actor, companyId);
       throw Object.assign(
         new Error(`Payroll processing failed: ${reason}`),
         { statusCode: 422 }
@@ -748,7 +940,7 @@ const payrollRunService = {
       const reason =
         `Durable result count mismatch: expected ${eligible.length}, got ${durableCount}. ` +
         `Cannot advance to READY_FOR_FINALIZATION.`;
-      await this._failRun(runId, reason, actor);
+      await this._failRun(runId, reason, actor, companyId);
       throw Object.assign(new Error(reason), { statusCode: 500 });
     }
 
@@ -757,7 +949,7 @@ const payrollRunService = {
       const reason =
         `Duplicate staging results detected for employees: ${duplicates.join(', ')}. ` +
         `Cannot advance to READY_FOR_FINALIZATION.`;
-      await this._failRun(runId, reason, actor);
+      await this._failRun(runId, reason, actor, companyId);
       throw Object.assign(new Error(reason), { statusCode: 500 });
     }
 
@@ -768,12 +960,8 @@ const payrollRunService = {
       pt:  null,  // per-employee; in staging results
     };
 
-    const session = await mongoose.startSession();
-    let readyRun;
-    try {
-      session.startTransaction();
-
-      readyRun = await payrollRunRepository.markReadyForFinalization(
+    const readyRun = await runInTransaction(async (session) => {
+      const updated = await payrollRunRepository.markReadyForFinalization(
         runId,
         {
           employeeCount:           eligible.length + blocked.length,
@@ -786,13 +974,10 @@ const payrollRunService = {
         session
       );
 
-      if (!readyRun) {
-        throw Object.assign(
-          new Error(
-            'READY_FOR_FINALIZATION transition failed: run was not in PROCESSING state ' +
-            '(possible concurrent modification).'
-          ),
-          { statusCode: 409 }
+      if (!updated) {
+        throw conflict(
+          'READY_FOR_FINALIZATION transition failed: run was not in PROCESSING state ' +
+          '(possible concurrent modification).'
         );
       }
 
@@ -804,6 +989,7 @@ const payrollRunService = {
           actorRole:      actor.role,
           entityType:     'PAYROLL_RUN',
           entityId:       run._id,
+          companyId,
           previousStatus: PAYROLL_STATUS.PROCESSING,
           newStatus:      PAYROLL_STATUS.READY_FOR_FINALIZATION,
           meta: {
@@ -816,13 +1002,8 @@ const payrollRunService = {
         session
       );
 
-      await session.commitTransaction();
-    } catch (err) {
-      await session.abortTransaction();
-      throw err;
-    } finally {
-      session.endSession();
-    }
+      return updated;
+    }, { label: 'payroll.readyForFinalization' });
 
     return {
       run: readyRun,
@@ -837,99 +1018,43 @@ const payrollRunService = {
         // C8: explicit attendance metadata
         attendanceAdjustment:    'DEFERRED',
         attendanceNote:
-          'attendanceAdjustment=DEFERRED. ' +
-          'Full-month grossMonthly from SalaryStructure is the payroll gross. ' +
-          'This is NOT attendance-adjusted salary.',
-        phase9Note:
-          'Run is READY_FOR_FINALIZATION. ' +
-          'Phase 9 must verify PayrollStagingResults, materialize PayrollSnapshots, ' +
-          'then transition to FINALIZED.',
+          'Attendance and loss of pay are not applied (no attendance subsystem yet). ' +
+          'Pay IS prorated for employees who join or leave inside the period, ' +
+          'using the company pay basis.',
+        nextStep:
+          'Run is READY_FOR_FINALIZATION. Review the variance report, then finalize: ' +
+          'snapshots are materialized, verified, and locked in one operation.',
       },
     };
   },
 
   // ───────────────────────────────────────────────────────────────────────────
-  // FINALIZE (Phase 9 interface — READY_FOR_FINALIZATION → FINALIZED)
+  // FINALIZE (READY_FOR_FINALIZATION → FINALIZED)
   // ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * CORRECTION C5: This endpoint now requires READY_FOR_FINALIZATION status.
-   * Direct PROCESSING → FINALIZED is forbidden.
-   *
-   * In Phase 8, this method is intentionally limited: it transitions
-   * READY_FOR_FINALIZATION → FINALIZED but is the Phase 9 entry point.
-   * Phase 9 must have already verified PayrollSnapshot completeness before
-   * calling this. Phase 8 does not verify snapshot completeness here —
-   * that is Phase 9's responsibility.
-   *
-   * Phase 8 exposes this transition only after staging-result completeness
-   * was already verified when entering READY_FOR_FINALIZATION.
+   * CORRECTION C5 + H1: requires READY_FOR_FINALIZATION, and goes through the
+   * full snapshot path so FINALIZED can never exist without verified,
+   * complete, locked snapshots:
+   *   1. materialize snapshots from staging (idempotent)
+   *   2. stop on any conflict or materialization error
+   *   3. payrollSnapshotService.finalizeRun: staging/snapshot completeness,
+   *      duplicate and hash checks, then the atomic finalization transaction
    */
-  async finalizePayrollRun(runId, companyId, actor) {
+  async finalizePayrollRun(runId, companyId, actor, options = {}) {
     const run = await this.getPayrollRun(runId, companyId);
 
-    // CORRECTION C5: must be READY_FOR_FINALIZATION, not PROCESSING
     if (!canTransition(run.status, PAYROLL_STATUS.FINALIZED)) {
-      throw Object.assign(
-        new Error(
-          `Cannot finalize a run in status '${run.status}'. ` +
-          `Run must be in READY_FOR_FINALIZATION. ` +
-          `Ensure processing has completed and all employee results are staged.`
-        ),
-        { statusCode: 409 }
+      throw conflict(
+        `Cannot finalize a run in status '${run.status}'. ` +
+        `Run must be in READY_FOR_FINALIZATION. ` +
+        `Ensure processing has completed and all employee results are staged.`
       );
     }
 
-    const session = await mongoose.startSession();
-    let finalizedRun;
-    try {
-      session.startTransaction();
-
-      finalizedRun = await payrollRunRepository.finalize(
-        runId,
-        { finalizedBy: actor.id, resolvedRuleVersionIds: run.resolvedRuleVersionIds },
-        { actorId: actor.id, actorEmail: actor.email, reason: 'Finalization confirmed by Phase 9' },
-        session
-      );
-
-      if (!finalizedRun) {
-        throw Object.assign(
-          new Error(
-            'Finalization failed: run was not in READY_FOR_FINALIZATION state ' +
-            '(possible concurrent finalization).'
-          ),
-          { statusCode: 409 }
-        );
-      }
-
-      await auditService.log(
-        {
-          action:         'PAYROLL_FINALIZED',
-          actorId:        actor.id,
-          actorEmail:     actor.email,
-          actorRole:      actor.role,
-          entityType:     'PAYROLL_RUN',
-          entityId:       runId,
-          previousStatus: PAYROLL_STATUS.READY_FOR_FINALIZATION,
-          newStatus:      PAYROLL_STATUS.FINALIZED,
-          meta: {
-            employeeCount:           run.employeeCount,
-            successfulEmployeeCount: run.successfulEmployeeCount,
-            durableResultCount:      run.durableResultCount,
-            finalizedBy:             actor.id,
-          },
-        },
-        session
-      );
-
-      await session.commitTransaction();
-    } catch (err) {
-      await session.abortTransaction();
-      throw err;
-    } finally {
-      session.endSession();
-    }
-
+    // Controls (segregation of duties, variance gate, override) and the
+    // snapshot path live in payrollFinalizationService.
+    const { run: finalizedRun } = await payrollFinalizationService.finalize(runId, companyId, actor, options);
     return finalizedRun;
   },
 
@@ -941,61 +1066,51 @@ const payrollRunService = {
     const run = await this.getPayrollRun(runId, companyId);
 
     if (!canTransition(run.status, PAYROLL_STATUS.CANCELLED)) {
-      throw Object.assign(
-        new Error(
-          `Cannot cancel a run in status '${run.status}'. Only FAILED runs can be cancelled.`
-        ),
-        { statusCode: 409 }
+      throw conflict(
+        `Cannot cancel a run in status '${run.status}'. Only FAILED runs can be cancelled.`
       );
     }
 
-    const cancelled = await payrollRunRepository.transitionStateAtomically(
-      runId,
-      PAYROLL_STATUS.FAILED,
-      PAYROLL_STATUS.CANCELLED,
-      {},
-      { actorId: actor.id, actorEmail: actor.email, reason: 'Manually cancelled' }
-    );
-
-    if (!cancelled) {
-      throw Object.assign(
-        new Error('Cancellation failed: run status changed concurrently.'),
-        { statusCode: 409 }
+    return runInTransaction(async (session) => {
+      const cancelled = await payrollRunRepository.transitionStateAtomically(
+        runId,
+        PAYROLL_STATUS.FAILED,
+        PAYROLL_STATUS.CANCELLED,
+        {},
+        { actorId: actor.id, actorEmail: actor.email, reason: 'Manually cancelled' },
+        session
       );
-    }
 
-    await auditService.log({
-      action:         'PAYROLL_RUN_CANCELLED',
-      actorId:        actor.id,
-      actorEmail:     actor.email,
-      actorRole:      actor.role,
-      entityType:     'PAYROLL_RUN',
-      entityId:       runId,
-      previousStatus: PAYROLL_STATUS.FAILED,
-      newStatus:      PAYROLL_STATUS.CANCELLED,
-      meta:           {},
-    });
+      if (!cancelled) {
+        throw conflict('Cancellation failed: run status changed concurrently.');
+      }
 
-    return cancelled;
+      await auditService.log({
+        action:         'PAYROLL_RUN_CANCELLED',
+        actorId:        actor.id,
+        actorEmail:     actor.email,
+        actorRole:      actor.role,
+        entityType:     'PAYROLL_RUN',
+        entityId:       runId,
+        companyId,
+        previousStatus: PAYROLL_STATUS.FAILED,
+        newStatus:      PAYROLL_STATUS.CANCELLED,
+        meta:           {},
+      }, session);
+
+      return cancelled;
+    }, { label: 'payroll.cancel' });
   },
 
   // ───────────────────────────────────────────────────────────────────────────
-  // RECOVERY (manual crash recovery for stuck PROCESSING runs)
+  // RECOVERY (stuck PROCESSING runs)
   // ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * Mark a stuck PROCESSING run as FAILED so it can be retried.
+   * Manually mark a stuck PROCESSING run as FAILED so it can be retried.
    *
-   * PROCESS CRASH RECOVERY (documented, manual in Phase 8):
-   *   A run may get stuck in PROCESSING if the server crashes during
-   *   the calculation loop. Detection:
-   *     status = 'PROCESSING' AND lastActivityAt < (now - stuckThresholdMs)
-   *
-   *   Recovery: an admin calls this endpoint. The run transitions to FAILED
-   *   and may be retried via the /process endpoint.
-   *
-   *   Automatic recovery (heartbeat monitor, background job) is deferred
-   *   to a future operations phase. No worker is implemented in Phase 8.
+   * Detection: status = 'PROCESSING' AND lastActivityAt < (now - threshold).
+   * The automatic monitor (autoRecoverStuckRuns) does the same without a human.
    *
    * @param {string} runId
    * @param {string} companyId
@@ -1006,66 +1121,105 @@ const payrollRunService = {
     const run = await this.getPayrollRun(runId, companyId);
 
     if (run.status !== PAYROLL_STATUS.PROCESSING) {
-      throw Object.assign(
-        new Error(`Run is not in PROCESSING status. Current: ${run.status}`),
-        { statusCode: 409 }
-      );
+      throw conflict(`Run is not in PROCESSING status. Current: ${run.status}`);
     }
 
-    const lastActivity = run.lastActivityAt || run.startedAt || run.createdAt;
-    const stuckSince   = new Date(lastActivity).getTime();
+    const lastActivity = new Date(run.lastActivityAt || run.startedAt || run.createdAt);
+    const stuckSince   = lastActivity.getTime();
     const now          = Date.now();
 
     if (now - stuckSince < stuckThresholdMs) {
-      throw Object.assign(
-        new Error(
-          `Run does not appear stuck: last activity was ` +
-          `${Math.round((now - stuckSince) / 1000)}s ago ` +
-          `(threshold: ${stuckThresholdMs / 1000}s).`
-        ),
-        { statusCode: 409 }
+      throw conflict(
+        `Run does not appear stuck: last activity was ` +
+        `${Math.round((now - stuckSince) / 1000)}s ago ` +
+        `(threshold: ${stuckThresholdMs / 1000}s).`
       );
     }
 
-    const failed = await payrollRunRepository.transitionStateAtomically(
-      runId,
-      PAYROLL_STATUS.PROCESSING,
-      PAYROLL_STATUS.FAILED,
-      {
-        failureReason: `Recovered from stuck PROCESSING state. Last activity: ${lastActivity.toISOString()}`,
-        failedAt:      new Date(),
-        completedAt:   new Date(),
-      },
-      { actorId: actor.id, actorEmail: actor.email, reason: 'Manual crash recovery' }
-    );
-
-    if (!failed) {
-      throw Object.assign(
-        new Error('Recovery failed: run status changed concurrently.'),
-        { statusCode: 409 }
+    return runInTransaction(async (session) => {
+      const failed = await payrollRunRepository.transitionStateAtomically(
+        runId,
+        PAYROLL_STATUS.PROCESSING,
+        PAYROLL_STATUS.FAILED,
+        {
+          failureReason: `Recovered from stuck PROCESSING state. Last activity: ${lastActivity.toISOString()}`,
+          failedAt:      new Date(),
+          completedAt:   new Date(),
+        },
+        { actorId: actor.id, actorEmail: actor.email, reason: 'Manual crash recovery' },
+        session
       );
+
+      if (!failed) {
+        throw conflict('Recovery failed: run status changed concurrently.');
+      }
+
+      await auditService.log({
+        action:         'PAYROLL_PROCESSING_FAILED',
+        actorId:        actor.id,
+        actorEmail:     actor.email,
+        actorRole:      actor.role,
+        entityType:     'PAYROLL_RUN',
+        entityId:       runId,
+        companyId,
+        previousStatus: PAYROLL_STATUS.PROCESSING,
+        newStatus:      PAYROLL_STATUS.FAILED,
+        meta:           { reason: 'Manual crash recovery', lastActivityAt: lastActivity },
+      }, session);
+
+      return failed;
+    }, { label: 'payroll.recover' });
+  },
+
+  /**
+   * Fail every PROCESSING run (any company) whose heartbeat is older than
+   * thresholdMs. Safe to run from several server instances at once: each
+   * update is conditional on the heartbeat still being stale.
+   *
+   * @returns {Promise<number>} number of runs recovered
+   */
+  async autoRecoverStuckRuns({ thresholdMs, now = Date.now() } = {}) {
+    const cutoff = new Date(now - thresholdMs);
+    const stuck = await payrollRunRepository.findStuckProcessingRuns(cutoff);
+    let recovered = 0;
+
+    for (const run of stuck) {
+      const lastActivity = run.lastActivityAt || run.startedAt || run.createdAt;
+      const failureReason =
+        `AUTO_RECOVERED: no processing heartbeat since ${new Date(lastActivity).toISOString()}. ` +
+        'Retry processing to recalculate every employee.';
+
+      const failed = await payrollRunRepository.markStuckRunFailed(
+        run._id,
+        cutoff,
+        failureReason,
+        { actorId: SYSTEM_ACTOR.id, actorEmail: SYSTEM_ACTOR.email, reason: 'Automatic stuck-run recovery' }
+      );
+      if (!failed) continue;
+
+      recovered += 1;
+      await auditService.log({
+        action:         'PAYROLL_PROCESSING_FAILED',
+        actorId:        SYSTEM_ACTOR.id,
+        actorEmail:     SYSTEM_ACTOR.email,
+        actorRole:      SYSTEM_ACTOR.role,
+        entityType:     'PAYROLL_RUN',
+        entityId:       run._id,
+        companyId:      run.companyId,
+        previousStatus: PAYROLL_STATUS.PROCESSING,
+        newStatus:      PAYROLL_STATUS.FAILED,
+        meta:           { reason: 'Automatic stuck-run recovery', lastActivityAt: lastActivity, thresholdMs },
+      });
     }
 
-    await auditService.log({
-      action:         'PAYROLL_PROCESSING_FAILED',
-      actorId:        actor.id,
-      actorEmail:     actor.email,
-      actorRole:      actor.role,
-      entityType:     'PAYROLL_RUN',
-      entityId:       runId,
-      previousStatus: PAYROLL_STATUS.PROCESSING,
-      newStatus:      PAYROLL_STATUS.FAILED,
-      meta:           { reason: 'Manual crash recovery', lastActivityAt: lastActivity },
-    });
-
-    return failed;
+    return recovered;
   },
 
   // ───────────────────────────────────────────────────────────────────────────
   // PRIVATE HELPERS
   // ───────────────────────────────────────────────────────────────────────────
 
-  async _failRun(runId, reason, actor) {
+  async _failRun(runId, reason, actor, companyId = null) {
     const failed = await payrollRunRepository.markFailed(
       runId,
       reason,
@@ -1080,6 +1234,7 @@ const payrollRunService = {
         actorRole:      actor.role || 'system',
         entityType:     'PAYROLL_RUN',
         entityId:       runId,
+        companyId:      companyId || failed.companyId,
         previousStatus: PAYROLL_STATUS.PROCESSING,
         newStatus:      PAYROLL_STATUS.FAILED,
         meta:           { failureReason: reason },

@@ -1,6 +1,7 @@
 import express from 'express';
 import { param, query, validationResult } from 'express-validator';
-import authMiddleware, { requireRole } from '../middleware/authMiddleware.js';
+import authMiddleware, { requirePermission } from '../middleware/authMiddleware.js';
+import { PERMISSIONS } from '../utils/permissions.js';
 import { listRules, getRule } from '../controllers/complianceRuleController.js';
 
 const handleValidation = (req, res, next) => {
@@ -9,7 +10,7 @@ const handleValidation = (req, res, next) => {
   next();
 };
 const router = express.Router();
-router.use(authMiddleware, requireRole('admin', 'manager'));
+router.use(authMiddleware, requirePermission(PERMISSIONS.COMPLIANCE_READ));
 router.get('/', query('ruleType').optional().isIn(['EPF', 'ESI', 'PT']), query('jurisdiction').optional().isString(), query('limit').optional().isInt({ min: 1, max: 100 }).toInt(), query('skip').optional().isInt({ min: 0 }).toInt(), handleValidation, listRules);
 router.get('/:id', param('id').isMongoId(), handleValidation, getRule);
 export default router;

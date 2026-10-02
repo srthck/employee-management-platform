@@ -314,7 +314,7 @@ textarea:focus-visible {
   }
 
   .dialog {
-    @apply w-full max-w-lg rounded-[12px] border border-[#E8DDDA] bg-white p-6 shadow-2xl;
+    @apply w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-[12px] border border-[#E8DDDA] bg-white p-6 shadow-2xl;
   }
 
 

@@ -9,7 +9,7 @@ test('salary API exposes versioned read and revision routes', () => {
   assert.match(routes, /getCurrentSalary/);
   assert.match(routes, /getSalaryHistory/);
   assert.match(routes, /createSalaryRevision/);
-  assert.match(routes, /requireRole\('admin'\)/);
+  assert.match(routes, /requirePermission\(PERMISSIONS\.SALARY_REVISE\)/);
 });
 
 test('generic employee updates reject salary and protected fields', () => {

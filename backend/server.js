@@ -1,46 +1,96 @@
+import mongoose from 'mongoose';
 import app from './src/app.js';
 import connectDatabase from './src/config/database.js';
 import config from './src/config/environment.js';
 import auditService from './src/services/auditService.js';
+import logger from './src/utils/logger.js';
+import { supportsTransactions } from './src/utils/transaction.js';
+import { assertFieldEncryptionConfigured } from './src/utils/fieldEncryption.js';
+import { startStuckRunMonitor } from './src/jobs/stuckRunMonitor.js';
+import { startCompensationActivationJob } from './src/jobs/compensationActivationJob.js';
 
 /**
  * Server Entry Point
- * 
+ *
  * Bootstraps the Express server and MongoDB connection
  * Production standards:
- * - Graceful shutdown handling
- * - Database connection verification
- * - Proper error logging
+ * - Fail fast in production when the database is unreachable or cannot run
+ *   transactions (payroll finalization must be atomic)
+ * - Graceful shutdown on SIGTERM / SIGINT (stop accepting, drain, close DB)
+ * - Background stuck-run recovery
+ * - Structured logging
  */
 
 const startServer = async () => {
+  // Statutory and bank identifiers are only ever stored encrypted: without
+  // working keys the server must not accept traffic, in any environment.
   try {
-    // Connect to MongoDB
-    console.log('[STARTUP] Connecting to MongoDB...');
-    try {
-      await connectDatabase();
-      console.log('[STARTUP] MongoDB connection successful');
-      const migratedAuditRecords = await auditService.backfillLegacyChain();
-      if (migratedAuditRecords) console.log(`[STARTUP] Backfilled ${migratedAuditRecords} legacy audit record(s) into the SHA-256 chain`);
-    } catch (dbError) {
-      console.warn(
-        `[STARTUP] MongoDB connection failed: ${dbError.message}`
-      );
-      console.warn('[STARTUP] Continuing without database (check .env MONGO_URI)');
-    }
-
-    // Start Express server
-    app.listen(config.port, () => {
-      console.log(`[STARTUP] Server running on http://localhost:${config.port}`);
-      console.log(`[STARTUP] Environment: ${config.nodeEnv}`);
-      console.log(`[STARTUP] Frontend URL: ${config.frontendUrl}`);
-      console.log(`[STARTUP] API Health Check: http://localhost:${config.port}/api/health`);
-      console.log('[STARTUP] Server ready to accept requests');
-    });
-  } catch (error) {
-    console.error(`[STARTUP] Failed to start server: ${error.message}`);
+    assertFieldEncryptionConfigured();
+  } catch (err) {
+    logger.error('Startup aborted: sensitive-data encryption is not configured', { error: err.message });
     process.exit(1);
   }
+
+  try {
+    await connectDatabase();
+
+    const transactions = await supportsTransactions();
+    if (!transactions) {
+      if (config.requireTransactions) {
+        // Never serve requests with different transaction semantics than the
+        // verified environment, in any NODE_ENV.
+        logger.error(
+          'Startup aborted: MongoDB transactions are required but the server is not a replica set member. ' +
+          'Start one with scripts/start-replica-set.ps1 and use ?replicaSet=rs0 in MONGO_URI.'
+        );
+        process.exit(1);
+      }
+      logger.warn('REQUIRE_TRANSACTIONS=false on a standalone MongoDB: payroll writes are NOT atomic.');
+    }
+
+    const migratedAuditRecords = await auditService.backfillLegacyChain();
+    if (migratedAuditRecords) {
+      logger.info('Backfilled legacy audit records into the SHA-256 chain', { records: migratedAuditRecords });
+    }
+  } catch (dbError) {
+    if (config.isProduction) {
+      logger.error('Startup aborted: database is not usable', { error: dbError.message });
+      process.exit(1);
+    }
+    logger.warn('Continuing without a working database (development only)', { error: dbError.message });
+  }
+
+  const server = app.listen(config.port, () => {
+    logger.info('Server ready', {
+      url: `http://localhost:${config.port}`,
+      environment: config.nodeEnv,
+      frontendUrl: config.frontendUrl,
+    });
+  });
+
+  const monitor = startStuckRunMonitor();
+  const compensationActivation = startCompensationActivationJob();
+
+  let shuttingDown = false;
+  const shutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info('Shutting down', { signal });
+    monitor.stop();
+    compensationActivation.stop();
+    server.close(async () => {
+      await mongoose.connection.close().catch(() => {});
+      process.exit(0);
+    });
+    // Do not hang forever on long-lived connections.
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled promise rejection', { error: reason?.message || String(reason), stack: reason?.stack });
+  });
 };
 
 startServer();

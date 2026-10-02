@@ -14,6 +14,17 @@ import mongoose from 'mongoose';
  * - The legacy flat `salary` field on Employee is NOT authoritative for payroll.
  *   SalaryStructure IS the authoritative source.
  *
+ * Database-level invariant — at most ONE open-ended version per employee:
+ *   isCurrent mirrors (effectiveTo === null) and is maintained by hooks on
+ *   save and on query updates. A partial unique index on
+ *   { employeeId } where isCurrent = true makes a second open version
+ *   impossible, even under concurrent revisions.
+ *
+ * PT jurisdiction:
+ *   workState has NO default. A missing workState blocks the employee in
+ *   payroll preflight (MISSING_PT_JURISDICTION) instead of silently applying
+ *   one state's professional tax to everyone.
+ *
  * Querying for a payroll period:
  *   Find the record where:
  *     employee = <id>
@@ -83,6 +94,12 @@ const salaryStructureSchema = new mongoose.Schema(
       default: null,
     },
 
+    // Derived: true while effectiveTo is null. Backs the unique index below.
+    isCurrent: {
+      type: Boolean,
+      default: true,
+    },
+
     // ─── Salary components ──────────────────────────────────────────────────
     components: {
       type: salaryComponentSchema,
@@ -113,11 +130,12 @@ const salaryStructureSchema = new mongoose.Schema(
     },
 
     // ─── Work state / jurisdiction for PT resolution ────────────────────────
+    // Intentionally no default: see "PT jurisdiction" above.
     workState: {
       type: String,
       trim: true,
       uppercase: true,
-      default: 'MH',
+      default: null,
     },
 
     // ─── Statutory flags ────────────────────────────────────────────────────
@@ -179,6 +197,15 @@ salaryStructureSchema.index({
   effectiveFrom: -1,
 });
 
+salaryStructureSchema.index(
+  { employeeId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { isCurrent: true },
+    name: 'unique_current_salary_per_employee',
+  }
+);
+
 // ─── Gross salary calculation helper ─────────────────────────────────────────
 
 function calculateGrossMonthly(components) {
@@ -196,15 +223,16 @@ function calculateGrossMonthly(components) {
   );
 }
 
-// ─── Pre-validation: compute grossMonthly ────────────────────────────────────
+// ─── Pre-validation: compute grossMonthly and isCurrent ──────────────────────
 //
-// This keeps validation behavior intact and ensures grossMonthly is calculated
-// before Mongoose validation runs.
+// This keeps validation behavior intact and ensures derived fields are
+// calculated before Mongoose validation runs.
 
 salaryStructureSchema.pre('validate', function (next) {
   if (this.components) {
     this.grossMonthly = calculateGrossMonthly(this.components);
   }
+  this.isCurrent = this.effectiveTo == null;
 
   next();
 });
@@ -219,7 +247,21 @@ salaryStructureSchema.pre('save', function (next) {
   if (this.components) {
     this.grossMonthly = calculateGrossMonthly(this.components);
   }
+  this.isCurrent = this.effectiveTo == null;
 
+  next();
+});
+
+// ─── Query updates: keep isCurrent in step with effectiveTo ──────────────────
+
+salaryStructureSchema.pre(['findOneAndUpdate', 'updateOne', 'updateMany'], function (next) {
+  const update = this.getUpdate() || {};
+  const set = update.$set || {};
+  if (Object.prototype.hasOwnProperty.call(set, 'effectiveTo')) {
+    this.set({ isCurrent: set.effectiveTo == null });
+  } else if (Object.prototype.hasOwnProperty.call(update, 'effectiveTo')) {
+    this.set({ isCurrent: update.effectiveTo == null });
+  }
   next();
 });
 

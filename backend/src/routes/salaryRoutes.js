@@ -1,6 +1,8 @@
 import express from 'express';
 import { body, param, validationResult } from 'express-validator';
-import authMiddleware, { requireRole } from '../middleware/authMiddleware.js';
+import authMiddleware, { requirePermission } from '../middleware/authMiddleware.js';
+import { idempotent } from '../middleware/idempotency.js';
+import { PERMISSIONS } from '../utils/permissions.js';
 import { getCurrentSalary, getSalaryHistory, createSalaryRevision } from '../controllers/salaryController.js';
 
 const handleValidation = (req, res, next) => {
@@ -19,7 +21,7 @@ const validateRevision = [
   ...['hra', 'conveyanceAllowance', 'medicalAllowance', 'specialAllowance', 'otherAllowances'].map(nonNegative),
   body('currency').optional().isString().isLength({ min: 3, max: 3 }),
   body('payFrequency').optional().isIn(['monthly', 'semi-monthly', 'bi-weekly', 'weekly']),
-  body('workState').optional().isString().trim().isLength({ min: 2, max: 20 }),
+  body('workState').isString().withMessage('workState is required (PT jurisdiction is never assumed).').trim().isLength({ min: 2, max: 20 }).withMessage('workState must be 2–20 characters.'),
   body('pfEnrolled').optional().isBoolean().toBoolean(),
   body('esiEnrolled').optional().isBoolean().toBoolean(),
   body('ptEnrolled').optional().isBoolean().toBoolean(),
@@ -27,9 +29,12 @@ const validateRevision = [
   body('remarks').optional().isString().isLength({ max: 500 }).trim(),
 ];
 
+// GET  /api/employees/:employeeId/salary/current   salary.read
+// GET  /api/employees/:employeeId/salary           salary.read
+// POST /api/employees/:employeeId/salary           salary.revise (Idempotency-Key supported)
 const router = express.Router();
 router.use(authMiddleware);
-router.get('/:employeeId/salary/current', requireRole('admin', 'manager'), validateEmployee, handleValidation, getCurrentSalary);
-router.get('/:employeeId/salary', requireRole('admin', 'manager'), validateEmployee, handleValidation, getSalaryHistory);
-router.post('/:employeeId/salary', requireRole('admin'), validateRevision, handleValidation, createSalaryRevision);
+router.get('/:employeeId/salary/current', requirePermission(PERMISSIONS.SALARY_READ), validateEmployee, handleValidation, getCurrentSalary);
+router.get('/:employeeId/salary', requirePermission(PERMISSIONS.SALARY_READ), validateEmployee, handleValidation, getSalaryHistory);
+router.post('/:employeeId/salary', requirePermission(PERMISSIONS.SALARY_REVISE), idempotent(), validateRevision, handleValidation, createSalaryRevision);
 export default router;

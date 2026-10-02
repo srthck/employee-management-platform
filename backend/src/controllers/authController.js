@@ -1,63 +1,67 @@
 import jwt from 'jsonwebtoken';
+import bcryptjs from 'bcryptjs';
 import Admin from '../models/Admin.js';
 import EmployeeAccount from '../models/EmployeeAccount.js';
 import Employee from '../models/Employee.js';
 import config from '../config/environment.js';
+import Company from '../models/Company.js';
+import auditService from '../services/auditService.js';
+import compensationComponentService from '../services/compensationComponentService.js';
 import { formatUserResponse } from '../utils/formatUser.js';
+import { runInTransaction } from '../utils/transaction.js';
+import { permissionsForRole } from '../utils/permissions.js';
 
 /**
  * Authentication Controller
  *
  * Supports:
- * - Admin registration
+ * - Admin registration (creates a company workspace)
  * - Admin/Manager login
  * - Employee login
  * - Current authenticated user
- * - Logout
+ * - Logout / sign out everywhere
  *
  * Authentication architecture:
  *
- * Admin / Manager
- *      ↓
- *    Admin
+ * Admin / Manager            Employee
+ *      ↓                        ↓
+ *    Admin               EmployeeAccount → Employee
  *
- * Employee
- *      ↓
- * EmployeeAccount
- *      ↓
- *   Employee
+ * Login hardening:
+ * - Unknown emails still perform a bcrypt comparison so response timing does
+ *   not reveal which emails are registered.
+ * - Account status (deactivated / inactive) is only revealed AFTER the correct
+ *   password is supplied.
+ * - LOGIN_MAX_ATTEMPTS consecutive failures lock the account for LOGIN_LOCK_MS.
  */
 
+const INVALID_CREDENTIALS = 'Invalid email or password.';
+
+let timingEqualizerHash = null;
+const equalizeTiming = async (password) => {
+  if (!timingEqualizerHash) {
+    timingEqualizerHash = await bcryptjs.hash('payguard-timing-equalizer', config.bcryptRounds);
+  }
+  await bcryptjs.compare(String(password), timingEqualizerHash);
+};
+
 /**
- * Generate JWT Token
- *
- * @param {string} userId
- * @param {string} email
- * @param {string} name
- * @param {string} role
- * @returns {string}
+ * Generate JWT. `tv` (token version) lets the server revoke all sessions.
  */
-const generateToken = (userId, email, name, role) => {
+const generateToken = ({ id, email, name, role, tokenVersion = 0 }) => {
   return jwt.sign(
-    {
-      id: userId,
-      email,
-      name,
-      role,
-    },
+    { id, email, name, role, tv: tokenVersion },
     config.jwtSecret,
-    {
-      expiresIn: config.jwtExpire,
-    }
+    { expiresIn: config.jwtExpire, algorithm: 'HS256' }
   );
 };
 
-const setAuthCookie = (res, token) => {
+const setAuthCookie = (res, sessionJwt) => {
   const secure = config.authCookieSecure ? '; Secure' : '';
 
   res.setHeader(
     'Set-Cookie',
-    `${config.authCookieName}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=${config.authCookieSameSite}${secure}`
+    `${config.authCookieName}=${encodeURIComponent(sessionJwt)}; Path=/; HttpOnly; Max-Age=${config.authCookieMaxAgeSeconds}; SameSite=${config.authCookieSameSite}${secure}`
   );
 };
 
@@ -68,239 +72,230 @@ const clearAuthCookie = (res) => {
   );
 };
 
+const invalidCredentials = (res) =>
+  res.status(401).json({ success: false, message: INVALID_CREDENTIALS });
+
+async function registerFailedAttempt(Model, doc, entityType) {
+  const updated = await Model.findOneAndUpdate(
+    { _id: doc._id },
+    { $inc: { failedLoginAttempts: 1 } },
+    { new: true }
+  ).select('+failedLoginAttempts');
+
+  if (updated && updated.failedLoginAttempts >= config.loginMaxAttempts) {
+    const lockUntil = new Date(Date.now() + config.loginLockMs);
+    await Model.updateOne(
+      { _id: doc._id },
+      { $set: { lockUntil, failedLoginAttempts: 0 } }
+    );
+    await auditService.log({
+      action: 'AUTH_ACCOUNT_LOCKED',
+      actorId: doc._id,
+      actorEmail: doc.email,
+      actorRole: doc.role,
+      entityType,
+      entityId: doc._id,
+      companyId: doc.companyId || (entityType === 'ADMIN' ? doc._id : null),
+      meta: { lockUntil: lockUntil.toISOString(), threshold: config.loginMaxAttempts },
+    });
+  }
+}
+
 /**
  * POST /api/auth/register
  *
- * Register a new admin user.
+ * Register a new admin user (and with it, a new company workspace).
  *
  * Public employee registration is intentionally NOT allowed.
  * Employees must be created by an authorized Admin/Manager.
  */
 export const register = async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
+  const { name, email, password, companyName } = req.body;
 
-    const existingAdmin = await Admin.findOne({ email });
+  const [existingAdmin, existingAccount] = await Promise.all([
+    Admin.exists({ email }),
+    EmployeeAccount.exists({ email }),
+  ]);
 
-    if (existingAdmin) {
-      return res.status(409).json({
-        success: false,
-        message:
-          'Email already registered. Please login or use a different email.',
-      });
-    }
+  if (existingAdmin || existingAccount) {
+    return res.status(409).json({
+      success: false,
+      code: 'EMAIL_IN_USE',
+      message:
+        'Email already registered. Please login or use a different email.',
+    });
+  }
 
-    const newAdmin = new Admin({
+  // Owner, company and audit event are created together or not at all.
+  const newAdmin = await runInTransaction(async (session) => {
+    const [admin] = await Admin.create([{
       name,
       email,
       password,
       role: 'admin',
-    });
+      // Registration signs the owner in.
+      lastLoginAt: new Date(),
+    }], { session });
 
-    await newAdmin.save();
+    await Company.create([{
+      _id: admin._id,
+      ownerId: admin._id,
+      name: companyName || `${name}'s company`,
+    }], { session });
 
-    const token = generateToken(
-      newAdmin._id.toString(),
-      newAdmin.email,
-      newAdmin.name,
-      newAdmin.role
+    // Every company starts with the standard pay component catalogue.
+    await compensationComponentService.seedDefaults(
+      admin._id,
+      { id: admin._id, email: admin.email, role: admin.role },
+      session
     );
 
-    setAuthCookie(res, token);
+    await auditService.log({
+      action: 'COMPANY_WORKSPACE_CREATED',
+      actorId: admin._id,
+      actorEmail: admin.email,
+      actorRole: admin.role,
+      entityType: 'COMPANY',
+      entityId: admin._id,
+      companyId: admin._id,
+      meta: { companyName: companyName || null },
+    }, session);
 
-    return res.status(201).json({
-      success: true,
-      message: 'Registration successful',
-      data: {
-        user: formatUserResponse(newAdmin),
-      },
-    });
-  } catch (error) {
-    console.error('[AUTH] Register error:', error.message);
+    return admin;
+  }, { label: 'auth.register' });
 
-    if (error.code === 11000) {
-      return res.status(409).json({
-        success: false,
-        message: 'Email already registered.',
-      });
-    }
+  setAuthCookie(res, generateToken({
+    id: newAdmin._id.toString(),
+    email: newAdmin.email,
+    name: newAdmin.name,
+    role: newAdmin.role,
+    tokenVersion: newAdmin.tokenVersion,
+  }));
 
-    return res.status(500).json({
-      success: false,
-      message: 'Registration failed. Please try again.',
-    });
-  }
+  return res.status(201).json({
+    success: true,
+    message: 'Registration successful',
+    data: {
+      user: formatUserResponse(newAdmin),
+    },
+  });
 };
 
 /**
  * POST /api/auth/login
  *
- * Login supports both:
- *
- * 1. Admin / Manager
- * 2. Employee
- *
- * The user does NOT select a role.
- * The backend determines the account type from the email.
+ * The user does NOT select a role. The backend determines the account type
+ * from the email.
  */
 export const login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
+  const { email, password } = req.body;
 
-    /*
-     * --------------------------------------------------
-     * STEP 1 — Try Admin / Manager account
-     * --------------------------------------------------
-     */
+  const admin = await Admin.findOne({ email })
+    .select('+password +failedLoginAttempts +lockUntil');
+  const account = admin
+    ? null
+    : await EmployeeAccount.findOne({ email }).select('+password +failedLoginAttempts +lockUntil');
 
-    const admin = await Admin.findOne({ email }).select('+password');
+  const principal = admin || account;
+  const Model = admin ? Admin : EmployeeAccount;
+  const entityType = admin ? 'ADMIN' : 'EMPLOYEE_ACCOUNT';
 
-    if (admin) {
-      if (!admin.isActive) {
-        return res.status(403).json({
-          success: false,
-          message:
-            'Your account has been deactivated. Please contact support.',
-        });
-      }
+  if (!principal) {
+    await equalizeTiming(password);
+    return invalidCredentials(res);
+  }
 
-      const isPasswordValid = await admin.comparePassword(password);
+  if (principal.lockUntil && principal.lockUntil > new Date()) {
+    const minutes = Math.ceil((principal.lockUntil.getTime() - Date.now()) / 60000);
+    return res.status(429).json({
+      success: false,
+      message: `Too many failed login attempts. Try again in ${minutes} minute(s).`,
+    });
+  }
 
-      if (!isPasswordValid) {
-        return res.status(401).json({
-          success: false,
-          message: 'Invalid email or password.',
-        });
-      }
+  const isPasswordValid = await principal.comparePassword(password);
+  if (!isPasswordValid) {
+    await registerFailedAttempt(Model, principal, entityType);
+    return invalidCredentials(res);
+  }
 
-      const token = generateToken(
-        admin._id.toString(),
-        admin.email,
-        admin.name,
-        admin.role
-      );
+  // The caller has proven knowledge of the password; status can be disclosed.
+  if (!principal.isActive) {
+    return res.status(403).json({
+      success: false,
+      message: admin
+        ? 'Your account has been deactivated. Please contact support.'
+        : 'Your employee login account has been deactivated. Please contact your administrator.',
+    });
+  }
 
-      setAuthCookie(res, token);
-
-      return res.status(200).json({
-        success: true,
-        message: 'Login successful',
-        data: {
-          user: formatUserResponse(admin),
-        },
-      });
-    }
-
-    /*
-     * --------------------------------------------------
-     * STEP 2 — Try Employee account
-     * --------------------------------------------------
-     */
-
-    const employeeAccount = await EmployeeAccount.findOne({
-      email,
-    }).select('+password');
-
-    if (!employeeAccount) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password.',
-      });
-    }
-
-    /*
-     * Employee account status
-     */
-    if (!employeeAccount.isActive) {
-      return res.status(403).json({
-        success: false,
-        message:
-          'Your employee login account has been deactivated. Please contact your administrator.',
-      });
-    }
-
-    /*
-     * Find the associated Employee record.
-     */
-    const employee = await Employee.findById(employeeAccount.employee);
-
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message:
-          'Employee record associated with this account could not be found.',
-      });
-    }
-
-    /*
-     * Employee itself must also be active.
-     */
-    if (employee.status !== 'active') {
+  let employee = null;
+  if (account) {
+    employee = await Employee.findById(account.employee);
+    if (!employee || employee.status !== 'active') {
       return res.status(403).json({
         success: false,
         message:
           'Your employee account is not currently active. Please contact your administrator.',
       });
     }
+  }
 
-    /*
-     * Verify employee password.
-     */
-    const isPasswordValid = await employeeAccount.comparePassword(password);
+  await Model.updateOne(
+    { _id: principal._id },
+    { $set: { failedLoginAttempts: 0, lockUntil: null, lastLoginAt: new Date() } }
+  );
 
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: 'Invalid email or password.',
-      });
-    }
+  const displayName = employee ? `${employee.firstName} ${employee.lastName}` : principal.name;
+  const companyId = admin
+    ? String(admin.companyId || admin._id)
+    : String(account.companyId || employee.createdBy);
 
-    /*
-     * Employee display name.
-     */
-    const employeeName = `${employee.firstName} ${employee.lastName}`;
+  await auditService.log({
+    action: 'AUTH_LOGIN_SUCCEEDED',
+    actorId: principal._id,
+    actorEmail: principal.email,
+    actorRole: principal.role,
+    entityType,
+    entityId: principal._id,
+    companyId,
+    meta: {},
+  });
 
-    /*
-     * IMPORTANT:
-     *
-     * The EmployeeAccount itself is the authenticated identity.
-     * Therefore the JWT id is EmployeeAccount._id.
-     *
-     * The role is always "employee".
-     */
-    const token = generateToken(
-      employeeAccount._id.toString(),
-      employeeAccount.email,
-      employeeName,
-      employeeAccount.role
-    );
+  setAuthCookie(res, generateToken({
+    id: principal._id.toString(),
+    email: principal.email,
+    name: displayName,
+    role: principal.role,
+    tokenVersion: principal.tokenVersion,
+  }));
 
-    setAuthCookie(res, token);
-
+  if (admin) {
     return res.status(200).json({
       success: true,
       message: 'Login successful',
-      data: {
-        user: {
-          id: employeeAccount._id,
-          employeeId: employee._id,
-          name: employeeName,
-          email: employeeAccount.email,
-          role: employeeAccount.role,
-          isActive: employeeAccount.isActive,
-          department: employee.department,
-          position: employee.position,
-        },
-      },
-    });
-  } catch (error) {
-    console.error('[AUTH] Login error:', error.message);
-
-    return res.status(500).json({
-      success: false,
-      message: 'Login failed. Please try again.',
+      data: { user: formatUserResponse(admin) },
     });
   }
+
+  return res.status(200).json({
+    success: true,
+    message: 'Login successful',
+    data: {
+      user: {
+        id: account._id,
+        employeeId: employee._id,
+        name: displayName,
+        email: account.email,
+        role: account.role,
+        isActive: account.isActive,
+        department: employee.department,
+        position: employee.position,
+        companyId,
+        permissions: permissionsForRole(account.role),
+      },
+    },
+  });
 };
 
 /**
@@ -316,122 +311,76 @@ export const logout = async (req, res) => {
 };
 
 /**
+ * POST /api/auth/logout-all
+ *
+ * Revokes every session issued for this account (all devices) by bumping the
+ * token version checked in authMiddleware.
+ */
+export const logoutAll = async (req, res) => {
+  const Model = req.user.role === 'employee' ? EmployeeAccount : Admin;
+  await Model.updateOne({ _id: req.user.id }, { $inc: { tokenVersion: 1 } });
+
+  await auditService.log({
+    action: 'AUTH_SESSIONS_REVOKED',
+    actorId: req.user.id,
+    actorEmail: req.user.email,
+    actorRole: req.user.role,
+    entityType: req.user.role === 'employee' ? 'EMPLOYEE_ACCOUNT' : 'ADMIN',
+    entityId: req.user.id,
+    meta: {},
+  });
+
+  clearAuthCookie(res);
+  return res.status(200).json({
+    success: true,
+    message: 'Signed out of all sessions.',
+  });
+};
+
+/**
  * GET /api/auth/me
  *
- * Returns the currently authenticated user.
- *
- * Supports:
- * - Admin
- * - Manager
- * - Employee
+ * authMiddleware has already re-validated the account against the database.
  */
 export const getCurrentUser = async (req, res) => {
-  try {
-    /*
-     * --------------------------------------------------
-     * ADMIN / MANAGER
-     * --------------------------------------------------
-     */
+  if (req.user.role === 'employee') {
+    const employee = await Employee.findById(req.user.employeeId)
+      .select('department position')
+      .lean();
 
-    if (req.user.role === 'admin' || req.user.role === 'manager') {
-      const admin = await Admin.findById(req.user.id);
-
-      if (!admin) {
-        return res.status(404).json({
-          success: false,
-          message: 'User not found.',
-        });
-      }
-
-      if (!admin.isActive) {
-        return res.status(403).json({
-          success: false,
-          message:
-            'Your account has been deactivated. Please contact support.',
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: 'User fetched successfully',
-        data: {
-          user: formatUserResponse(admin),
+    return res.status(200).json({
+      success: true,
+      message: 'User fetched successfully',
+      data: {
+        user: {
+          id: req.user.id,
+          employeeId: req.user.employeeId,
+          name: req.user.name,
+          email: req.user.email,
+          role: req.user.role,
+          isActive: true,
+          department: employee?.department,
+          position: employee?.position,
+          companyId: req.user.companyId,
+          permissions: permissionsForRole(req.user.role),
         },
-      });
-    }
-
-    /*
-     * --------------------------------------------------
-     * EMPLOYEE
-     * --------------------------------------------------
-     */
-
-    if (req.user.role === 'employee') {
-      const employeeAccount = await EmployeeAccount.findById(req.user.id);
-
-      if (!employeeAccount) {
-        return res.status(404).json({
-          success: false,
-          message: 'Employee login account not found.',
-        });
-      }
-
-      if (!employeeAccount.isActive) {
-        return res.status(403).json({
-          success: false,
-          message:
-            'Your employee login account has been deactivated.',
-        });
-      }
-
-      const employee = await Employee.findById(employeeAccount.employee);
-
-      if (!employee) {
-        return res.status(404).json({
-          success: false,
-          message: 'Employee record not found.',
-        });
-      }
-
-      if (employee.status !== 'active') {
-        return res.status(403).json({
-          success: false,
-          message:
-            'Your employee record is not currently active.',
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: 'User fetched successfully',
-        data: {
-          user: {
-            id: employeeAccount._id,
-            employeeId: employee._id,
-            name: `${employee.firstName} ${employee.lastName}`,
-            email: employeeAccount.email,
-            role: employeeAccount.role,
-            isActive: employeeAccount.isActive,
-            department: employee.department,
-            position: employee.position,
-          },
-        },
-      });
-    }
-
-    /*
-     * Unknown role
-     */
-    return res.status(403).json({
-      success: false,
-      message: 'Invalid user role.',
-    });
-  } catch (error) {
-    console.error('[AUTH] Get current user error:', error.message);
-
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to fetch user data.',
+      },
     });
   }
+
+  return res.status(200).json({
+    success: true,
+    message: 'User fetched successfully',
+    data: {
+      user: {
+        id: req.user.id,
+        name: req.user.name,
+        email: req.user.email,
+        role: req.user.role,
+        isActive: true,
+        companyId: req.user.companyId,
+        permissions: permissionsForRole(req.user.role),
+      },
+    },
+  });
 };

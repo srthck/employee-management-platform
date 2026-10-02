@@ -36,7 +36,12 @@ const epfParamsSchema = new mongoose.Schema(
     employerContributionRate: { type: Number, required: true }, // e.g. 0.12
     wageCapForContribution: { type: Number, required: true },   // e.g. 15000
     epsRate: { type: Number, default: 0.0833 },                  // 8.33% of employer share goes to EPS
+    // EPS is computed on wages up to this ceiling even when PF is paid on a
+    // higher wage. null = same as wageCapForContribution.
+    epsWageCeiling: { type: Number, default: null },
     voluntaryContributionAllowed: { type: Boolean, default: true },
+    // PAISE: round to 2 decimals. NEAREST_RUPEE: EPFO ECR practice.
+    roundingMode: { type: String, enum: ['PAISE', 'NEAREST_RUPEE', 'CEIL_RUPEE'], default: 'PAISE' },
   },
   { _id: false }
 );
@@ -47,6 +52,8 @@ const esiParamsSchema = new mongoose.Schema(
     employeeContributionRate: { type: Number, required: true }, // e.g. 0.0075
     employerContributionRate: { type: Number, required: true }, // e.g. 0.0325
     grossWageCeiling: { type: Number, required: true },         // e.g. 21000
+    // CEIL_RUPEE: ESIC rounds contributions up to the next rupee.
+    roundingMode: { type: String, enum: ['PAISE', 'NEAREST_RUPEE', 'CEIL_RUPEE'], default: 'PAISE' },
   },
   { _id: false }
 );
@@ -56,6 +63,18 @@ const ptSlabSchema = new mongoose.Schema(
   {
     upTo: { type: Number, default: null }, // null = top slab (no upper bound)
     monthlyTax: { type: Number, required: true },
+    // Month-specific amounts, e.g. Maharashtra collects a higher amount in
+    // February so the annual total reaches the statutory cap.
+    monthOverrides: {
+      type: [new mongoose.Schema(
+        {
+          month: { type: Number, required: true, min: 1, max: 12 },
+          monthlyTax: { type: Number, required: true },
+        },
+        { _id: false }
+      )],
+      default: undefined,
+    },
   },
   { _id: false }
 );

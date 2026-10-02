@@ -410,10 +410,12 @@ describe('TEST 8 — Attendance explicitly DEFERRED', () => {
     assert.equal(inputSchema.paths.attendanceAdjustment.defaultValue, 'DEFERRED');
   });
 
-  test('Phase 9 service sets attendanceAdjustment=DEFERRED', async () => {
+  test('Phase 9 service carries attendanceAdjustment through, defaulting to DEFERRED', async () => {
     const fs  = await import('node:fs');
     const src = fs.readFileSync('./src/services/payrollSnapshotService.js', 'utf-8');
-    assert.ok(src.includes("attendanceAdjustment: 'DEFERRED'"));
+    // Wave 3.5: staging decides whether pay was prorated for part of the period;
+    // the snapshot copies that verdict instead of asserting its own.
+    assert.ok(src.includes("attendanceAdjustment: inputs.attendanceAdjustment || 'DEFERRED'"));
     assert.ok(!src.includes('attendance-adjusted salary'));
   });
 });
@@ -821,7 +823,7 @@ describe('TEST X / 35 — Phase 6 Regression: Audit chain', () => {
     const fs  = await import('node:fs');
     const src = fs.readFileSync('./src/services/payrollSnapshotService.js', 'utf-8');
     assert.ok(src.includes('PAYROLL_FINALIZED'));
-    assert.ok(src.includes('startTransaction'));
+    assert.ok(src.includes('runInTransaction'));
   });
 });
 

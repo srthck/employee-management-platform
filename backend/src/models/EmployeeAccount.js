@@ -1,5 +1,7 @@
 import mongoose from 'mongoose';
 import bcryptjs from 'bcryptjs';
+import config from '../config/environment.js';
+import { EMAIL_PATTERN } from '../utils/email.js';
 
 const employeeAccountSchema = new mongoose.Schema(
   {
@@ -10,16 +12,22 @@ const employeeAccountSchema = new mongoose.Schema(
       unique: true,
     },
 
+    // Workspace the employee belongs to (Employee.createdBy at creation time).
+    // Accounts created before this field existed resolve it from the employee.
+    companyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Admin',
+      default: null,
+      index: true,
+    },
+
     email: {
       type: String,
       required: [true, 'Email is required'],
       unique: true,
       lowercase: true,
       trim: true,
-      match: [
-        /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
-        'Invalid email format',
-      ],
+      match: [EMAIL_PATTERN, 'Invalid email format'],
     },
 
     password: {
@@ -40,6 +48,28 @@ const employeeAccountSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+
+    tokenVersion: {
+      type: Number,
+      default: 0,
+    },
+
+    failedLoginAttempts: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
+
+    lockUntil: {
+      type: Date,
+      default: null,
+      select: false,
+    },
+
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -52,7 +82,7 @@ employeeAccountSchema.pre('save', async function (next) {
   }
 
   try {
-    const salt = await bcryptjs.genSalt(10);
+    const salt = await bcryptjs.genSalt(config.bcryptRounds);
     this.password = await bcryptjs.hash(this.password, salt);
     next();
   } catch (error) {
@@ -68,6 +98,9 @@ employeeAccountSchema.methods.toJSON = function () {
   const obj = this.toObject();
 
   delete obj.password;
+  delete obj.tokenVersion;
+  delete obj.failedLoginAttempts;
+  delete obj.lockUntil;
   delete obj.__v;
 
   return obj;

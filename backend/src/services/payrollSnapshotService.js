@@ -16,13 +16,13 @@
  *   The snapshot represents "WHAT PAYROLL USED", not "WHAT THE DB SAYS NOW".
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * SNAPSHOT MATERIALIZATION CONTRACT (Step 16 of correction spec):
+ * SNAPSHOT MATERIALIZATION CONTRACT:
  *
  *   snapshot.employeeSnapshot  == staging.employeeSnapshot
  *   snapshot.salarySnapshot    == staging.salarySnapshot
  *   snapshot.payrollInputs     == staging.payrollInputs
  *   snapshot.payrollResults    == derived from staging.epf/esi/pt/netPayBeforeTDS
- *   snapshot.complianceProvenance == staging.ruleProvenance
+ *   snapshot.complianceProvenance == staging.ruleProvenance (incl. parameters)
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * WHAT PHASE 9 IS ALLOWED TO READ:
@@ -43,22 +43,30 @@
  *   T-materialize (per employee, outside transaction):
  *     - Read staging result (frozen historical data)
  *     - Build snapshot payload directly from staging
- *     - Upsert snapshot (idempotent by payrollRunId + employeeId unique index)
+ *     - Insert snapshot (idempotent by payrollRunId + employeeId unique index)
  *
- *   T-finalize (short, atomic):
+ *   T-finalize (short, atomic, via runInTransaction):
  *     - Pre-checks (counts, duplicates, hashes)
  *     - bulkMarkFinalized (snapshots → FINALIZED)
  *     - payrollRunRepository.finalize (run → FINALIZED)
  *     - auditService.log(PAYROLL_FINALIZED)
- *     - commit
+ *     - commit (session.startTransaction / commit handled by the helper)
+ *
+ * TENANCY:
+ *   A run or snapshot owned by another company is reported as not found.
  */
 
-import mongoose from 'mongoose';
 import payrollRunRepository from '../repositories/payrollRunRepository.js';
 import payrollSnapshotRepository from '../repositories/payrollSnapshotRepository.js';
 import auditService from './auditService.js';
 import { computeSnapshotHash, verifySnapshotHash } from '../models/PayrollSnapshot.js';
 import { PAYROLL_STATUS } from '../models/PayrollRun.js';
+import { runInTransaction } from '../utils/transaction.js';
+
+const runNotFound = () => Object.assign(new Error('Payroll run not found.'), { statusCode: 404 });
+const snapshotNotFound = () => Object.assign(new Error('Snapshot not found.'), { statusCode: 404 });
+
+const ownedBy = (doc, companyId) => companyId == null || doc.companyId.toString() === companyId.toString();
 
 // ─── Snapshot payload builder ─────────────────────────────────────────────────
 
@@ -105,7 +113,8 @@ function buildSnapshotPayloadFromStaging(staging, run) {
   };
 
   // ── 3. Compliance provenance — directly from staging.ruleProvenance ──────
-  // Phase 9 does NOT re-query compliance rules.
+  // Phase 9 does NOT re-query compliance rules. `parameters` is copied only
+  // when staging has it, so snapshots from older staging hash identically.
   const complianceProvenance = (staging.ruleProvenance || []).map(p => ({
     ruleType:        p.ruleType,
     ruleId:          p.ruleId,
@@ -113,22 +122,37 @@ function buildSnapshotPayloadFromStaging(staging, run) {
     effectiveFrom:   p.effectiveFrom,
     effectiveTo:     p.effectiveTo,
     sourceReference: p.sourceReference,
+    ...(p.parameters !== undefined && { parameters: p.parameters }),
   }));
 
   // ── 4. Payroll inputs — directly from staging.payrollInputs ──────────────
+  const inputs = staging.payrollInputs;
   const payrollInputs = {
-    grossMonthly:         staging.payrollInputs.grossMonthly,
-    basicSalary:          staging.payrollInputs.basicSalary,
-    pfWageOverride:       staging.payrollInputs.pfWageOverride != null
-                            ? staging.payrollInputs.pfWageOverride
-                            : null,
-    pfEnrolled:           staging.payrollInputs.pfEnrolled,
-    esiEnrolled:          staging.payrollInputs.esiEnrolled,
-    ptEnrolled:           staging.payrollInputs.ptEnrolled,
-    workState:            staging.payrollInputs.workState,
-    payrollDate:          staging.payrollInputs.payrollDate,
-    attendanceAdjustment: 'DEFERRED',
+    grossMonthly:         inputs.grossMonthly,
+    basicSalary:          inputs.basicSalary,
+    pfWageOverride:       inputs.pfWageOverride != null ? inputs.pfWageOverride : null,
+    pfEnrolled:           inputs.pfEnrolled,
+    esiEnrolled:          inputs.esiEnrolled,
+    ptEnrolled:           inputs.ptEnrolled,
+    workState:            inputs.workState,
+    payrollDate:          inputs.payrollDate,
+    attendanceAdjustment: inputs.attendanceAdjustment || 'DEFERRED',
+    // Pay basis (Wave 3.5): copied only when the staging result carries it, so
+    // a snapshot materialised from an older result keeps its exact shape.
+    ...(inputs.fullMonthlyGross !== undefined && { fullMonthlyGross: inputs.fullMonthlyGross }),
+    ...(inputs.payableDays !== undefined && { payableDays: inputs.payableDays }),
+    ...(inputs.paidDays !== undefined && { paidDays: inputs.paidDays }),
+    ...(inputs.prorationFactor !== undefined && { prorationFactor: inputs.prorationFactor }),
+    ...(inputs.payableDaysBasis !== undefined && { payableDaysBasis: inputs.payableDaysBasis }),
+    ...(inputs.professionalTaxBasis !== undefined && { professionalTaxBasis: inputs.professionalTaxBasis }),
   };
+
+  const plainLines = (lines) => (lines || []).map((line) => ({
+    componentCode: line.componentCode,
+    name: line.name,
+    amount: line.amount,
+    ...(line.explanation ? { explanation: line.explanation } : {}),
+  }));
 
   // ── 5. Payroll results — from staging calculation outputs ─────────────────
   const epfEmployerContrib = (staging.epf && staging.epf.employerEpf) || 0;
@@ -144,7 +168,34 @@ function buildSnapshotPayloadFromStaging(staging, run) {
     netPayBeforeTDS: staging.netPayBeforeTDS,
     tdsStatus:       'DEFERRED',
     tdsAmount:       null,
+    // Compensation beyond the statutory engine (Wave 3.5), when present.
+    ...(staging.voluntaryDeductions && staging.voluntaryDeductions.length > 0 && {
+      voluntaryDeductions: plainLines(staging.voluntaryDeductions),
+      voluntaryDeductionsTotal: staging.voluntaryDeductionsTotal,
+    }),
+    ...(staging.employerOtherContributions && staging.employerOtherContributions.length > 0 && {
+      employerOtherContributions: plainLines(staging.employerOtherContributions),
+      employerOtherContributionTotal: staging.employerOtherContributionTotal,
+    }),
   };
+
+  const compensationSnapshot = staging.compensationSnapshot
+    ? {
+      compensationVersionId: staging.compensationSnapshot.compensationVersionId,
+      version: staging.compensationSnapshot.version,
+      effectiveFrom: staging.compensationSnapshot.effectiveFrom,
+      payBasis: staging.compensationSnapshot.payBasis,
+      lines: (staging.compensationSnapshot.lines || []).map((line) => ({
+        componentCode: line.componentCode,
+        name: line.name,
+        type: line.type,
+        payrollApplication: line.payrollApplication,
+        amountMonthly: line.amountMonthly,
+        amountEarned: line.amountEarned,
+        ...(line.explanation ? { explanation: line.explanation } : {}),
+      })),
+    }
+    : null;
 
   // ── 6. Assemble full snapshot payload ──────────────────────────────────────
   const runObj = run.toObject ? run.toObject() : run;
@@ -161,6 +212,7 @@ function buildSnapshotPayloadFromStaging(staging, run) {
     complianceProvenance,
     payrollInputs,
     payrollResults,
+    ...(compensationSnapshot ? { compensationSnapshot } : {}),
     processingVersion: staging.processingVersion,
     snapshotStatus:    'PENDING_FINALIZATION',
   };
@@ -205,15 +257,10 @@ const payrollSnapshotService = {
    *   - Conflicting snapshot exists: block with SNAPSHOT_CONFLICT.
    *
    * NOTE: This function ONLY reads PayrollStagingResult and PayrollRun.
-   * It does NOT call Employee.findById, SalaryStructure.findById, or
-   * ComplianceRuleVersion.findValidForDate.
    */
   async materializeSnapshots(runId, companyId, actor) {
     const run = await payrollRunRepository.findById(runId);
-    if (!run) throw Object.assign(new Error('Payroll run not found.'), { statusCode: 404 });
-    if (run.companyId.toString() !== companyId.toString()) {
-      throw Object.assign(new Error('Run does not belong to your company.'), { statusCode: 403 });
-    }
+    if (!run || !ownedBy(run, companyId)) throw runNotFound();
     if (run.status !== PAYROLL_STATUS.READY_FOR_FINALIZATION) {
       throw Object.assign(
         new Error(
@@ -283,6 +330,7 @@ const payrollSnapshotService = {
           actorRole:  actor.role,
           entityType: 'PAYROLL_SNAPSHOT',
           entityId:   snapshot._id,
+          companyId:  run.companyId,
           meta: {
             payrollRunId: runId,
             employeeId:   staging.employeeId.toString(),
@@ -324,12 +372,14 @@ const payrollSnapshotService = {
   // FINALIZE
   // ───────────────────────────────────────────────────────────────────────────
 
-  async finalizeRun(runId, companyId, actor) {
+  /**
+   * @param {{ finalizationControls?: object|null }} [options]
+   *   control-layer record (preparer, approver, variance summary, override)
+   *   stored on the run and in the audit event, atomically with finalization
+   */
+  async finalizeRun(runId, companyId, actor, { finalizationControls = null } = {}) {
     const run = await payrollRunRepository.findById(runId);
-    if (!run) throw Object.assign(new Error('Payroll run not found.'), { statusCode: 404 });
-    if (run.companyId.toString() !== companyId.toString()) {
-      throw Object.assign(new Error('Run does not belong to your company.'), { statusCode: 403 });
-    }
+    if (!run || !ownedBy(run, companyId)) throw runNotFound();
     if (run.status !== PAYROLL_STATUS.READY_FOR_FINALIZATION) {
       throw Object.assign(
         new Error(
@@ -399,60 +449,59 @@ const payrollSnapshotService = {
     }
 
     // Short finalization transaction
-    const session = await mongoose.startSession();
     let finalizedRun;
     try {
-      session.startTransaction();
-
-      const bulkResult = await payrollSnapshotRepository.bulkMarkFinalized(
-        runId, actor.id, session
-      );
-
-      if (bulkResult.modifiedCount !== snapshotCount) {
-        throw Object.assign(
-          new Error(
-            `Finalization transaction aborted: expected to finalize ${snapshotCount} snapshots ` +
-            `but modified ${bulkResult.modifiedCount}. Possible concurrent finalization.`
-          ),
-          { statusCode: 409 }
+      finalizedRun = await runInTransaction(async (session) => {
+        const bulkResult = await payrollSnapshotRepository.bulkMarkFinalized(
+          runId, actor.id, session
         );
-      }
 
-      finalizedRun = await payrollRunRepository.finalize(
-        runId,
-        { finalizedBy: actor.id, resolvedRuleVersionIds: run.resolvedRuleVersionIds },
-        { actorId: actor.id, actorEmail: actor.email, reason: 'Phase 9 finalization complete' },
-        session
-      );
+        if (bulkResult.modifiedCount !== snapshotCount) {
+          throw Object.assign(
+            new Error(
+              `Finalization transaction aborted: expected to finalize ${snapshotCount} snapshots ` +
+              `but modified ${bulkResult.modifiedCount}. Possible concurrent finalization.`
+            ),
+            { statusCode: 409 }
+          );
+        }
 
-      if (!finalizedRun) {
-        throw Object.assign(
-          new Error(
-            'Finalization transaction aborted: PayrollRun was no longer READY_FOR_FINALIZATION ' +
-            '(concurrent finalization attempt).'
-          ),
-          { statusCode: 409 }
+        const updatedRun = await payrollRunRepository.finalize(
+          runId,
+          { finalizedBy: actor.id, resolvedRuleVersionIds: run.resolvedRuleVersionIds, finalizationControls },
+          { actorId: actor.id, actorEmail: actor.email, reason: 'Snapshots verified and locked' },
+          session
         );
-      }
 
-      await auditService.log(
-        {
-          action:         'PAYROLL_FINALIZED',
-          actorId:        actor.id,
-          actorEmail:     actor.email,
-          actorRole:      actor.role,
-          entityType:     'PAYROLL_RUN',
-          entityId:       runId,
-          previousStatus: PAYROLL_STATUS.READY_FOR_FINALIZATION,
-          newStatus:      PAYROLL_STATUS.FINALIZED,
-          meta:           { snapshotCount, expectedCount, periodMonth: run.periodMonth, periodYear: run.periodYear },
-        },
-        session
-      );
+        if (!updatedRun) {
+          throw Object.assign(
+            new Error(
+              'Finalization transaction aborted: PayrollRun was no longer READY_FOR_FINALIZATION ' +
+              '(concurrent finalization attempt).'
+            ),
+            { statusCode: 409 }
+          );
+        }
 
-      await session.commitTransaction();
+        await auditService.log(
+          {
+            action:         'PAYROLL_FINALIZED',
+            actorId:        actor.id,
+            actorEmail:     actor.email,
+            actorRole:      actor.role,
+            entityType:     'PAYROLL_RUN',
+            entityId:       runId,
+            companyId:      run.companyId,
+            previousStatus: PAYROLL_STATUS.READY_FOR_FINALIZATION,
+            newStatus:      PAYROLL_STATUS.FINALIZED,
+            meta:           { snapshotCount, expectedCount, periodMonth: run.periodMonth, periodYear: run.periodYear, finalizationControls },
+          },
+          session
+        );
+
+        return updatedRun;
+      }, { label: 'payroll.finalize' });
     } catch (err) {
-      await session.abortTransaction();
       if (
         err?.code === 112 ||
         err?.errorLabels?.has?.('TransientTransactionError')
@@ -463,8 +512,6 @@ const payrollSnapshotService = {
         );
       }
       throw err;
-    } finally {
-      session.endSession();
     }
 
     await auditService.log({
@@ -474,6 +521,7 @@ const payrollSnapshotService = {
       actorRole:  actor.role,
       entityType: 'PAYROLL_RUN',
       entityId:   runId,
+      companyId:  run.companyId,
       meta:       { snapshotCount, periodMonth: run.periodMonth, periodYear: run.periodYear },
     });
 
@@ -484,9 +532,13 @@ const payrollSnapshotService = {
   // VERIFY
   // ───────────────────────────────────────────────────────────────────────────
 
-  async verifySnapshot(snapshotId) {
+  /**
+   * @param {string} snapshotId
+   * @param {string} [companyId] - when given, a foreign snapshot is not found
+   */
+  async verifySnapshot(snapshotId, companyId = null) {
     const snap = await payrollSnapshotRepository.findById(snapshotId);
-    if (!snap) throw Object.assign(new Error('Snapshot not found.'), { statusCode: 404 });
+    if (!snap || !ownedBy(snap, companyId)) throw snapshotNotFound();
 
     const { valid, storedHash, computedHash } = verifySnapshotHash(snap);
 
@@ -514,10 +566,7 @@ const payrollSnapshotService = {
 
   async getRunSnapshots(runId, companyId, opts = {}) {
     const run = await payrollRunRepository.findById(runId);
-    if (!run) throw Object.assign(new Error('Payroll run not found.'), { statusCode: 404 });
-    if (run.companyId.toString() !== companyId.toString()) {
-      throw Object.assign(new Error('Run does not belong to your company.'), { statusCode: 403 });
-    }
+    if (!run || !ownedBy(run, companyId)) throw runNotFound();
     const snapshots = await payrollSnapshotRepository.findByRun(runId, opts);
     const total     = await payrollSnapshotRepository.countByRun(runId);
     return { snapshots, total };
@@ -525,19 +574,13 @@ const payrollSnapshotService = {
 
   async getSnapshot(snapshotId, companyId) {
     const snap = await payrollSnapshotRepository.findById(snapshotId);
-    if (!snap) throw Object.assign(new Error('Snapshot not found.'), { statusCode: 404 });
-    if (snap.companyId.toString() !== companyId.toString()) {
-      throw Object.assign(new Error('Snapshot does not belong to your company.'), { statusCode: 403 });
-    }
+    if (!snap || !ownedBy(snap, companyId)) throw snapshotNotFound();
     return snap;
   },
 
   async getEmployeeSnapshot(runId, employeeId, companyId) {
     const snap = await payrollSnapshotRepository.findByRunAndEmployee(runId, employeeId);
-    if (!snap) throw Object.assign(new Error('Snapshot not found.'), { statusCode: 404 });
-    if (snap.companyId.toString() !== companyId.toString()) {
-      throw Object.assign(new Error('Snapshot does not belong to your company.'), { statusCode: 403 });
-    }
+    if (!snap || !ownedBy(snap, companyId)) throw snapshotNotFound();
     return snap;
   },
 };

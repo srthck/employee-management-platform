@@ -1,5 +1,19 @@
 import Employee from '../models/Employee.js';
 import EmployeeAccount from '../models/EmployeeAccount.js';
+import auditService from '../services/auditService.js';
+import { runInTransaction } from '../utils/transaction.js';
+import { actorFromRequest, companyIdFromRequest, notFound } from '../utils/tenant.js';
+
+/**
+ * Employee login accounts.
+ *
+ * Every operation first proves the employee belongs to the caller's company;
+ * an employee of another company is reported as not found.
+ * Every change is audited.
+ */
+
+const findCompanyEmployee = (employeeId, companyId, session = null) =>
+  Employee.findOne({ _id: employeeId, createdBy: companyId }).session(session);
 
 /**
  * Create a login account for an existing employee
@@ -9,65 +23,49 @@ import EmployeeAccount from '../models/EmployeeAccount.js';
  */
 export const createEmployeeAccount = async (req, res) => {
   const { employeeId, password } = req.body;
+  const companyId = companyIdFromRequest(req);
+  const actor = actorFromRequest(req);
 
-  if (!employeeId || !password) {
-    return res.status(400).json({
-      success: false,
-      message: 'Employee ID and password are required.',
-    });
-  }
+  const { account, employee } = await runInTransaction(async (session) => {
+    const employeeDoc = await findCompanyEmployee(employeeId, companyId, session);
+    if (!employeeDoc) throw notFound('Employee not found.');
 
-  if (password.length < 8) {
-    return res.status(400).json({
-      success: false,
-      message: 'Password must be at least 8 characters.',
-    });
-  }
+    if (employeeDoc.status !== 'active') {
+      throw Object.assign(
+        new Error('Login account can only be created for an active employee.'),
+        { statusCode: 422 }
+      );
+    }
 
-  const employee = await Employee.findById(employeeId);
+    if (await EmployeeAccount.exists({ employee: employeeDoc._id }).session(session)) {
+      throw Object.assign(new Error('This employee already has a login account.'), { statusCode: 409 });
+    }
 
-  if (!employee) {
-    return res.status(404).json({
-      success: false,
-      message: 'Employee not found.',
-    });
-  }
+    if (await EmployeeAccount.exists({ email: employeeDoc.email }).session(session)) {
+      throw Object.assign(new Error('A login account already exists with this email.'), { statusCode: 409 });
+    }
 
-  if (employee.status !== 'active') {
-    return res.status(400).json({
-      success: false,
-      message: 'Login account can only be created for an active employee.',
-    });
-  }
+    const [created] = await EmployeeAccount.create([{
+      employee: employeeDoc._id,
+      companyId,
+      email: employeeDoc.email,
+      password,
+      role: 'employee',
+    }], { session });
 
-  const existingAccount = await EmployeeAccount.findOne({
-    employee: employee._id,
-  });
+    await auditService.log({
+      action: 'EMPLOYEE_ACCOUNT_CREATED',
+      actorId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      entityType: 'EMPLOYEE_ACCOUNT',
+      entityId: created._id,
+      companyId,
+      meta: { employeeId: String(employeeDoc._id) },
+    }, session);
 
-  if (existingAccount) {
-    return res.status(409).json({
-      success: false,
-      message: 'This employee already has a login account.',
-    });
-  }
-
-  const emailAccount = await EmployeeAccount.findOne({
-    email: employee.email,
-  });
-
-  if (emailAccount) {
-    return res.status(409).json({
-      success: false,
-      message: 'An account already exists with this employee email.',
-    });
-  }
-
-  const account = await EmployeeAccount.create({
-    employee: employee._id,
-    email: employee.email,
-    password,
-    role: 'employee',
-  });
+    return { account: created, employee: employeeDoc };
+  }, { label: 'employeeAccount.create' });
 
   return res.status(201).json({
     success: true,
@@ -89,9 +87,10 @@ export const createEmployeeAccount = async (req, res) => {
 export const getEmployeeAccount = async (req, res) => {
   const { employeeId } = req.params;
 
-  const account = await EmployeeAccount.findOne({
-    employee: employeeId,
-  });
+  const employee = await findCompanyEmployee(employeeId, companyIdFromRequest(req));
+  const account = employee
+    ? await EmployeeAccount.findOne({ employee: employee._id })
+    : null;
 
   if (!account) {
     return res.status(404).json({
@@ -109,31 +108,44 @@ export const getEmployeeAccount = async (req, res) => {
 };
 
 /**
- * Activate or deactivate an employee login account
+ * Activate or deactivate an employee login account.
+ * Deactivation also revokes every outstanding session for the account.
  */
 export const updateEmployeeAccountStatus = async (req, res) => {
   const { employeeId } = req.params;
   const { isActive } = req.body;
+  const companyId = companyIdFromRequest(req);
+  const actor = actorFromRequest(req);
 
-  if (typeof isActive !== 'boolean') {
-    return res.status(400).json({
-      success: false,
-      message: 'isActive must be true or false.',
-    });
-  }
+  const account = await runInTransaction(async (session) => {
+    const employee = await findCompanyEmployee(employeeId, companyId, session);
+    if (!employee) throw notFound('Employee login account not found.');
 
-  const account = await EmployeeAccount.findOneAndUpdate(
-    { employee: employeeId },
-    { isActive },
-    { new: true, runValidators: true }
-  );
+    const update = isActive
+      ? { $set: { isActive: true } }
+      : { $set: { isActive: false }, $inc: { tokenVersion: 1 } };
 
-  if (!account) {
-    return res.status(404).json({
-      success: false,
-      message: 'Employee login account not found.',
-    });
-  }
+    const updated = await EmployeeAccount.findOneAndUpdate(
+      { employee: employee._id },
+      update,
+      { new: true, runValidators: true, session }
+    );
+    if (!updated) throw notFound('Employee login account not found.');
+
+    await auditService.log({
+      action: isActive ? 'EMPLOYEE_ACCOUNT_ACTIVATED' : 'EMPLOYEE_ACCOUNT_DEACTIVATED',
+      actorId: actor.id,
+      actorEmail: actor.email,
+      actorRole: actor.role,
+      entityType: 'EMPLOYEE_ACCOUNT',
+      entityId: updated._id,
+      companyId,
+      newStatus: isActive ? 'ACTIVE' : 'INACTIVE',
+      meta: { employeeId: String(employee._id) },
+    }, session);
+
+    return updated;
+  }, { label: 'employeeAccount.status' });
 
   return res.status(200).json({
     success: true,

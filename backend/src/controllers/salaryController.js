@@ -1,7 +1,5 @@
 import salaryService from '../services/salaryService.js';
-
-const companyIdFromRequest = (req) => req.user.id;
-const actorFromRequest = (req) => ({ id: req.user.id, email: req.user.email, role: req.user.role });
+import { actorFromRequest, companyIdFromRequest } from '../utils/tenant.js';
 
 export const getCurrentSalary = async (req, res) => {
   const salary = await salaryService.getCurrentSalary(req.params.employeeId, companyIdFromRequest(req));
@@ -14,11 +12,11 @@ export const getSalaryHistory = async (req, res) => {
 };
 
 export const createSalaryRevision = async (req, res) => {
-  const salary = await salaryService.createSalaryRevision(
+  const { salary, warnings } = await salaryService.createSalaryRevision(
     req.params.employeeId,
     companyIdFromRequest(req),
     req.body,
     actorFromRequest(req)
   );
-  return res.status(201).json({ success: true, message: 'Salary version created.', data: { salary } });
+  return res.status(201).json({ success: true, message: 'Salary version created.', data: { salary, warnings } });
 };

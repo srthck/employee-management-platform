@@ -1,16 +1,26 @@
 import mongoose from 'mongoose';
 import bcryptjs from 'bcryptjs';
+import config from '../config/environment.js';
+import { EMAIL_PATTERN } from '../utils/email.js';
 
 /**
  * Admin User Schema
- * 
+ *
  * Represents system administrators and managers
- * 
+ *
  * Security Standards:
- * - Passwords hashed with bcrypt (salt rounds: 10)
+ * - Passwords hashed with bcrypt (cost from BCRYPT_ROUNDS, default 12)
  * - Email unique and indexed for fast queries
  * - Plain text password never stored or logged
  * - Timestamps for audit trail
+ * - tokenVersion lets "sign out everywhere" revoke every issued JWT
+ * - failedLoginAttempts / lockUntil implement per-account lockout
+ *
+ * Company identity:
+ * - An admin who registers owns a workspace; companyId stays null and the
+ *   admin's own _id is the company.
+ * - Users created inside an existing workspace carry that workspace's
+ *   companyId explicitly.
  */
 
 const adminSchema = new mongoose.Schema(
@@ -28,10 +38,7 @@ const adminSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       trim: true,
-      match: [
-        /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
-        'Invalid email format',
-      ],
+      match: [EMAIL_PATTERN, 'Invalid email format'],
     },
     password: {
       type: String,
@@ -39,14 +46,39 @@ const adminSchema = new mongoose.Schema(
       minlength: [8, 'Password must be at least 8 characters'],
       select: false, // Don't return password by default
     },
+    // Permission bundles for each role live in utils/permissions.js.
     role: {
       type: String,
-      enum: ['admin', 'manager'],
+      enum: ['admin', 'payroll_admin', 'payroll_approver', 'manager', 'auditor'],
       default: 'admin',
     },
     isActive: {
       type: Boolean,
       default: true,
+    },
+    companyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Admin',
+      default: null,
+      index: true,
+    },
+    tokenVersion: {
+      type: Number,
+      default: 0,
+    },
+    failedLoginAttempts: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
+    lockUntil: {
+      type: Date,
+      default: null,
+      select: false,
+    },
+    lastLoginAt: {
+      type: Date,
+      default: null,
     },
   },
   {
@@ -56,9 +88,8 @@ const adminSchema = new mongoose.Schema(
 
 /**
  * Pre-save middleware: Hash password before saving
- * 
+ *
  * Only hash if password is modified or new
- * Use bcryptjs with 10 salt rounds (enterprise standard)
  */
 adminSchema.pre('save', async function (next) {
   // Only hash if password is new or modified
@@ -67,7 +98,7 @@ adminSchema.pre('save', async function (next) {
   }
 
   try {
-    const salt = await bcryptjs.genSalt(10);
+    const salt = await bcryptjs.genSalt(config.bcryptRounds);
     this.password = await bcryptjs.hash(this.password, salt);
     next();
   } catch (error) {
@@ -77,7 +108,7 @@ adminSchema.pre('save', async function (next) {
 
 /**
  * Instance method: Compare plaintext password with hashed password
- * 
+ *
  * Used during login to verify credentials
  * @param {string} enteredPassword - Plain text password from login form
  * @returns {Promise<boolean>} - True if passwords match
@@ -88,13 +119,16 @@ adminSchema.methods.comparePassword = async function (enteredPassword) {
 
 /**
  * Instance method: Get user data without sensitive fields
- * 
+ *
  * Returns only public-safe fields
  * @returns {Object} - Safe user object
  */
 adminSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password; // Never expose password
+  delete obj.tokenVersion;
+  delete obj.failedLoginAttempts;
+  delete obj.lockUntil;
   delete obj.__v;
   return obj;
 };

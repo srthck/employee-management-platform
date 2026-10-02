@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { payrollLineSchema, compensationSnapshotSchema } from './payrollComponentSchemas.js';
 
 /**
  * PayrollStagingResult — durable pre-finalization employee payroll record.
@@ -98,6 +99,8 @@ const ruleProvenanceSchema = new mongoose.Schema(
     effectiveFrom:   { type: Date, required: true },
     effectiveTo:     { type: Date, default: null },
     sourceReference: { type: String },
+    // Exact rule parameters used (rates, ceilings, slabs, rounding).
+    parameters:      { type: mongoose.Schema.Types.Mixed, default: undefined },
   },
   { _id: false }
 );
@@ -113,6 +116,15 @@ const payrollInputsSchema = new mongoose.Schema(
     ptEnrolled:           { type: Boolean, required: true },
     workState:            { type: String, required: true },
     payrollDate:          { type: Date,    required: true },   // periodEnd
+    // ─── Pay basis (Wave 3.5; absent on records written before it) ───────
+    // grossMonthly above is what this period actually pays on: for a full
+    // month it equals fullMonthlyGross, for a part month it is prorated.
+    fullMonthlyGross:     { type: Number },
+    payableDays:          { type: Number },
+    paidDays:             { type: Number },
+    prorationFactor:      { type: Number },
+    payableDaysBasis:     { type: String },
+    professionalTaxBasis: { type: String },
     attendanceAdjustment: { type: String, default: 'DEFERRED' },
   },
   { _id: false }
@@ -202,6 +214,13 @@ const payrollStagingResultSchema = new mongoose.Schema(
       applicable: { type: Boolean, default: false },
       pt:         { type: Number,  default: 0 },
     },
+
+    // ─── Compensation beyond the statutory engine (Wave 3.5) ─────────────
+    voluntaryDeductions:            { type: [payrollLineSchema], default: undefined },
+    employerOtherContributions:     { type: [payrollLineSchema], default: undefined },
+    voluntaryDeductionsTotal:       { type: Number },
+    employerOtherContributionTotal: { type: Number },
+    compensationSnapshot:           { type: compensationSnapshotSchema, default: undefined },
 
     tdsDeferred: {
       type: Boolean,

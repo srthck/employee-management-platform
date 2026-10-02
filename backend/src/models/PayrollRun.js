@@ -238,11 +238,13 @@ const payrollRunSchema = new mongoose.Schema(
     },
 
     // ─── Idempotency ─────────────────────────────────────────────────────
+    // Indexed once, as a sparse index, in the Indexes section below. Declaring
+    // `index: true` here as well produced two conflicting definitions of the
+    // same index name, so the sparse index was never actually built.
     idempotencyKey: {
       type: String,
       trim: true,
       default: null,
-      index: true,
     },
 
     // ─── Processing version ──────────────────────────────────────────────
@@ -285,6 +287,14 @@ const payrollRunSchema = new mongoose.Schema(
       default: 'DEFERRED',
     },
 
+    // ─── Finalization controls record ────────────────────────────────────
+    // Written atomically with FINALIZED: approval mode, preparer, approver,
+    // variance summary and any recorded override (who, when, why, which flags).
+    finalizationControls: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
+
     // ─── State transition history ────────────────────────────────────────
     transitions: {
       type: [transitionSchema],
@@ -312,32 +322,34 @@ const payrollRunSchema = new mongoose.Schema(
  *   This means the uniqueness constraint is only enforced for documents where
  *   status != 'CANCELLED', which is exactly the intended semantics.
  *
- * NOTE: Mongoose's schema.index() does not support partialFilterExpression
- * directly on compound indexes in all versions. We define this index here for
- * documentation and the application-level logic enforces the semantics.
- * In production, the DBA must ensure the partial index is created on the DB:
+ * Implementation:
+ *   MongoDB partial unique index whose partialFilterExpression lists every
+ *   status except CANCELLED. ($ne is not allowed in partial filters; $in is,
+ *   on MongoDB 6.0+.) The index is declared here, so Mongoose builds it and it
+ *   does not depend on a manual DBA step.
  *
- *   db.payrollruns.createIndex(
- *     { companyId: 1, periodYear: 1, periodMonth: 1 },
- *     {
- *       unique: true,
- *       partialFilterExpression: { status: { $ne: "CANCELLED" } },
- *       name: "unique_active_company_period"
- *     }
- *   )
+ *   Because cancelled runs do not occupy the slot, createPayrollRun() never has
+ *   to delete a CANCELLED tombstone to reuse a period: cancelled runs remain as
+ *   permanent history, and concurrent creates are still rejected by the index.
  *
- * In the service layer, createPayrollRun() deletes the existing CANCELLED
- * tombstone before inserting, so the partial index is not needed purely for
- * that path — but the index is the database-level guard against duplicate
- * active runs from concurrent requests.
+ *   Databases created before this index existed carry the old full unique
+ *   index `unique_company_period`; `npm run migrate` replaces it.
  */
+export const PERIOD_SLOT_STATUSES = Object.freeze([
+  'DRAFT',
+  'PROCESSING',
+  'READY_FOR_FINALIZATION',
+  'FINALIZED',
+  'DISBURSED',
+  'FAILED',
+]);
+
 payrollRunSchema.index(
   { companyId: 1, periodYear: 1, periodMonth: 1 },
   {
     unique: true,
-    name: 'unique_company_period',
-    // partialFilterExpression is applied by the DBA command above.
-    // The service enforces partial-index semantics in application code.
+    name: 'unique_active_company_period',
+    partialFilterExpression: { status: { $in: PERIOD_SLOT_STATUSES } },
   }
 );
 
@@ -390,5 +402,60 @@ export function canTransition(from, to) {
   if (!allowed) return false;
   return allowed.includes(to);
 }
+
+// ─── Write-level state machine enforcement ───────────────────────────────────
+//
+// canTransition() guards the service layer. These hooks enforce the same
+// ALLOWED_TRANSITIONS on every write issued through Mongoose, so no code path
+// (a repository call, a script, a future endpoint) can move a run backwards,
+// e.g. FINALIZED → PROCESSING.
+//
+// Query updates that set `status` get "status ∈ allowed predecessors" added to
+// their filter, making an illegal transition match nothing (the update returns
+// null, exactly like a lost concurrency race). Document saves that change
+// status are validated against the status the document was loaded with.
+
+const PREDECESSORS = Object.freeze(
+  Object.fromEntries(
+    Object.keys(ALLOWED_TRANSITIONS).map((to) => [
+      to,
+      Object.keys(ALLOWED_TRANSITIONS).filter((from) => ALLOWED_TRANSITIONS[from].includes(to)),
+    ])
+  )
+);
+
+payrollRunSchema.pre(
+  ['findOneAndUpdate', 'updateOne', 'updateMany'],
+  function enforceStateMachineOnUpdate(next) {
+    const update = this.getUpdate() || {};
+    const target = update.$set && Object.prototype.hasOwnProperty.call(update.$set, 'status')
+      ? update.$set.status
+      : update.status;
+    if (target === undefined) return next();
+
+    const allowedFrom = PREDECESSORS[target];
+    if (!allowedFrom) {
+      return next(Object.assign(new Error(`Unknown payroll run status '${target}'.`), { statusCode: 422 }));
+    }
+    this.and([{ status: { $in: allowedFrom } }]);
+    return next();
+  }
+);
+
+payrollRunSchema.post('init', function rememberLoadedStatus() {
+  this.$locals.loadedStatus = this.status;
+});
+
+payrollRunSchema.pre('save', function enforceStateMachineOnSave(next) {
+  if (this.isNew || !this.isModified('status')) return next();
+  const from = this.$locals.loadedStatus;
+  if (from && !canTransition(from, this.status)) {
+    return next(Object.assign(
+      new Error(`Illegal payroll run transition ${from} → ${this.status}.`),
+      { statusCode: 409 }
+    ));
+  }
+  return next();
+});
 
 export default mongoose.model('PayrollRun', payrollRunSchema);

@@ -33,8 +33,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   // ─── Register ──────────────────────────────────────────────────────────────
-  const register = useCallback(async ({ name, email, password, confirmPassword }) => {
-    const data = await authService.register({ name, email, password, confirmPassword });
+  const register = useCallback(async ({ name, email, password, confirmPassword, companyName }) => {
+    const data = await authService.register({ name, email, password, confirmPassword, companyName });
     setUser(data.data.user);
     return data;
   }, []);
@@ -44,7 +44,12 @@ export function AuthProvider({ children }) {
     try { await authService.logout(); } finally { setUser(null); }
   }, []);
 
-  const value = { user, loading, login, register, logout };
+  // ─── Sign out everywhere ───────────────────────────────────────────────────
+  const logoutAll = useCallback(async () => {
+    try { await authService.logoutAll(); } finally { setUser(null); }
+  }, []);
+
+  const value = { user, loading, login, register, logout, logoutAll };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

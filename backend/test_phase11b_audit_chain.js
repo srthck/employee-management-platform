@@ -4,17 +4,20 @@ import mongoose from 'mongoose';
 import AuditLog from './src/models/AuditLog.js';
 import auditService, { GENESIS_HASH, calculateAuditHash } from './src/services/auditService.js';
 
-const uri = process.env.AUDIT_TEST_MONGO_URI || 'mongodb://127.0.0.1:27017/payguard_phase11b_audit_test';
+const uri = process.env.AUDIT_TEST_MONGO_URI || 'mongodb://127.0.0.1:27018/payguard_phase11b_audit_test?replicaSet=rs0';
 const actorId = new mongoose.Types.ObjectId();
 const entityId = new mongoose.Types.ObjectId();
 
 before(async () => {
   await mongoose.connect(uri, { serverSelectionTimeoutMS: 5000 });
-  await AuditLog.deleteMany({});
+  // Wait for background index builds, so none recreates the database after teardown.
+  await AuditLog.init();
+  await AuditLog.collection.deleteMany({});
 });
 
 after(async () => {
-  await AuditLog.deleteMany({});
+  // Leave no test database behind.
+  await mongoose.connection.dropDatabase();
   await mongoose.disconnect();
 });
 
@@ -49,7 +52,13 @@ test('audit chain detects historical tampering', async () => {
   assert.equal(valid.valid, true);
   assert.equal(valid.checkedRecords, 3);
 
-  await AuditLog.updateOne({ _id: first._id }, { $set: { action: 'TAMPERED_ACTION' } });
+  // The model refuses updates, so simulate an attacker with direct database
+  // access by writing through the raw collection.
+  await assert.rejects(
+    AuditLog.updateOne({ _id: first._id }, { $set: { action: 'TAMPERED_ACTION' } }),
+    /append-only/
+  );
+  await AuditLog.collection.updateOne({ _id: first._id }, { $set: { action: 'TAMPERED_ACTION' } });
   const invalid = await auditService.verifyAuditChain();
   assert.equal(invalid.valid, false);
   assert.equal(invalid.firstBrokenSequence, 1);

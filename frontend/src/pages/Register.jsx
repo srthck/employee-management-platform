@@ -25,6 +25,7 @@ export default function Register() {
 
   const [form, setForm] = useState({
     name: '',
+    companyName: '',
     email: '',
     password: '',
     confirmPassword: '',
@@ -47,6 +48,13 @@ export default function Register() {
       errs.name = 'Name must be at least 2 characters';
     } else if (trimmedName.length > 50) {
       errs.name = 'Name cannot exceed 50 characters';
+    }
+
+    // Company name (optional)
+    const trimmedCompany = form.companyName.trim();
+
+    if (trimmedCompany && (trimmedCompany.length < 2 || trimmedCompany.length > 120)) {
+      errs.companyName = 'Company name must be 2-120 characters';
     }
 
     // Email
@@ -110,6 +118,7 @@ export default function Register() {
     try {
       await register({
         name: form.name.trim(),
+        companyName: form.companyName.trim() || undefined,
         email: form.email.trim(),
         password: form.password,
         confirmPassword: form.confirmPassword,
@@ -275,6 +284,15 @@ export default function Register() {
               'text',
               'John Doe',
               'name'
+            )}
+
+            {renderField(
+              'register-company',
+              'companyName',
+              'Company name (optional)',
+              'text',
+              'Acme Private Limited',
+              'organization'
             )}
 
             {renderField(

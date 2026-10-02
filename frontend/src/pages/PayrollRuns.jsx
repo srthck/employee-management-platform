@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { AuthContext } from '../contexts/AuthContext';
 import * as payrollRunService from '../services/payrollRunService';
+import { can } from '../utils/permissions';
 import { Status, monthName } from './Overview';
 
 export default function PayrollRuns() {
+  const { user } = useContext(AuthContext);
+  const canPrepare = can(user, 'payroll.prepare');
   const [runs, setRuns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -70,14 +74,16 @@ export default function PayrollRuns() {
           </p>
         </div>
 
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => setShowCreate(true)}
-        >
-          Create payroll run{' '}
-          <span aria-hidden="true">+</span>
-        </button>
+        {canPrepare && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => setShowCreate(true)}
+          >
+            Create payroll run{' '}
+            <span aria-hidden="true">+</span>
+          </button>
+        )}
       </div>
 
       {/* ERROR */}

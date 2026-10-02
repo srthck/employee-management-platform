@@ -2,13 +2,13 @@ import mongoose from 'mongoose';
 
 /**
  * Database Configuration
- * Handles MongoDB connection with proper error handling and reconnection logic
- * 
+ * Handles MongoDB connection with proper error handling
+ *
  * Production standards:
  * - Connection pooling via Mongoose
  * - Proper event handlers (connection, error, disconnected)
  * - No hardcoded credentials (uses environment variables)
- * - Graceful error handling
+ * - Graceful shutdown is owned by server.js
  */
 
 const connectDatabase = async () => {
@@ -41,14 +41,6 @@ mongoose.connection.on('error', (err) => {
 
 mongoose.connection.on('disconnected', () => {
   console.log('[DB] Mongoose disconnected from MongoDB');
-});
-
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\n[SHUTDOWN] Gracefully shutting down...');
-  await mongoose.connection.close();
-  console.log('[DB] MongoDB connection closed');
-  process.exit(0);
 });
 
 export default connectDatabase;

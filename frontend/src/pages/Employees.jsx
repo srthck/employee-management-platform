@@ -1,17 +1,41 @@
-import { useEffect, useState } from 'react';
+import { useContext, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { AuthContext } from '../contexts/AuthContext';
+import { can } from '../utils/permissions';
 import * as employeeService from '../services/employeeService';
+import * as profileService from '../services/employeeProfileService';
 import axiosInstance from '../services/axiosInstance';
 import EmployeeModal from '../components/EmployeeModal';
 import DeleteConfirmModal from '../components/DeleteConfirmModal';
+import { ReadinessBadge, monthLabel } from '../components/employee360/shared';
 
 export default function Employees() {
+  const { user } = useContext(AuthContext);
+  const canWrite = can(user, 'employee.write');
+  const canArchive = can(user, 'employee.archive');
+  const canManageAccounts = can(user, 'employee_account.manage');
+  const canReadPayroll = can(user, 'payroll.read');
+
+  // Next payroll period readiness, one request for the whole directory.
+  const [readiness, setReadiness] = useState(null);
+
+  useEffect(() => {
+    if (!canReadPayroll) return;
+    profileService
+      .getCompanyReadiness()
+      .then((result) => setReadiness(result.data))
+      .catch(() => setReadiness(null));
+  }, [canReadPayroll]);
+
+  const readinessById = new Map((readiness?.employees || []).map((entry) => [entry.employeeId, entry]));
+
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [showArchived, setShowArchived] = useState(false);
 
   // Employee login account state
   const [accountTarget, setAccountTarget] = useState(null);
@@ -26,7 +50,7 @@ export default function Employees() {
     setError('');
 
     employeeService
-      .getEmployees({ limit: 50, search })
+      .getEmployees({ limit: 50, search, ...(showArchived && { archived: 'true' }) })
       .then((r) => setEmployees(r.data?.employees || []))
       .catch((e) =>
         setError(
@@ -40,12 +64,22 @@ export default function Employees() {
     const timer = setTimeout(load, 250);
 
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, showArchived]);
 
   const afterMutation = () => {
     setModal(null);
     setDeleteTarget(null);
     load();
+  };
+
+  const restoreEmployee = async (employee) => {
+    setError('');
+    try {
+      await employeeService.restoreEmployee(employee._id);
+      load();
+    } catch (e) {
+      setError(e.response?.data?.message || 'Unable to restore the employee.');
+    }
   };
 
   const openAccountModal = (employee) => {
@@ -149,18 +183,20 @@ export default function Employees() {
           </p>
         </div>
 
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => setModal({ employee: null })}
-          style={{
-            backgroundColor: '#A6192E',
-            borderColor: '#A6192E',
-            color: '#FFFFFF',
-          }}
-        >
-          Add employee <span aria-hidden="true">+</span>
-        </button>
+        {canWrite && (
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => setModal({ employee: null })}
+            style={{
+              backgroundColor: '#A6192E',
+              borderColor: '#A6192E',
+              color: '#FFFFFF',
+            }}
+          >
+            Add employee <span aria-hidden="true">+</span>
+          </button>
+        )}
 
       </div>
 
@@ -193,7 +229,29 @@ export default function Employees() {
             >
               Payroll employee directory
             </h2>
+
+            {readiness && (
+              <p className="mt-2 text-sm text-[#5F5555]" aria-label="Payroll readiness summary">
+                {monthLabel(readiness.period.periodYear, readiness.period.periodMonth)} payroll:{' '}
+                <span className="font-semibold text-[#26765F]">{readiness.summary.ready} ready</span>
+                {' · '}
+                <span className="font-semibold text-[#845B00]">{readiness.summary.warning} need attention</span>
+                {' · '}
+                <span className="font-semibold text-[#A33D35]">{readiness.summary.blocked} blocked</span>
+              </p>
+            )}
           </div>
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <label className="flex items-center gap-2 text-sm text-[#6F6565]">
+            <input
+              type="checkbox"
+              checked={showArchived}
+              onChange={(e) => setShowArchived(e.target.checked)}
+              className="accent-[#A6192E]"
+            />
+            Show archived
+          </label>
 
           <input
             aria-label="Search employees"
@@ -207,6 +265,7 @@ export default function Employees() {
               color: '#241F20',
             }}
           />
+          </div>
 
         </div>
 
@@ -260,7 +319,7 @@ export default function Employees() {
                   <th>Department</th>
                   <th>Salary Context</th>
                   <th>Employment</th>
-                  <th>Payroll context</th>
+                  <th>Payroll readiness</th>
                   <th className="text-right">Actions</th>
                 </tr>
               </thead>
@@ -331,16 +390,25 @@ export default function Employees() {
 
                       </td>
 
-                      {/* PAYROLL CONTEXT */}
+                      {/* PAYROLL READINESS */}
                       <td>
-
-                        <span
-                          className="text-xs"
-                          style={{ color: '#6F6565' }}
-                        >
-                          PF / ESI / PT available in payroll snapshot
-                        </span>
-
+                        {readiness ? (() => {
+                          const entry = readinessById.get(employee._id);
+                          const reasons = entry ? [...entry.blockers, ...entry.warnings] : [];
+                          return (
+                            <>
+                              <ReadinessBadge state={entry?.state} title={reasons.map((r) => r.message).join('\n')} />
+                              {reasons.length > 0 && (
+                                <span className="mt-1 block text-xs text-[#6F6565]">
+                                  {reasons[0].message.split('. ')[0]}
+                                  {reasons.length > 1 && ` (+${reasons.length - 1} more)`}
+                                </span>
+                              )}
+                            </>
+                          );
+                        })() : (
+                          <span className="text-xs text-[#6F6565]">Open the employee for details</span>
+                        )}
                       </td>
 
                       {/* ACTIONS */}
@@ -348,7 +416,24 @@ export default function Employees() {
 
                         <div className="flex justify-end gap-2">
 
+                          {employee.isDeleted ? (canArchive && (
+                            <button
+                              type="button"
+                              className="btn btn-small"
+                              onClick={() => restoreEmployee(employee)}
+                              style={{
+                                backgroundColor: '#FFFFFF',
+                                borderColor: '#E7D8D5',
+                                color: '#A6192E',
+                              }}
+                            >
+                              Restore
+                            </button>
+                          )) : (
+                          <>
+
                           {/* EDIT */}
+                          {canWrite && (
                           <button
                             type="button"
                             className="btn btn-small"
@@ -361,8 +446,10 @@ export default function Employees() {
                           >
                             Edit
                           </button>
+                          )}
 
                           {/* CREATE LOGIN */}
+                          {canManageAccounts && (
                           <button
                             type="button"
                             className="btn btn-small"
@@ -391,8 +478,10 @@ export default function Employees() {
                           >
                             Create Login
                           </button>
+                          )}
 
-                          {/* DEACTIVATE */}
+                          {/* ARCHIVE */}
+                          {canArchive && (
                           <button
                             type="button"
                             className="btn btn-small"
@@ -403,8 +492,11 @@ export default function Employees() {
                               color: '#9B1C31',
                             }}
                           >
-                            Deactivate
+                            Archive
                           </button>
+                          )}
+                          </>
+                          )}
 
                         </div>
 
@@ -438,8 +530,13 @@ export default function Employees() {
         <DeleteConfirmModal
           employee={deleteTarget}
           onConfirm={async () => {
-            await employeeService.deleteEmployee(deleteTarget._id);
-            afterMutation();
+            try {
+              await employeeService.deleteEmployee(deleteTarget._id);
+              afterMutation();
+            } catch (e) {
+              setDeleteTarget(null);
+              setError(e.response?.data?.message || 'Unable to archive the employee.');
+            }
           }}
           onCancel={() => setDeleteTarget(null)}
         />

@@ -14,17 +14,22 @@
  * - PayrollRunService orchestrates (calls this); this service computes.
  * - Do NOT duplicate logic from this service in PayrollRunService.
  *
- * MONETARY PRECISION:
- * - All amounts are stored as Number (INR paise not used here for MVP).
- * - Amounts are rounded to 2 decimal places using Math.round(x * 100) / 100.
- * - Full arbitrary-precision library (decimal.js) is a Phase 9 upgrade.
+ * MONETARY PRECISION & ROUNDING:
+ * - Intermediate products are rounded to paise with an epsilon guard, so
+ *   binary floating point artefacts (e.g. 1.005 → 1.00) cannot leak into pay.
+ * - Each rule version carries a roundingMode:
+ *     PAISE          round to 2 decimals (default, backward compatible)
+ *     NEAREST_RUPEE  round to the nearest rupee (EPFO ECR practice)
+ *     CEIL_RUPEE     round up to the next rupee (ESIC practice)
+ *   Rounding is part of the versioned rule, so a change in practice is a new
+ *   rule version and never alters historical results.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * EPF CALCULATION (India):
  *   PF wage = min(pfWage, wageCapForContribution) [default cap: ₹15,000]
  *   Employee EPF deduction = PF wage × employeeContributionRate (12%)
  *   Employer EPF contribution = PF wage × employerContributionRate (12%)
- *     of which EPS portion = PF wage × epsRate (8.33%)
+ *     of which EPS portion = min(PF wage, epsWageCeiling) × epsRate (8.33%)
  *
  * ESI CALCULATION (India):
  *   Applies only if grossMonthly ≤ grossWageCeiling (₹21,000)
@@ -33,13 +38,26 @@
  *
  * PT CALCULATION (India, per-state slabs):
  *   Find the slab where gross ≤ upTo (or upTo is null for top slab)
- *   PT = slab.monthlyTax
+ *   PT = slab.monthOverrides[periodMonth] if defined, else slab.monthlyTax
  *
  * TDS: DEFERRED. Returns tdsDeferred: true in all results.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
-const round2 = (n) => Math.round(n * 100) / 100;
+const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+export const ROUNDING_MODES = Object.freeze({
+  PAISE: 'PAISE',
+  NEAREST_RUPEE: 'NEAREST_RUPEE',
+  CEIL_RUPEE: 'CEIL_RUPEE',
+});
+
+const applyRounding = (amount, mode = ROUNDING_MODES.PAISE) => {
+  const paise = round2(amount);
+  if (mode === ROUNDING_MODES.NEAREST_RUPEE) return Math.round(paise);
+  if (mode === ROUNDING_MODES.CEIL_RUPEE) return Math.ceil(paise);
+  return paise;
+};
 
 const complianceCalculationService = {
   /**
@@ -72,12 +90,16 @@ const complianceCalculationService = {
       employerContributionRate,
       wageCapForContribution,
       epsRate = 0.0833,
+      epsWageCeiling = null,
+      roundingMode = ROUNDING_MODES.PAISE,
     } = epfRule;
 
     const cappedWage = Math.min(pfWage, wageCapForContribution);
-    const employeeEpf = round2(cappedWage * employeeContributionRate);
-    const employerEpf = round2(cappedWage * employerContributionRate);
-    const epsContribution = round2(cappedWage * epsRate);
+    const epsWage = epsWageCeiling != null ? Math.min(cappedWage, epsWageCeiling) : cappedWage;
+    const employeeEpf = applyRounding(cappedWage * employeeContributionRate, roundingMode);
+    const employerEpf = applyRounding(cappedWage * employerContributionRate, roundingMode);
+    // EPS is carved out of the employer share and can never exceed it.
+    const epsContribution = Math.min(applyRounding(epsWage * epsRate, roundingMode), employerEpf);
     const totalEpf = round2(employeeEpf + employerEpf);
 
     return {
@@ -99,7 +121,7 @@ const complianceCalculationService = {
    * @param {boolean} params.esiEnrolled   - Whether employee is ESI enrolled
    * @returns {{ employeeEsi, employerEsi, totalEsi, applicable, enrolled }}
    */
-  calculateEsi({ grossMonthly, esiRule, esiEnrolled }) {
+  calculateEsi({ grossMonthly, esiRule, esiEnrolled, ceilingWage = null }) {
     if (!esiEnrolled) {
       return {
         enrolled: false,
@@ -114,10 +136,18 @@ const complianceCalculationService = {
       throw new Error('ESI rule parameters are required for ESI calculation');
     }
 
-    const { employeeContributionRate, employerContributionRate, grossWageCeiling } = esiRule;
+    const {
+      employeeContributionRate,
+      employerContributionRate,
+      grossWageCeiling,
+      roundingMode = ROUNDING_MODES.PAISE,
+    } = esiRule;
 
-    // ESI only applies if gross ≤ ceiling
-    if (grossMonthly > grossWageCeiling) {
+    // Eligibility is decided by the wage for the period (the contractual
+    // monthly wage), while the contribution is charged on what was earned.
+    // They differ only when a period is prorated; ceilingWage defaults to the
+    // same figure, so existing behaviour is unchanged.
+    if ((ceilingWage != null ? ceilingWage : grossMonthly) > grossWageCeiling) {
       return {
         enrolled: true,
         applicable: false, // Gross exceeds ceiling — not eligible
@@ -127,8 +157,8 @@ const complianceCalculationService = {
       };
     }
 
-    const employeeEsi = round2(grossMonthly * employeeContributionRate);
-    const employerEsi = round2(grossMonthly * employerContributionRate);
+    const employeeEsi = applyRounding(grossMonthly * employeeContributionRate, roundingMode);
+    const employerEsi = applyRounding(grossMonthly * employerContributionRate, roundingMode);
     const totalEsi = round2(employeeEsi + employerEsi);
 
     return {
@@ -144,12 +174,13 @@ const complianceCalculationService = {
    * Calculate Professional Tax.
    *
    * @param {object} params
-   * @param {number}   params.grossMonthly - Employee's gross monthly salary
-   * @param {object[]} params.ptSlabs      - Array of { upTo, monthlyTax } (sorted ascending by upTo)
-   * @param {boolean}  params.ptEnrolled   - Whether employee is PT enrolled
+   * @param {number}   params.grossMonthly  - Employee's gross monthly salary
+   * @param {object[]} params.ptSlabs       - Array of { upTo, monthlyTax, monthOverrides? }
+   * @param {boolean}  params.ptEnrolled    - Whether employee is PT enrolled
+   * @param {number}   [params.periodMonth] - 1–12; selects month-specific amounts
    * @returns {{ pt, applicable, enrolled }}
    */
-  calculatePt({ grossMonthly, ptSlabs, ptEnrolled }) {
+  calculatePt({ grossMonthly, ptSlabs, ptEnrolled, periodMonth = null }) {
     if (!ptEnrolled) {
       return { enrolled: false, applicable: false, pt: 0 };
     }
@@ -168,7 +199,10 @@ const complianceCalculationService = {
     let pt = 0;
     for (const slab of sorted) {
       if (slab.upTo === null || grossMonthly <= slab.upTo) {
-        pt = slab.monthlyTax;
+        const override = periodMonth && Array.isArray(slab.monthOverrides)
+          ? slab.monthOverrides.find((entry) => entry.month === periodMonth)
+          : null;
+        pt = override ? override.monthlyTax : slab.monthlyTax;
         break;
       }
     }
@@ -189,6 +223,7 @@ const complianceCalculationService = {
    * @param {object}   input.epfRule          - ComplianceRuleVersion.epfParams (or null)
    * @param {object}   input.esiRule          - ComplianceRuleVersion.esiParams (or null)
    * @param {object[]} input.ptSlabs          - ComplianceRuleVersion.ptSlabs (or [])
+   * @param {number}   [input.periodMonth]    - 1–12, for month-specific PT
    *
    * @returns {{ epf, esi, pt, tdsDeferred, totalEmployeeDeductions, netPay }}
    */
@@ -203,13 +238,18 @@ const complianceCalculationService = {
       epfRule,
       esiRule,
       ptSlabs,
+      periodMonth = null,
+      // Prorated periods: the wage that decides ESI eligibility, and the gross
+      // the professional tax slab is read from. Both default to grossMonthly.
+      esiCeilingWage = null,
+      ptGross = null,
     } = input;
 
     const pfWage = pfWageOverride !== null ? pfWageOverride : basicSalary;
 
     const epf = this.calculateEpf({ pfWage, epfRule, pfEnrolled });
-    const esi = this.calculateEsi({ grossMonthly, esiRule, esiEnrolled });
-    const pt  = this.calculatePt({ grossMonthly, ptSlabs, ptEnrolled });
+    const esi = this.calculateEsi({ grossMonthly, esiRule, esiEnrolled, ceilingWage: esiCeilingWage });
+    const pt  = this.calculatePt({ grossMonthly: ptGross != null ? ptGross : grossMonthly, ptSlabs, ptEnrolled, periodMonth });
 
     const totalEmployeeDeductions = round2(
       (epf.employeeEpf || 0) +

@@ -1,8 +1,13 @@
 import express from 'express';
 import cors from 'cors';
 import 'express-async-errors';
+import mongoose from 'mongoose';
 import config from './config/environment.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { requestContext, securityHeaders, rejectOperatorInjection } from './middleware/security.js';
+import { errorEnvelope } from './middleware/errorEnvelope.js';
+import { apiRateLimiter } from './middleware/rateLimiter.js';
+import { supportsTransactions } from './utils/transaction.js';
 
 import authRoutes from './routes/authRoutes.js';
 import employeeRoutes from './routes/employeeRoutes.js';
@@ -11,6 +16,10 @@ import salaryRoutes from './routes/salaryRoutes.js';
 import complianceRuleRoutes from './routes/complianceRuleRoutes.js';
 import auditRoutes from './routes/auditRoutes.js';
 import payrollRunRoutes from './routes/payrollRunRoutes.js';
+import meRoutes from './routes/meRoutes.js';
+import companyRoutes from './routes/companyRoutes.js';
+import employeeProfileRoutes, { readinessRouter } from './routes/employeeProfileRoutes.js';
+import compensationRoutes, { employeeCompensationRouter } from './routes/compensationRoutes.js';
 import {
   runScopedRouter,
   snapshotRouter,
@@ -20,26 +29,27 @@ import {
  * Express Application Setup
  *
  * Production standards:
- * - CORS configured for frontend security
- * - JSON body parsing with size limits
- * - Async error handling
- * - Structured routing
+ * - Request IDs on every request and response
+ * - Security headers, explicit CORS allowlist with credentials
+ * - JSON body parsing with a conservative size limit
+ * - MongoDB operator-injection guard before any route
+ * - Baseline API rate limit plus stricter per-route limits
+ * - Liveness (/api/health) and readiness (/api/ready) probes
  * - Centralized error middleware
  */
 
 const app = express();
 
-// Middleware: CORS
-// Browsers treat localhost and 127.0.0.1 as different origins.
-// Support local development URLs so the Vite dev server can be opened
-// using the configured frontend URL or common local ports.
-const allowedOrigins = new Set([
-  config.frontendUrl,
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:5174',
-  'http://127.0.0.1:5174',
-]);
+app.disable('x-powered-by');
+app.set('trust proxy', config.trustProxy);
+
+app.use(requestContext);
+app.use(errorEnvelope);
+app.use(securityHeaders);
+
+// CORS: the configured frontend URL, CORS_ORIGINS, and (outside production
+// only) the local Vite dev server origins.
+const allowedOrigins = new Set(config.corsOrigins);
 
 app.use(
   cors({
@@ -54,14 +64,16 @@ app.use(
     },
     credentials: true,
     optionsSuccessStatus: 200,
+    exposedHeaders: ['X-Request-Id'],
   })
 );
 
 // Middleware: Body parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.json({ limit: config.jsonBodyLimit }));
+app.use(express.urlencoded({ limit: config.jsonBodyLimit, extended: false }));
+app.use(rejectOperatorInjection);
 
-// Health check route
+// Liveness: the process is up.
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'healthy',
@@ -71,11 +83,34 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Readiness: the process can safely serve payroll traffic.
+app.get('/api/ready', async (req, res) => {
+  const databaseConnected = mongoose.connection.readyState === 1;
+  const transactions = databaseConnected ? await supportsTransactions() : false;
+  const ready = databaseConnected && (transactions || !config.requireTransactions);
+
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ready' : 'not_ready',
+    database: databaseConnected ? 'connected' : 'disconnected',
+    transactions: transactions ? 'supported' : 'unavailable',
+  });
+});
+
+app.use('/api', apiRateLimiter);
+
 // Authentication routes
 app.use('/api/auth', authRoutes);
 
 // Versioned salary APIs must be mounted before generic employee :id routes.
 app.use('/api/employees', salaryRoutes);
+
+// Employee 360: employment history, statutory, bank, documents, readiness
+app.use('/api/employees', employeeProfileRoutes);
+app.use('/api/payroll-readiness', readinessRouter);
+
+// Compensation control plane: components, versions, impact, change workflow
+app.use('/api/employees', employeeCompensationRouter);
+app.use('/api/compensation', compensationRoutes);
 
 // Employee routes
 app.use('/api/employees', employeeRoutes);
@@ -87,15 +122,21 @@ app.use('/api/employee-accounts', employeeAccountRoutes);
 app.use('/api/compliance/rules', complianceRuleRoutes);
 app.use('/api/audit', auditRoutes);
 
-// Payroll Run routes (Phase 8)
+// Payroll Run routes
 app.use('/api/payroll-runs', payrollRunRoutes);
 
-// PayrollSnapshot routes — run-scoped (Phase 9)
+// PayrollSnapshot routes — run-scoped
 // Mounts: materialize, finalize-run, snapshots under /api/payroll-runs/:runId/
 app.use('/api/payroll-runs/:runId', runScopedRouter);
 
-// PayrollSnapshot routes — standalone (Phase 9)
+// PayrollSnapshot routes — standalone
 app.use('/api/payroll-snapshots', snapshotRouter);
+
+// Employee self-service
+app.use('/api/me', meRoutes);
+
+// Company settings and staff users
+app.use('/api/company', companyRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -103,6 +144,7 @@ app.use((req, res) => {
     success: false,
     message: 'Route not found',
     path: req.path,
+    requestId: req.requestId,
   });
 });
 

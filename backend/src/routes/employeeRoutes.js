@@ -1,5 +1,7 @@
 import express from 'express';
-import authMiddleware, { requireRole } from '../middleware/authMiddleware.js';
+import authMiddleware, { requirePermission } from '../middleware/authMiddleware.js';
+import { idempotent } from '../middleware/idempotency.js';
+import { PERMISSIONS } from '../utils/permissions.js';
 
 import {
   getEmployees,
@@ -8,6 +10,7 @@ import {
   createEmployee,
   updateEmployee,
   deleteEmployee,
+  restoreEmployee,
 } from '../controllers/employeeController.js';
 
 import {
@@ -15,51 +18,41 @@ import {
   validateUpdateEmployee,
   validateEmployeeQuery,
   validateEmployeeId,
+  validateArchiveEmployee,
   handleValidationErrors,
 } from '../validators/employeeValidator.js';
 
 /**
  * Employee Routes
  *
- * All routes require authentication.
+ * All routes require authentication and are scoped to the caller's company.
+ * Access is permission-based (utils/permissions.js):
  *
- * RBAC:
- *   admin   → full employee management
- *   manager → employee viewing, creation and updating
- *
- * DELETE is restricted to admin.
- *
- * GET    /api/employees
- * GET    /api/employees/stats
- * GET    /api/employees/:id
- * POST   /api/employees
- * PUT    /api/employees/:id
- * DELETE /api/employees/:id
+ * GET    /api/employees              employee.read
+ * GET    /api/employees/stats        employee.read
+ * GET    /api/employees/:id          employee.read
+ * POST   /api/employees              employee.write   (Idempotency-Key supported)
+ * PUT    /api/employees/:id          employee.write
+ * DELETE /api/employees/:id          employee.archive (soft delete)
+ * POST   /api/employees/:id/restore  employee.archive
  */
 
 const router = express.Router();
+const P = PERMISSIONS;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Authentication
-// ─────────────────────────────────────────────────────────────────────────────
-
-// All employee routes require a valid JWT.
 router.use(authMiddleware);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Read Operations
-// Admin + Manager
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Read ─────────────────────────────────────────────────────────────────────
 
 router.get(
   '/stats',
-  requireRole('admin', 'manager'),
+  requirePermission(P.EMPLOYEE_READ),
   getEmployeeStats
 );
 
 router.get(
   '/',
-  requireRole('admin', 'manager'),
+  requirePermission(P.EMPLOYEE_READ),
   validateEmployeeQuery,
   handleValidationErrors,
   getEmployees
@@ -67,20 +60,18 @@ router.get(
 
 router.get(
   '/:id',
-  requireRole('admin', 'manager'),
+  requirePermission(P.EMPLOYEE_READ),
   validateEmployeeId,
   handleValidationErrors,
   getEmployee
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Create / Update
-// Admin + Manager
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Create / Update ──────────────────────────────────────────────────────────
 
 router.post(
   '/',
-  requireRole('admin', 'manager'),
+  requirePermission(P.EMPLOYEE_WRITE),
+  idempotent(),
   validateCreateEmployee,
   handleValidationErrors,
   createEmployee
@@ -88,24 +79,30 @@ router.post(
 
 router.put(
   '/:id',
-  requireRole('admin', 'manager'),
+  requirePermission(P.EMPLOYEE_WRITE),
   validateEmployeeId,
   validateUpdateEmployee,
   handleValidationErrors,
   updateEmployee
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Delete
-// Admin only
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Archive / Restore ────────────────────────────────────────────────────────
 
 router.delete(
   '/:id',
-  requireRole('admin'),
+  requirePermission(P.EMPLOYEE_ARCHIVE),
   validateEmployeeId,
+  validateArchiveEmployee,
   handleValidationErrors,
   deleteEmployee
+);
+
+router.post(
+  '/:id/restore',
+  requirePermission(P.EMPLOYEE_ARCHIVE),
+  validateEmployeeId,
+  handleValidationErrors,
+  restoreEmployee
 );
 
 export default router;

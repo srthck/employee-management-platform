@@ -1,13 +1,16 @@
+import config from '../config/environment.js';
+import logger from '../utils/logger.js';
+
 /**
  * Global Error Handler Middleware
  * Centralized error handling for all routes
- * 
+ *
  * Production standards:
- * - Catch unhandled errors gracefully
- * - Never expose sensitive error details to clients
- * - Proper HTTP status codes
- * - Structured error responses
- * - Logging for debugging
+ * - Known error types mapped to precise HTTP status codes (400/401/403/409/413/422)
+ * - Unexpected errors logged with request ID and stack; clients get a generic
+ *   message plus the request ID in production
+ * - Operational errors raised by services (errors carrying statusCode) keep
+ *   their authored message
  */
 
 class AppError extends Error {
@@ -18,32 +21,82 @@ class AppError extends Error {
   }
 }
 
-const errorHandler = (err, req, res, next) => {
-  err.statusCode = err.statusCode || 500;
-  err.message = err.message || 'Internal Server Error';
-
-  // Wrong MongoDB ID error
+const classify = (err) => {
   if (err.name === 'CastError') {
-    err.message = `Resource not found. Invalid: ${err.path}`;
-    err.statusCode = 400;
+    return { statusCode: 400, message: `Invalid value for ${err.path}.` };
   }
-
-  // JWT errors
+  if (err.name === 'ValidationError' && err.errors) {
+    return {
+      statusCode: 422,
+      message: 'Validation failed',
+      errors: Object.values(err.errors).map((e) => ({ field: e.path, message: e.message })),
+    };
+  }
+  if (err.code === 11000) {
+    const field = Object.keys(err.keyPattern || err.keyValue || {})[0];
+    return {
+      statusCode: 409,
+      message: field ? `A record with this ${field} already exists.` : 'Duplicate record.',
+    };
+  }
   if (err.name === 'JsonWebTokenError') {
-    err.message = 'Invalid token. Please login again.';
-    err.statusCode = 401;
+    return { statusCode: 401, message: 'Invalid token. Please login again.' };
   }
-
   if (err.name === 'TokenExpiredError') {
-    err.message = 'Token has expired. Please login again.';
-    err.statusCode = 401;
+    return { statusCode: 401, message: 'Token has expired. Please login again.' };
+  }
+  if (err.type === 'entity.too.large') {
+    return { statusCode: 413, message: 'Request body is too large.' };
+  }
+  if (err.type === 'entity.parse.failed') {
+    return { statusCode: 400, message: 'Malformed JSON request body.' };
+  }
+  if (err.message === 'Origin not allowed by CORS') {
+    return { statusCode: 403, message: 'Origin not allowed.' };
   }
 
-  // Structured error response
-  res.status(err.statusCode).json({
+  const explicitStatus = Number(err.statusCode || err.status);
+  if (explicitStatus) {
+    return { statusCode: explicitStatus, message: err.message || 'Request failed.' };
+  }
+  return { statusCode: 500, message: err.message || 'Internal Server Error', unexpected: true };
+};
+
+const errorHandler = (err, req, res, next) => {
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  const { statusCode, message, errors, unexpected } = classify(err);
+
+  if (statusCode >= 500) {
+    logger.error('Request failed', {
+      method: req.method,
+      path: req.originalUrl,
+      statusCode,
+      error: err.message,
+      code: err.code,
+      stack: err.stack,
+    });
+  }
+
+  const clientMessage = unexpected && config.isProduction
+    ? 'An unexpected error occurred. Quote the request ID when contacting support.'
+    : message;
+
+  return res.status(statusCode).json({
     success: false,
-    message: err.message,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+    // Services attach machine-readable string codes (e.g. VARIANCE_UNEXPLAINED);
+    // numeric driver codes (11000) are not client-facing.
+    ...(typeof err.code === 'string' && !unexpected && { code: err.code }),
+    message: clientMessage,
+    ...(err.blockingFlags && { blockingFlags: err.blockingFlags }),
+    ...(errors && { errors }),
+    // Field-level validation errors raised by services.
+    ...(!errors && !unexpected && Array.isArray(err.errors) && { errors: err.errors }),
+    ...(err.hashFailures && { hashFailures: err.hashFailures }),
+    requestId: req.requestId,
+    ...(config.isDevelopment && statusCode >= 500 && { stack: err.stack }),
   });
 };
 

@@ -170,6 +170,19 @@ export const validateEmployeeQuery = [
   query('sortOrder')
     .optional()
     .isIn(['asc', 'desc']).withMessage('Sort order must be asc or desc'),
+
+  query('archived')
+    .optional()
+    .isIn(['true', 'false']).withMessage('archived must be true or false'),
+];
+
+// ─── Archive (soft delete) ───────────────────────────────────────────────────
+export const validateArchiveEmployee = [
+  body('reason')
+    .optional({ checkFalsy: true })
+    .isString().withMessage('Reason must be text')
+    .trim()
+    .isLength({ max: 500 }).withMessage('Reason cannot exceed 500 characters'),
 ];
 
 // ─── MongoDB ID param validation ─────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import crypto from 'crypto';
+import { payrollLineSchema, compensationSnapshotSchema } from './payrollComponentSchemas.js';
 
 /**
  * PayrollSnapshot — the immutable historical employee payroll record.
@@ -113,6 +114,10 @@ const ruleProvenanceSchema = new mongoose.Schema(
     effectiveTo:   { type: Date, default: null },
     // Human-readable reference for audit reports
     sourceReference: { type: String },
+    // Exact rule parameters used (rates, ceilings, slabs, rounding), frozen at
+    // processing time so a payslip can be explained without re-reading rules.
+    // Absent on snapshots created before parameters were frozen.
+    parameters: { type: mongoose.Schema.Types.Mixed, default: undefined },
   },
   { _id: false }
 );
@@ -128,6 +133,15 @@ const payrollInputsSchema = new mongoose.Schema(
     ptEnrolled:           { type: Boolean, required: true },
     workState:            { type: String, required: true },
     payrollDate:          { type: Date, required: true },   // periodEnd used for rule resolution
+    // ─── Pay basis (Wave 3.5; absent on records written before it) ───────
+    // grossMonthly above is what this period actually pays on: for a full
+    // month it equals fullMonthlyGross, for a part month it is prorated.
+    fullMonthlyGross:     { type: Number },
+    payableDays:          { type: Number },
+    paidDays:             { type: Number },
+    prorationFactor:      { type: Number },
+    payableDaysBasis:     { type: String },
+    professionalTaxBasis: { type: String },
     attendanceAdjustment: { type: String, default: 'DEFERRED' },
   },
   { _id: false }
@@ -176,6 +190,11 @@ const payrollResultsSchema = new mongoose.Schema(
     pt:                      { type: ptResultSchema,  required: true },
     totalEmployeeDeductions: { type: Number, required: true },
     employerTotalContribution: { type: Number, default: 0 },  // EPF employer + ESI employer
+    // ─── Beyond the statutory engine (Wave 3.5) ──────────────────────────
+    voluntaryDeductions:            { type: [payrollLineSchema], default: undefined },
+    employerOtherContributions:     { type: [payrollLineSchema], default: undefined },
+    voluntaryDeductionsTotal:       { type: Number },
+    employerOtherContributionTotal: { type: Number },
     // TDS is deferred. netPayBeforeTDS is the honest pre-TDS amount.
     netPayBeforeTDS:         { type: Number, required: true },
     // TDS fields — explicitly deferred
@@ -251,6 +270,13 @@ const payrollSnapshotSchema = new mongoose.Schema(
     payrollInputs: {
       type: payrollInputsSchema,
       required: [true, 'Payroll inputs are required'],
+    },
+
+    // Compensation lineage this result was calculated from (Wave 3.5).
+    // Absent on snapshots written before it.
+    compensationSnapshot: {
+      type: compensationSnapshotSchema,
+      default: undefined,
     },
 
     // ─── Payroll calculation results ────────────────────────────────────
@@ -373,6 +399,10 @@ function buildCanonicalPayload(doc) {
     stagingResultId:     doc.stagingResultId,
   };
 
+  // Added in Wave 3.5: hashed only when present, so a snapshot written before
+  // it keeps exactly the canonical payload — and the hash — it was written with.
+  if (doc.compensationSnapshot) financial.compensationSnapshot = doc.compensationSnapshot;
+
   return JSON.stringify(normalize(financial));
 }
 
@@ -403,5 +433,49 @@ export function verifySnapshotHash(snapshot) {
     computedHash,
   };
 }
+
+// ─── Immutability guards ─────────────────────────────────────────────────────
+//
+// ORM-level enforcement of the contract above. Every update or delete issued
+// through Mongoose has "snapshotStatus != FINALIZED" added to its filter, so
+// no application code path can reach a finalized snapshot, whatever filter it
+// passes. The PENDING_FINALIZATION → FINALIZED transition is unaffected
+// because it only matches pending snapshots.
+//
+// Direct database access bypasses Mongoose; snapshotHash makes such changes
+// detectable (verifySnapshotHash), which is tamper-evidence, not prevention.
+
+const immutableSnapshotError = () =>
+  Object.assign(new Error('Finalized payroll snapshots are immutable.'), { statusCode: 403 });
+
+payrollSnapshotSchema.pre(
+  [
+    'updateOne',
+    'updateMany',
+    'findOneAndUpdate',
+    'findOneAndReplace',
+    'replaceOne',
+    'deleteOne',
+    'deleteMany',
+    'findOneAndDelete',
+  ],
+  { document: false, query: true },
+  function excludeFinalizedSnapshots(next) {
+    this.and([{ snapshotStatus: { $ne: 'FINALIZED' } }]);
+    next();
+  }
+);
+
+payrollSnapshotSchema.pre('deleteOne', { document: true, query: false }, function rejectFinalizedDelete(next) {
+  if (this.snapshotStatus === 'FINALIZED') return next(immutableSnapshotError());
+  return next();
+});
+
+// Snapshots are written once. Status transitions go through the repository's
+// conditional update, never through re-saving a loaded document.
+payrollSnapshotSchema.pre('save', function rejectResave(next) {
+  if (!this.isNew) return next(immutableSnapshotError());
+  return next();
+});
 
 export default mongoose.model('PayrollSnapshot', payrollSnapshotSchema);

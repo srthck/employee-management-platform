@@ -587,12 +587,17 @@ describe('TEST J — Cancelled run uniqueness semantics', () => {
     );
   });
 
-  test('Service deletes CANCELLED tombstone before inserting new run', async () => {
-    const fs  = await import('node:fs');
-    const src = fs.readFileSync('./src/services/payrollRunService.js', 'utf-8');
+  test('CANCELLED tombstones are retained; the partial unique index frees the period slot', async () => {
+    const fs      = await import('node:fs');
+    const service = fs.readFileSync('./src/services/payrollRunService.js', 'utf-8');
+    const model   = fs.readFileSync('./src/models/PayrollRun.js', 'utf-8');
     assert.ok(
-      src.includes('deleteOne') || src.includes('CANCELLED tombstone'),
-      'createPayrollRun must handle CANCELLED run replacement'
+      !service.includes('existing.deleteOne'),
+      'createPayrollRun must not delete cancelled payroll history'
+    );
+    assert.ok(
+      model.includes('partialFilterExpression'),
+      'The unique period index must exclude CANCELLED runs'
     );
   });
 
@@ -894,8 +899,9 @@ describe('TEST L — Phase 6 Regression: Audit chain integrity', () => {
   test('Phase 6 — audit session wraps finalization transition', async () => {
     const fs  = await import('node:fs');
     const src = fs.readFileSync('./src/services/payrollRunService.js', 'utf-8');
-    // Both session.startTransaction and auditService.log must appear near finalize
-    assert.ok(src.includes('startTransaction'));
+    // State transitions and their audit events share one transaction
+    // (opened by utils/transaction.js runInTransaction).
+    assert.ok(src.includes('runInTransaction'));
     assert.ok(src.includes('auditService.log'));
   });
 });

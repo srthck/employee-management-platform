@@ -42,7 +42,7 @@ export const validateRunId = [
 export const validateListRuns = [
   query('status')
     .optional()
-    .isIn(['DRAFT', 'PROCESSING', 'FINALIZED', 'DISBURSED', 'FAILED', 'CANCELLED'])
+    .isIn(['DRAFT', 'PROCESSING', 'READY_FOR_FINALIZATION', 'FINALIZED', 'DISBURSED', 'FAILED', 'CANCELLED'])
     .withMessage('Invalid status filter.'),
   query('limit')
     .optional()

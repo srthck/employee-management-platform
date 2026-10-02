@@ -9,7 +9,13 @@
     "dev": "NODE_ENV=development node --watch server.js",
     "dev:windows": "set NODE_ENV=development&& node --watch server.js",
     "lint": "eslint src/",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node scripts/test-with-replica-set.mjs",
+    "test:replset": "node scripts/test-with-replica-set.mjs",
+    "db:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-replica-set.ps1",
+    "db:copy": "node scripts/copy-database.mjs",
+    "seed:compliance": "node scripts/seed-compliance-rules.js",
+    "migrate": "node scripts/migrate.js",
+    "migrate:dry-run": "node scripts/migrate.js --dry-run"
   },
   "keywords": [
     "employee",
