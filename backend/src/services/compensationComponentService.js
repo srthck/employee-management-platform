@@ -12,6 +12,8 @@ import {
   CTC_TREATMENTS,
   PAYSLIP_TREATMENTS,
   COMPONENT_CODE_PATTERN,
+  STATUTORY_NATURE_PATTERN,
+  STATUTORY_NATURE_MESSAGE,
   DEFAULT_COMPONENTS,
   payrollApplicationFor,
   validateFormula,
@@ -55,6 +57,7 @@ export const componentView = (component) => ({
     payslip: component.treatments.payslip,
   },
   statutory: component.statutory,
+  statutoryNature: component.statutoryNature ?? null,
   payrollApplication: component.payrollApplication,
   isArchived: component.isArchived,
   version: component.version,
@@ -103,6 +106,22 @@ function validateDefinition(payload, { existing = null } = {}) {
     }
   }
 
+  // Statutory nature: syntax only. null clears it back to unclassified; omitted keeps
+  // the current value. No legal meaning is attached here.
+  let statutoryNature = existing?.statutoryNature ?? null;
+  if (payload.statutoryNature !== undefined) {
+    if (payload.statutoryNature === null) {
+      statutoryNature = null;
+    } else {
+      const candidate = String(payload.statutoryNature).trim().toUpperCase();
+      if (!STATUTORY_NATURE_PATTERN.test(candidate)) {
+        errors.push({ field: 'statutoryNature', message: STATUTORY_NATURE_MESSAGE });
+      } else {
+        statutoryNature = candidate;
+      }
+    }
+  }
+
   let defaultBasis = payload.defaultBasis === undefined ? existing?.defaultBasis ?? null : payload.defaultBasis;
   if (defaultBasis !== null && typeof defaultBasis === 'object') {
     if (defaultBasis.percentage !== undefined && (!Number.isFinite(defaultBasis.percentage) || defaultBasis.percentage < 0 || defaultBasis.percentage > 100)) {
@@ -137,6 +156,7 @@ function validateDefinition(payload, { existing = null } = {}) {
     calculationMethod,
     defaultBasis,
     treatments,
+    statutoryNature,
     statutory: false,
     payrollApplication: payrollApplicationFor({ type, recurrence, statutory: false }),
   };
@@ -222,6 +242,8 @@ const compensationComponentService = {
       const changedFields = ['name', 'description', 'type', 'recurrence', 'calculationMethod'].filter(
         (field) => JSON.stringify(definition[field]) !== JSON.stringify(current[field])
       );
+      // A definition stored before Wave 3.5 has no nature: that is the same as null.
+      if ((definition.statutoryNature ?? null) !== (current.statutoryNature ?? null)) changedFields.push('statutoryNature');
       const changedTreatments = Object.keys(TREATMENT_VALUES).filter(
         (field) => definition.treatments[field] !== current.treatments[field]
       );

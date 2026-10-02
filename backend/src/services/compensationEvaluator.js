@@ -118,6 +118,8 @@ export function evaluateCompensationLines(requestedLines, catalogue) {
         ctc: component.treatments.ctc,
         payslip: component.treatments.payslip,
       },
+      // Frozen onto the version line; absent/undefined on a catalogue entry is unclassified.
+      statutoryNature: component.statutoryNature ?? null,
       payrollApplication: component.payrollApplication,
     });
   }

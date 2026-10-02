@@ -73,6 +73,15 @@ export const canTransitionChange = (from, to) => (CHANGE_TRANSITIONS[from] || []
 export const BASIC_CODE = 'BASIC';
 export const COMPONENT_CODE_PATTERN = /^[A-Z][A-Z0-9_]{1,39}$/;
 
+/**
+ * A statutory nature is only a KEY: its syntax is checked here and nothing
+ * else. What a nature means (included in a statutory wage or not) is decided
+ * solely by the inclusion matrix of a compliance rule version, never by
+ * application code. null means unclassified.
+ */
+export const STATUTORY_NATURE_PATTERN = /^[A-Z][A-Z0-9_]{1,39}$/;
+export const STATUTORY_NATURE_MESSAGE = 'A statutory nature is 2–40 characters: capitals, digits and underscores.';
+
 /** Payroll application implied by a component's nature. */
 export function payrollApplicationFor({ type, recurrence, statutory }) {
   if (statutory) return 'STATUTORY_ENGINE';

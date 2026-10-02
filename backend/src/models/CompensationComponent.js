@@ -10,6 +10,8 @@ import {
   PAYSLIP_TREATMENTS,
   PAYROLL_APPLICATIONS,
   COMPONENT_CODE_PATTERN,
+  STATUTORY_NATURE_PATTERN,
+  STATUTORY_NATURE_MESSAGE,
 } from '../utils/compensation.js';
 
 /**
@@ -67,6 +69,20 @@ const compensationComponentSchema = new mongoose.Schema(
     /** System-managed: the amount comes from a versioned compliance rule. */
     statutory: { type: Boolean, default: false },
     payrollApplication: { type: String, enum: PAYROLL_APPLICATIONS, required: true },
+    /**
+     * Statutory nature key (Wave 3.5). null = UNCLASSIFIED, which is the only
+     * default: no legal class is ever assumed. Syntax is validated; meaning
+     * comes only from a compliance rule's inclusion matrix. Definitions are
+     * append-only, so classifying a component appends a new version and never
+     * rewrites an old one.
+     */
+    statutoryNature: {
+      type: String,
+      default: null,
+      trim: true,
+      uppercase: true,
+      match: [STATUTORY_NATURE_PATTERN, STATUTORY_NATURE_MESSAGE],
+    },
     isArchived: { type: Boolean, default: false },
 
     version: { type: Number, required: true, min: 1 },

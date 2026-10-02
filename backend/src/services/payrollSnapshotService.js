@@ -146,6 +146,10 @@ function buildSnapshotPayloadFromStaging(staging, run) {
     ...(inputs.prorationFactor !== undefined && { prorationFactor: inputs.prorationFactor }),
     ...(inputs.payableDaysBasis !== undefined && { payableDaysBasis: inputs.payableDaysBasis }),
     ...(inputs.professionalTaxBasis !== undefined && { professionalTaxBasis: inputs.professionalTaxBasis }),
+    // Statutory bases (Wave 3.5): copied only when staging carries them, exactly as
+    // given, so a snapshot materialised from an older result keeps its exact shape
+    // and hash. Nothing calculates them yet.
+    ...(inputs.statutoryBases != null && { statutoryBases: inputs.statutoryBases }),
   };
 
   const plainLines = (lines) => (lines || []).map((line) => ({

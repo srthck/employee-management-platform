@@ -131,6 +131,7 @@ const lineView = (line) => ({
   calculationMethod: line.calculationMethod,
   basis: line.basis,
   treatments: line.treatments,
+  statutoryNature: line.statutoryNature ?? null,
   payrollApplication: line.payrollApplication,
   amountMonthly: line.amountMonthly,
   lineage: line.lineage,

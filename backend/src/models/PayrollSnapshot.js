@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import crypto from 'crypto';
 import { payrollLineSchema, compensationSnapshotSchema } from './payrollComponentSchemas.js';
+import statutoryBasesSchema from './statutoryBasesSchema.js';
 
 /**
  * PayrollSnapshot — the immutable historical employee payroll record.
@@ -143,6 +144,10 @@ const payrollInputsSchema = new mongoose.Schema(
     payableDaysBasis:     { type: String },
     professionalTaxBasis: { type: String },
     attendanceAdjustment: { type: String, default: 'DEFERRED' },
+    // Statutory wage bases and their sources (Wave 3.5). Optional: absent on every
+    // snapshot written so far, and then not part of its hash. Present, it is hashed
+    // with the rest of payrollInputs.
+    statutoryBases: { type: statutoryBasesSchema, default: undefined },
   },
   { _id: false }
 );

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { STATUTORY_NATURE_PATTERN, STATUTORY_NATURE_MESSAGE } from '../utils/compensation.js';
 
 /**
  * ComplianceRuleVersion — versioned statutory rule parameters.
@@ -46,6 +47,60 @@ const epfParamsSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// ─── Statutory inclusion containers (Wave 3.5, Phase 1B) ─────────────────────
+//
+// CONTAINERS ONLY. A rule version MAY carry an inclusion matrix that maps a
+// component's statutory nature key to INCLUDED or EXCLUDED for a wage kind. No
+// payroll, preview, readiness or payslip code reads it yet, and NO production
+// rule carries one: the keys and their meaning are a compliance decision that is
+// still pending. When absent (every rule today) nothing about calculation changes.
+//
+// Entries are an ARRAY, not a map, so the stored order is explicit and a frozen
+// copy of the rule hashes deterministically. A nature may appear once.
+const inclusionEntrySchema = new mongoose.Schema(
+  {
+    nature: { type: String, required: true, trim: true, uppercase: true, match: [STATUTORY_NATURE_PATTERN, STATUTORY_NATURE_MESSAGE] },
+    inclusion: { type: String, required: true, enum: ['INCLUDED', 'EXCLUDED'] },
+  },
+  { _id: false }
+);
+
+const uniqueNatures = {
+  validator: (entries) => !Array.isArray(entries) || new Set(entries.map((entry) => entry.nature)).size === entries.length,
+  message: 'A statutory nature may appear only once in an inclusion matrix.',
+};
+
+const inclusionMatrix = () => ({ type: [inclusionEntrySchema], default: undefined, validate: uniqueNatures });
+
+// ESI separates who is COVERED from what contribution is CHARGED on.
+const esiInclusionSchema = new mongoose.Schema(
+  {
+    coverage: inclusionMatrix(),
+    contribution: inclusionMatrix(),
+  },
+  { _id: false }
+);
+
+// How long ESI coverage lasts once decided. Mechanism only: contribution-period
+// months and whether continuity applies are rule-version values that need
+// compliance approval. Without this, coverage is decided each period as today.
+const coverageContinuitySchema = new mongoose.Schema(
+  {
+    mode: { type: String, required: true, enum: ['NONE', 'CONTRIBUTION_PERIOD'] },
+    periods: {
+      type: [new mongoose.Schema(
+        {
+          startMonth: { type: Number, required: true, min: 1, max: 12 },
+          endMonth: { type: Number, required: true, min: 1, max: 12 },
+        },
+        { _id: false }
+      )],
+      default: undefined,
+    },
+  },
+  { _id: false }
+);
+
 // ─── ESI sub-schema ──────────────────────────────────────────────────────────
 const esiParamsSchema = new mongoose.Schema(
   {
@@ -54,6 +109,9 @@ const esiParamsSchema = new mongoose.Schema(
     grossWageCeiling: { type: Number, required: true },         // e.g. 21000
     // CEIL_RUPEE: ESIC rounds contributions up to the next rupee.
     roundingMode: { type: String, enum: ['PAISE', 'NEAREST_RUPEE', 'CEIL_RUPEE'], default: 'PAISE' },
+    // Optional, absent today. Not read by payroll yet (see the containers note above).
+    statutoryInclusion: { type: esiInclusionSchema, default: undefined },
+    coverageContinuity: { type: coverageContinuitySchema, default: undefined },
   },
   { _id: false }
 );
@@ -121,6 +179,8 @@ const complianceRuleVersionSchema = new mongoose.Schema(
       type: [ptSlabSchema],
       default: undefined,
     },
+    // Optional PT inclusion matrix (container only, absent today; see the note above).
+    ptInclusion: inclusionMatrix(),
 
     // ─── Metadata ─────────────────────────────────────────────────────────
     description: {

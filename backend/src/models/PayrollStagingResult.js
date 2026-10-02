@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { payrollLineSchema, compensationSnapshotSchema } from './payrollComponentSchemas.js';
+import statutoryBasesSchema from './statutoryBasesSchema.js';
 
 /**
  * PayrollStagingResult — durable pre-finalization employee payroll record.
@@ -126,6 +127,9 @@ const payrollInputsSchema = new mongoose.Schema(
     payableDaysBasis:     { type: String },
     professionalTaxBasis: { type: String },
     attendanceAdjustment: { type: String, default: 'DEFERRED' },
+    // Statutory wage bases and their sources (Wave 3.5). Structure only for now:
+    // optional, and absent on every record until payroll starts writing it.
+    statutoryBases: { type: statutoryBasesSchema, default: undefined },
   },
   { _id: false }
 );

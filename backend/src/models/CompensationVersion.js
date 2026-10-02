@@ -9,6 +9,8 @@ import {
   CTC_TREATMENTS,
   PAYSLIP_TREATMENTS,
   PAYROLL_APPLICATIONS,
+  STATUTORY_NATURE_PATTERN,
+  STATUTORY_NATURE_MESSAGE,
 } from '../utils/compensation.js';
 
 /**
@@ -86,6 +88,17 @@ const lineSchema = new mongoose.Schema(
     calculationMethod: { type: String, enum: CALCULATION_METHODS, required: true },
     basis: { type: basisSchema, default: () => ({}) },
     treatments: { type: treatmentsSchema, required: true },
+    // Copied from the component definition when the version is written (Wave 3.5).
+    // ABSENT on versions written before it: that is deliberate, and nothing
+    // backfills or infers it. null = written unclassified. History is never
+    // reclassified from today's catalogue.
+    statutoryNature: {
+      type: String,
+      default: undefined,
+      trim: true,
+      uppercase: true,
+      match: [STATUTORY_NATURE_PATTERN, STATUTORY_NATURE_MESSAGE],
+    },
     payrollApplication: { type: String, enum: PAYROLL_APPLICATIONS, required: true },
     amountMonthly: { type: Number, required: true, min: 0 },
     lineage: { type: lineageSchema, required: true },
