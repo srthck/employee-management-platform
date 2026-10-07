@@ -366,53 +366,78 @@ describe('Wave 3.5 Phase 1B — schema and historical plumbing', () => {
     const asha = await stagingOf(s.marchRun, s.asha);
     const meera = await stagingOf(s.marchRun, s.meera);
 
-    assert.deepEqual(figures(asha), EXPECTED_FULL_MONTH);
-    assert.deepEqual(figures(meera), EXPECTED_FULL_MONTH);
-    assert.equal('statutoryBases' in asha.payrollInputs, false, 'nothing populates the new structure yet');
-    assert.equal('statutoryBases' in meera.payrollInputs, false);
+    assert.deepEqual(figures(asha), EXPECTED_FULL_MONTH, 'the control, with every component in every wage, is exactly as before');
+
+    // Phase 1C: ESI and PT are calculated on their own wage, by the treatment flags frozen on each line.
+    // Meera's 2,000 FIXTURE_ALLOWANCE is flagged outside the ESI wage and the PT wage, so ESI is charged on
+    // 18,000 (135) where gross-based it was 20,000 (150). PT stays 200: 18,000 is in the same slab.
+    assert.deepEqual(figures(meera), {
+      gross: 20000, employeeEpf: 1440, employeeEsi: 135, pt: 200, totalEmployeeDeductions: 1775, netPayBeforeTDS: 18225,
+    });
+    assert.equal(asha.payrollInputs.statutoryBases.esiContributionWage, 20000);
+    assert.equal(meera.payrollInputs.statutoryBases.esiContributionWage, 18000);
+    assert.equal(meera.payrollInputs.statutoryBases.ptSlabWage, 18000);
+    assert.equal(meera.payrollInputs.statutoryBases.inclusionSource.esiContribution, 'LEGACY_TREATMENT_FLAGS');
     const esiProvenance = asha.ruleProvenance.find((entry) => entry.ruleType === 'ESI');
     assert.equal('statutoryInclusion' in esiProvenance.parameters, false);
     assert.equal('coverageContinuity' in esiProvenance.parameters, false);
   });
 
-  test('H. an existing finalized snapshot without statutoryBases verifies and stays identical', async () => {
+  test('H. a snapshot in the pre-statutoryBases shape verifies and stays identical; a new one carries and verifies its bases', async () => {
     expectStatus(await s.approver.post(`/payroll-runs/${s.marchRun}/finalize`), 200);
     const snapshots = (await s.approver.get(`/payroll-runs/${s.marchRun}/snapshots?limit=50`)).body.data.snapshots;
     s.marchSnapshotIds = snapshots.map((snapshot) => snapshot._id);
     assert.equal(snapshots.length, 2);
 
+    // Phase 1C: payroll now writes statutoryBases, so these snapshots carry them, hashed with the rest.
     for (const id of s.marchSnapshotIds) {
       const raw = await db().collection('payrollsnapshots').findOne({ _id: oid(id) });
-      assert.equal('statutoryBases' in raw.payrollInputs, false);
+      assert.equal(raw.payrollInputs.statutoryBases.basisSource, 'COMPENSATION_LINES');
       assert.equal((await s.auditor.get(`/payroll-snapshots/${id}/verify`)).body.data.valid, true);
-
       const hydrated = await PayrollSnapshot.findById(id);
-      assert.equal('statutoryBases' in hydrated.toObject().payrollInputs, false, 'loading adds nothing to the hashed shape');
       assert.equal(verifySnapshotHash(hydrated).valid, true);
       assert.equal(computeSnapshotHash(hydrated.toObject()), raw.snapshotHash);
     }
+
+    // The shape written BEFORE the structure existed: same record without it, hashed as it always was.
+    const source = await db().collection('payrollsnapshots').findOne({ _id: oid(s.marchSnapshotIds[0]) });
+    const { statutoryBases, ...oldInputs } = source.payrollInputs;
+    const legacy = { ...source, _id: new mongoose.Types.ObjectId(), payrollRunId: new mongoose.Types.ObjectId(), payrollInputs: oldInputs };
+    legacy.snapshotHash = computeSnapshotHash(legacy);
+    assert.notEqual(legacy.snapshotHash, source.snapshotHash, 'the structure is covered by the hash when present');
+    await db().collection('payrollsnapshots').insertOne(legacy);
+
+    assert.equal((await s.auditor.get(`/payroll-snapshots/${legacy._id}/verify`)).body.data.valid, true);
+    const hydrated = await PayrollSnapshot.findById(legacy._id);
+    assert.equal('statutoryBases' in hydrated.toObject().payrollInputs, false, 'loading adds nothing to the hashed shape');
+    assert.equal(verifySnapshotHash(hydrated).valid, true);
+    assert.equal(computeSnapshotHash(hydrated.toObject()), legacy.snapshotHash);
   });
 
   // ─── Payroll under a rule WITH containers (F) ──────────────────────────────
 
-  test('F. payroll under a rule carrying a matrix is unchanged, even for an excluded, classified component', async () => {
+  test('F. payroll under a rule carrying a matrix is unchanged: the matrix is not read, the frozen flags still decide', async () => {
     s.mayRun = await processRun(s.payrollAdmin, MAY);
     const asha = await stagingOf(s.mayRun, s.asha);
     const meera = await stagingOf(s.mayRun, s.meera);
 
-    // Meera's FIXTURE_ALLOWANCE (2,000): classified FIXTURE_NATURE_A, which the v2 fixture matrix
-    // EXCLUDES for ESI coverage, ESI contribution and PT, and flagged EXCLUDED on the component too.
-    // Nothing reads either yet, so she is calculated on her full gross, like the control.
+    // Meera's FIXTURE_ALLOWANCE (2,000) is classified FIXTURE_NATURE_A, which the v2 fixture matrix EXCLUDES
+    // for ESI coverage, ESI contribution and PT, and it is flagged EXCLUDED on the component. Phase 1C applies
+    // the FLAG (ESI on 18,000 = 135, as in March). The matrix is inert: had it been read, the May figures
+    // would differ from March, and the nature would be consulted.
     assert.deepEqual(figures(asha), EXPECTED_FULL_MONTH);
-    assert.deepEqual(figures(meera), EXPECTED_FULL_MONTH, 'ESI on 20,000 and PT 200: the matrix and the flags are not applied');
-    assert.equal(meera.esi.employeeEsi, 150);
-    assert.equal(meera.pt.pt, 200);
+    assert.deepEqual(figures(meera), {
+      gross: 20000, employeeEpf: 1440, employeeEsi: 135, pt: 200, totalEmployeeDeductions: 1775, netPayBeforeTDS: 18225,
+    });
 
     const marchAsha = await stagingOf(s.marchRun, s.asha);
+    const marchMeera = await stagingOf(s.marchRun, s.meera);
     for (const key of ['epf', 'esi', 'pt', 'totalEmployeeDeductions', 'netPayBeforeTDS']) {
       assert.deepEqual(asha[key], marchAsha[key], `${key} equals the same month under the old rule`);
+      assert.deepEqual(meera[key], marchMeera[key], `${key} (meera) equals the same month under the old rule`);
     }
-    assert.equal('statutoryBases' in meera.payrollInputs, false);
+    assert.deepEqual(meera.payrollInputs.statutoryBases, marchMeera.payrollInputs.statutoryBases, 'derived from the flags in both months');
+    assert.equal(meera.payrollInputs.statutoryBases.inclusionSource.esiContribution, 'LEGACY_TREATMENT_FLAGS');
   });
 
   test('F. a rule\'s containers are frozen with its other parameters, only when it has them', async () => {
@@ -443,13 +468,15 @@ describe('Wave 3.5 Phase 1B — schema and historical plumbing', () => {
   });
 
   test('G. statutoryBases is optional and round-trips through the staging schema', async () => {
-    // Optional: a staging result with none is valid, and has none after hydration.
+    // Optional: a staging result with none (the shape written before payroll populated it) is valid,
+    // and has none after hydration.
     const rawAsha = await stagingOf(s.mayRun, s.asha);
-    const without = PayrollStagingResult.hydrate(rawAsha);
+    await db().collection('payrollstagingresults').updateOne({ _id: rawAsha._id }, { $unset: { 'payrollInputs.statutoryBases': '' } });
+    const without = PayrollStagingResult.hydrate(await stagingOf(s.mayRun, s.asha));
     assert.equal(without.validateSync(), undefined);
     assert.equal('statutoryBases' in without.toObject().payrollInputs, false);
 
-    // Present: stored by something that is not payroll (nothing writes it yet), then read back through the model.
+    // Present: set by hand to a value payroll does not derive (a coverage block), then read back through the model.
     await db().collection('payrollstagingresults').updateOne({ _id: rawAsha._id }, { $set: { 'payrollInputs.statutoryBases': BASES() } });
     const hydrated = PayrollStagingResult.hydrate(await stagingOf(s.mayRun, s.asha));
     assert.equal(hydrated.validateSync(), undefined);
@@ -476,6 +503,7 @@ describe('Wave 3.5 Phase 1B — schema and historical plumbing', () => {
     const snapshotFor = (employeeId) => snapshots.find((entry) => String(entry.employeeSnapshot.employeeId) === String(employeeId));
     const ashaId = snapshotFor(s.asha)._id;
     const meeraId = snapshotFor(s.meera)._id;
+    s.ashaMaySnapshotId = ashaId;
 
     const ashaRaw = await db().collection('payrollsnapshots').findOne({ _id: oid(ashaId) });
     assert.deepEqual(
@@ -495,19 +523,24 @@ describe('Wave 3.5 Phase 1B — schema and historical plumbing', () => {
     assert.notEqual(computeSnapshotHash(tampered), ashaRaw.snapshotHash, 'changing a frozen basis changes the hash');
     assert.equal(computeSnapshotHash(ashaRaw), ashaRaw.snapshotHash, 'while the untouched record still matches');
 
-    // A neighbour without the structure is untouched, and the money is identical.
+    // A neighbour keeps the bases payroll derived for it, and the hand-set structure changed no figure:
+    // Asha's May money equals her own March money.
     const meeraRaw = await db().collection('payrollsnapshots').findOne({ _id: oid(meeraId) });
-    assert.equal('statutoryBases' in meeraRaw.payrollInputs, false);
-    assert.deepEqual(ashaRaw.payrollResults, meeraRaw.payrollResults, 'carrying the structure changed no figure');
-    assert.deepEqual(ashaRaw.payrollResults.netPayBeforeTDS, 18210);
+    assert.equal(meeraRaw.payrollInputs.statutoryBases.basisSource, 'COMPENSATION_LINES');
+    assert.equal(meeraRaw.payrollInputs.statutoryBases.esiContributionWage, 18000);
+    const ashaMarch = await db().collection('payrollsnapshots').findOne({
+      payrollRunId: oid(s.marchRun), 'employeeSnapshot.employeeId': oid(s.asha),
+    });
+    assert.deepEqual(ashaRaw.payrollResults, ashaMarch.payrollResults, 'carrying the structure changed no figure');
+    assert.equal(ashaRaw.payrollResults.netPayBeforeTDS, 18210);
 
     // And the earlier month is exactly as it was.
     for (const id of s.marchSnapshotIds) assert.equal((await s.auditor.get(`/payroll-snapshots/${id}/verify`)).body.data.valid, true);
   });
 
   test('G. the snapshot schema declares the same optional structure', async () => {
-    const hydrated = await PayrollSnapshot.findById((await db().collection('payrollsnapshots')
-      .findOne({ 'payrollInputs.statutoryBases': { $exists: true } }))._id);
+    // The May snapshot of Asha, whose structure includes a coverage block that payroll does not derive.
+    const hydrated = await PayrollSnapshot.findById(s.ashaMaySnapshotId);
     assert.equal(hydrated.toObject().payrollInputs.statutoryBases.basisSource, 'COMPENSATION_LINES');
     assert.equal(hydrated.toObject().payrollInputs.statutoryBases.esiCoverage.decision, 'COVERED');
   });

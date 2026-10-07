@@ -10,6 +10,7 @@ import auditService from './auditService.js';
 import { runInTransaction } from '../utils/transaction.js';
 import { httpError, startOfUtcDay, dateOnly, isValidDate, loadCompanyEmployee } from './employeeScope.js';
 import { BASIC_CODE, LEGACY_COMPONENT_BUCKETS } from '../utils/compensation.js';
+import { deriveStatutoryBasesFromLines, toStatutoryBasesDocument, asFullMonthLines } from '../utils/statutoryBases.js';
 
 /**
  * compensationService — the single write path for pay.
@@ -45,8 +46,18 @@ const provenanceOf = (rule) => ({
  * Missing rules are reported, never guessed.
  */
 export async function estimateStatutory({
-  gross, pfWageBase, pfEnrolled, esiEnrolled, ptEnrolled, workState, onDate, periodMonth,
+  gross, pfWageBase, pfEnrolled, esiEnrolled, ptEnrolled, workState, onDate, periodMonth, lines = null,
 }) {
+  // The ESI contribution wage and the PT slab wage come from the SAME pure
+  // derivation payroll uses, over frozen lines, for one whole month (a preview
+  // prorates nothing). Without lines there is no basis to derive, and the
+  // estimate stays on gross as it always was.
+  const bases = lines
+    ? deriveStatutoryBasesFromLines({
+      lines: asFullMonthLines(lines), earnedGross: gross, fullMonthlyGross: gross, ptBasis: 'EARNED_GROSS',
+    })
+    : null;
+
   const [epfRule, esiRule, ptRule] = await Promise.all([
     pfEnrolled ? ComplianceRuleVersion.findValidForDate('EPF', 'IN', onDate) : null,
     esiEnrolled ? ComplianceRuleVersion.findValidForDate('ESI', 'IN', onDate) : null,
@@ -69,10 +80,13 @@ export async function estimateStatutory({
     esiRule: esiRule ? esiRule.esiParams : null,
     ptSlabs: ptRule ? ptRule.ptSlabs : [],
     periodMonth,
+    esiContributionWage: bases ? bases.esiContributionWage : null,
+    ptGross: bases ? bases.ptSlabWage : null,
   });
 
   return {
     computedAt: new Date(),
+    ...(bases && { statutoryBases: toStatutoryBasesDocument(bases) }),
     pfWageBase: round2(pfWageBase),
     employeePf: result.epf.employeeEpf,
     employerPf: result.epf.employerEpf,
@@ -239,6 +253,7 @@ export async function applyCompensation({
     workState: jurisdiction,
     onDate: effectiveDate,
     periodMonth: effectiveDate.getUTCMonth() + 1,
+    lines,
   });
   const totals = ctcTotals(rawTotals, statutoryEstimate);
 

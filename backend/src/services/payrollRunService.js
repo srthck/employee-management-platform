@@ -122,6 +122,12 @@ import { canTransition, PAYROLL_STATUS } from '../models/PayrollRun.js';
 import { runInTransaction } from '../utils/transaction.js';
 import { computePayPeriodDays, payrollBasisFrom, proratedAmount } from '../utils/payBasis.js';
 import { roundToPaise as round2 } from '../utils/money.js';
+import {
+  deriveStatutoryBasesFromLines,
+  deriveStatutoryBasesFromSalaryBuckets,
+  deriveUnresolvedDriftBases,
+  toStatutoryBasesDocument,
+} from '../utils/statutoryBases.js';
 
 // Actor recorded for automatic (non-human) operations such as stuck-run recovery.
 export const SYSTEM_ACTOR = Object.freeze({
@@ -755,6 +761,34 @@ const payrollRunService = {
           && Math.abs(compensationEarningsMonthly - fullMonthlyGross) < 0.01;
         const earnedPfWage = earnedPfWageOverride != null ? earnedPfWageOverride : earnedBasic;
 
+        // ── Statutory wage bases (Wave 3.5) ──────────────────────────────────
+        // The wage an ESI contribution and a PT slab are calculated ON, from the
+        // same frozen, individually prorated and rounded lines used above. Gross
+        // is not reused: it stays the net-pay base only.
+        //   reconciled compensation  -> lines, by their frozen treatment flags
+        //   no compensation at all   -> the salary buckets (the legacy path)
+        //   compensation that has drifted from its projection -> the existing
+        //     behaviour, unchanged and labelled; its policy is a later design
+        const ptBasisSetting = payrollBasis.professionalTaxBasis;
+        let derivedBases;
+        if (breakdownReconciles) {
+          const basisLines = compensation.lines.map((line, index) => ({
+            componentCode: line.componentCode,
+            type: line.type,
+            recurrence: line.recurrence,
+            treatments: line.treatments,
+            amountMonthly: line.amountMonthly,
+            amountEarned: earnedLines[index].amountEarned,
+          }));
+          derivedBases = deriveStatutoryBasesFromLines({
+            lines: basisLines, earnedGross, fullMonthlyGross, ptBasis: ptBasisSetting,
+          });
+        } else if (compensation) {
+          derivedBases = deriveUnresolvedDriftBases({ earnedGross, fullMonthlyGross, ptBasis: ptBasisSetting });
+        } else {
+          derivedBases = deriveStatutoryBasesFromSalaryBuckets({ earnedGross, fullMonthlyGross, ptBasis: ptBasisSetting });
+        }
+
         const voluntaryDeductions = earnedLines
           .filter((line) => line.type === 'DEDUCTION' && line.recurrence === 'RECURRING' && line.amountEarned > 0)
           .map((line) => ({
@@ -789,7 +823,10 @@ const payrollRunService = {
           // ESI eligibility follows the wage for the period; the contribution
           // is charged on what was actually earned.
           esiCeilingWage: fullMonthlyGross,
-          ptGross: payrollBasis.professionalTaxBasis === 'FULL_MONTHLY_GROSS' ? fullMonthlyGross : earnedGross,
+          // What the contribution is charged on, and what the PT slab is read from.
+          // ESI coverage above is unchanged in this phase.
+          esiContributionWage: derivedBases.esiContributionWage,
+          ptGross: derivedBases.ptSlabWage,
         };
 
         // Reuse the Phase 7 calculator — DO NOT duplicate statutory formulas
@@ -873,6 +910,8 @@ const payrollRunService = {
             prorationFactor:      period.prorationFactor,
             payableDaysBasis:     period.payableDaysBasis,
             professionalTaxBasis: payrollBasis.professionalTaxBasis,
+            // Only what was actually derived, never an undefined key.
+            statutoryBases: toStatutoryBasesDocument(derivedBases),
           },
 
           // ── CALCULATION RESULTS ───────────────────────────────────────

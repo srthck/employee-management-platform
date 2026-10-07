@@ -116,7 +116,7 @@ const complianceCalculationService = {
    * @param {boolean} params.esiEnrolled   - Whether employee is ESI enrolled
    * @returns {{ employeeEsi, employerEsi, totalEsi, applicable, enrolled }}
    */
-  calculateEsi({ grossMonthly, esiRule, esiEnrolled, ceilingWage = null }) {
+  calculateEsi({ grossMonthly, esiRule, esiEnrolled, ceilingWage = null, contributionWage = null }) {
     if (!esiEnrolled) {
       return {
         enrolled: false,
@@ -152,8 +152,12 @@ const complianceCalculationService = {
       };
     }
 
-    const employeeEsi = applyRounding(grossMonthly * employeeContributionRate, roundingMode);
-    const employerEsi = applyRounding(grossMonthly * employerContributionRate, roundingMode);
+    // The contribution is charged on the ESI contribution wage when one is given
+    // (Wave 3.5); otherwise on grossMonthly, exactly as before. Coverage above is
+    // unchanged and still decided by ceilingWage / grossMonthly.
+    const chargedOn = contributionWage != null ? contributionWage : grossMonthly;
+    const employeeEsi = applyRounding(chargedOn * employeeContributionRate, roundingMode);
+    const employerEsi = applyRounding(chargedOn * employerContributionRate, roundingMode);
     const totalEsi = round2(employeeEsi + employerEsi);
 
     return {
@@ -238,12 +242,17 @@ const complianceCalculationService = {
       // the professional tax slab is read from. Both default to grossMonthly.
       esiCeilingWage = null,
       ptGross = null,
+      // The earned wage the ESI contribution is charged on. grossMonthly stays
+      // the net-pay base and is never replaced by it. Defaults to grossMonthly.
+      esiContributionWage = null,
     } = input;
 
     const pfWage = pfWageOverride !== null ? pfWageOverride : basicSalary;
 
     const epf = this.calculateEpf({ pfWage, epfRule, pfEnrolled });
-    const esi = this.calculateEsi({ grossMonthly, esiRule, esiEnrolled, ceilingWage: esiCeilingWage });
+    const esi = this.calculateEsi({
+      grossMonthly, esiRule, esiEnrolled, ceilingWage: esiCeilingWage, contributionWage: esiContributionWage,
+    });
     const pt  = this.calculatePt({ grossMonthly: ptGross != null ? ptGross : grossMonthly, ptSlabs, ptEnrolled, periodMonth });
 
     const totalEmployeeDeductions = round2(

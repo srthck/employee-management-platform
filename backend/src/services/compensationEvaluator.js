@@ -263,6 +263,22 @@ export function evaluateCompensationLines(requestedLines, catalogue) {
   // Keep the caller's order for display; evaluation order is internal.
   const lines = prepared.map((line) => evaluated.get(line.componentCode));
 
+  const { totals, bases } = summarizeEvaluatedLines(lines);
+
+  if (totals.monthlyGross <= 0) {
+    throw httpError(422, 'NON_POSITIVE_GROSS', 'Monthly gross must be more than zero.');
+  }
+
+  return { lines, totals, bases };
+}
+
+/**
+ * Totals and wage bases of lines that are ALREADY evaluated: freshly evaluated
+ * ones, or the frozen lines of a stored compensation version. Reads only what is
+ * on the lines (amounts and their frozen treatments), never the catalogue, so a
+ * stored version is summarised as it was recorded.
+ */
+export function summarizeEvaluatedLines(lines) {
   const sumWhere = (predicate) => round2(lines.filter(predicate).reduce((total, line) => total + line.amountMonthly, 0));
   const monthlyGross = sumWhere(isGrossLine);
   const bases = {
@@ -282,11 +298,7 @@ export function evaluateCompensationLines(requestedLines, catalogue) {
     oneTimeAnnualEarnings: sumWhere((line) => line.recurrence === 'ONE_TIME' && line.treatments.ctc === 'INCLUDED'),
   };
 
-  if (monthlyGross <= 0) {
-    throw httpError(422, 'NON_POSITIVE_GROSS', 'Monthly gross must be more than zero.');
-  }
-
-  return { lines, totals, bases };
+  return { totals, bases };
 }
 
 export { round2 as roundToPaise };

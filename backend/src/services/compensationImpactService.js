@@ -2,7 +2,7 @@ import PayrollRun from '../models/PayrollRun.js';
 import ComplianceRuleVersion from '../models/ComplianceRuleVersion.js';
 import compensationComponentService from './compensationComponentService.js';
 import { estimateStatutory, ctcTotals, notAppliedLines, versionView } from './compensationService.js';
-import { evaluateCompensationLines } from './compensationEvaluator.js';
+import { evaluateCompensationLines, summarizeEvaluatedLines } from './compensationEvaluator.js';
 import { roundToPaise as round2 } from '../utils/money.js';
 import { httpError, startOfUtcDay, dateOnly, isValidDate } from './employeeScope.js';
 
@@ -30,8 +30,15 @@ const percentChange = (before, after) => (before > 0 ? round2(((after - before) 
 const note = (code, message) => ({ code, message });
 
 /** One side of the comparison, evaluated under the rules of `onDate`. */
-async function evaluateSide({ lines, workState, pfEnrolled, esiEnrolled, ptEnrolled, pfWageBaseOverride, onDate, catalogue }) {
-  const { lines: evaluated, totals: rawTotals, bases } = evaluateCompensationLines(lines, catalogue);
+async function evaluateSide({
+  lines, storedLines = null, workState, pfEnrolled, esiEnrolled, ptEnrolled, pfWageBaseOverride, onDate, catalogue,
+}) {
+  // A proposed side is evaluated from its requested lines. The BASELINE is a
+  // stored version: its recorded lines, amounts and frozen treatments are used
+  // as they were written, never re-evaluated against today's catalogue.
+  const { lines: evaluated, totals: rawTotals, bases } = storedLines
+    ? { lines: storedLines, ...summarizeEvaluatedLines(storedLines) }
+    : evaluateCompensationLines(lines, catalogue);
   const pfWageBase = pfWageBaseOverride != null ? round2(pfWageBaseOverride) : bases.pfWageBase;
   const statutory = await estimateStatutory({
     gross: rawTotals.monthlyGross,
@@ -42,6 +49,8 @@ async function evaluateSide({ lines, workState, pfEnrolled, esiEnrolled, ptEnrol
     workState,
     onDate,
     periodMonth: onDate.getUTCMonth() + 1,
+    // The same pure derivation payroll uses, over these frozen lines.
+    lines: evaluated,
   });
   const totals = ctcTotals(rawTotals, statutory);
   return { lines: evaluated, totals, bases, pfWageBase, statutory };
@@ -80,7 +89,7 @@ const compensationImpactService = {
 
     const before = baselineVersion
       ? await evaluateSide({
-        lines: linesFromVersion(baselineVersion),
+        storedLines: (baselineVersion.lines || []).map((line) => (line.toObject ? line.toObject() : line)),
         workState: baselineVersion.workState,
         pfEnrolled: baselineVersion.pfEnrolled,
         esiEnrolled: baselineVersion.esiEnrolled,
@@ -173,9 +182,16 @@ const compensationImpactService = {
         `${notApplied.map((line) => line.name).join(', ')} count towards CTC but payroll does not pay or deduct them yet.`));
     }
 
-    if (round2(after.bases.esiWageBase) !== round2(after.totals.monthlyGross)) {
-      impact.notes.push(note('ESI_WAGE_BASE_NOT_APPLIED',
-        'Some components are marked outside the ESI wage. Payroll still calculates ESI on full gross today.'));
+    // ESI and professional tax are calculated on their own wage, not on gross. Say
+    // so whenever that wage differs, with the figures payroll will use.
+    const afterBases = after.statutory.statutoryBases;
+    if (afterBases && round2(afterBases.esiContributionWage) !== round2(after.totals.monthlyGross)) {
+      impact.notes.push(note('ESI_WAGE_DIFFERS_FROM_GROSS',
+        `Some components are outside the ESI wage: ESI is calculated on ${round2(afterBases.esiContributionWage)}, not on the gross of ${round2(after.totals.monthlyGross)}.`));
+    }
+    if (afterBases && round2(afterBases.ptSlabWage) !== round2(after.totals.monthlyGross)) {
+      impact.notes.push(note('PT_WAGE_DIFFERS_FROM_GROSS',
+        `Some components are outside the professional tax wage: the slab is read from ${round2(afterBases.ptSlabWage)}, not from the gross of ${round2(after.totals.monthlyGross)}.`));
     }
 
     if (after.statutory.unavailableRules.length > 0) {
