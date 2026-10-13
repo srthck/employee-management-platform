@@ -28,6 +28,7 @@ const TEST_FILES = [
   'test_rounding.js',
   'test_wave35_phase1b.js',
   'test_wave35_phase1c.js',
+  'test_wave35_phase1c5.js',
 ];
 
 const base = new URL(process.argv[2] || process.env.REPLICA_SET_URI || 'mongodb://127.0.0.1:27018/?replicaSet=rs0');
@@ -50,6 +51,7 @@ const env = {
   WAVE35_MONGO_URI: databaseUri('payguard_wave35_test'),
   WAVE35B_MONGO_URI: databaseUri('payguard_wave35b_test'),
   WAVE35C_MONGO_URI: databaseUri('payguard_wave35c_test'),
+  WAVE35C5_MONGO_URI: databaseUri('payguard_wave35c5_test'),
 };
 
 console.log(`Running ${TEST_FILES.length} suites against ${base.host} with REQUIRE_TRANSACTIONS=true`);

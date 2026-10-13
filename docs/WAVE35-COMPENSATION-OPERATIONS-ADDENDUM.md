@@ -24,3 +24,15 @@ These are two different things and are kept distinct:
 ## Tests
 
 `test_wave3.js` previously expected gratuity and VPF to be reported as unapplied. Those assertions now expect them **not** to be reported, and use a one-time `BONUS` as the component that still is. The numeric assertions were not changed.
+
+## Payslip ESI and Professional Tax explanations (Phase 1C.5)
+
+The payslip explains what a snapshot **recorded**, and claims nothing it did not record. Nothing is recomputed, and no amount, total, check, rounding or stored hash changes: only the explanation text and some additive response fields.
+
+- **Legacy calculation basis.** The ESI contribution basis and the Professional Tax slab basis that Phase 1C freezes on a snapshot are described as a *legacy calculation basis* (the wording "ESI wage" is not used, and a legacy basis is never called a statutory ESI wage). The calculation model is `PAYGUARD_LEGACY_CONFIGURED_RULE`: rates, the ceiling and the rounding setting come from the frozen company rule version, and none of it is a determination under the Code on Social Security, 2020.
+- **Not recorded means not recorded.** A snapshot without `statutoryBases.esiContributionWage` reports its ESI basis as `NOT_RECORDED`; it is never assumed to have been the gross. The same holds for the PT basis unless the snapshot recorded either `statutoryBases.ptSlabWage` or the `professionalTaxBasis` setting.
+- **A legacy zero is not an ineligibility finding.** When the legacy check calculated no ESI contribution, the note says what PayGuard compared and calculated, and states that it is not a determination of statutory coverage.
+- **ESI and PT are separate.** The ESI note refers to the Code; the Professional Tax note describes a State levy under the applicable State law and does not cite the Code or section 2(88).
+- **Rounding.** Legacy rounding is described as PayGuard's configured rounding setting (to paise, then up to the next whole rupee, or to the nearest rupee). It is not described as the rounding the Code or Rules require; that interpretation is a separate, unresolved question.
+
+Response fields added to the ESI and PT lines (additive; every earlier field keeps its name): `calculationModel`, `basisAmount` (number or `null`), `basisSource` (`RECORDED_ON_SNAPSHOT`, `RECORDED_PT_BASIS_SETTING` or `NOT_RECORDED`), `basisDerivation` (the stored `statutoryBases.basisSource`, when recorded), `recordedGrossMonthly`; on ESI also `coverageCheck` and `roundingModel`; on PT also `ptBasisSetting`. The response-level `basisSource` says where `basisAmount` comes from; it is not the stored `statutoryBases.basisSource`, which says how the bases were derived.
