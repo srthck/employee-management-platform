@@ -29,6 +29,12 @@ const TEST_FILES = [
   'test_wave35_phase1b.js',
   'test_wave35_phase1c.js',
   'test_wave35_phase1c5.js',
+  'test_phase1d_rational.js',
+  'test_phase1d_oracle.js',
+  'test_phase1d_engine.js',
+  'test_phase1d_provenance.js',
+  'test_phase1d_applicability.js',
+  'test_phase1d_isolation.js',
 ];
 
 const base = new URL(process.argv[2] || process.env.REPLICA_SET_URI || 'mongodb://127.0.0.1:27018/?replicaSet=rs0');
