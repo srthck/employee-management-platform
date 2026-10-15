@@ -1,0 +1,1015 @@
+/**
+ * test_audit_hardening.js — audit-chain concurrency and payroll-snapshot lifecycle invariants.
+ *
+ * Runner: node:test.  Run: node --test test_audit_hardening.js   (or the full suite: npm test)
+ * Real MongoDB replica set, isolated database (AUDIT_HARDENING_MONGO_URI), dropped before and after.
+ *
+ * Group A — the audit chain: DATABASE-enforced single successor, liveness under real concurrency (in one
+ *           process, in a transaction, across processes), explicit failure outcomes, fail-closed index guard,
+ *           and tamper-evidence after deliberate corruption.
+ * Group B — payroll snapshot lifecycle: snapshot + audit event are atomic, finalization is all-or-nothing
+ *           including every audit event, retries and duplicate requests change nothing.
+ * Group C — the pending-snapshot reconciliation tool: classification, safe-by-default, idempotent, guarded.
+ *
+ * A test here proves an INVARIANT (state after the operation), never merely "an error was thrown".
+ * Concurrency is exercised with genuinely concurrent operations (Promise.all, separate processes), never
+ * inferred from sequential runs.
+ */
+
+import { describe, test, before, after, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn, execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import mongoose from 'mongoose';
+
+process.env.NODE_ENV = 'test';
+process.env.RATE_LIMIT_ENABLED = 'false';
+process.env.LOG_LEVEL = 'error';
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'audit-hardening-test-secret-long-enough';
+process.env.FIELD_ENCRYPTION_KEYS = `v1:${crypto.randomBytes(32).toString('base64')}`;
+process.env.FIELD_ENCRYPTION_ACTIVE_KEY = 'v1';
+process.env.FIELD_BLIND_INDEX_KEY = crypto.randomBytes(32).toString('hex');
+
+const TEST_DB_URI = process.env.AUDIT_HARDENING_MONGO_URI || 'mongodb://127.0.0.1:27018/payguard_audit_hardening_test?replicaSet=rs0';
+
+const { default: app } = await import('./src/app.js');
+const { default: Admin } = await import('./src/models/Admin.js');
+const { default: Company } = await import('./src/models/Company.js');
+const { default: Employee } = await import('./src/models/Employee.js');
+const { default: EmployeeAccount } = await import('./src/models/EmployeeAccount.js');
+const { default: SalaryStructure } = await import('./src/models/SalaryStructure.js');
+const { default: ComplianceRuleVersion } = await import('./src/models/ComplianceRuleVersion.js');
+const { default: PayrollRun } = await import('./src/models/PayrollRun.js');
+const { default: PayrollStagingResult } = await import('./src/models/PayrollStagingResult.js');
+const { default: PayrollSnapshot, computeSnapshotHash } = await import('./src/models/PayrollSnapshot.js');
+const { default: AuditLog } = await import('./src/models/AuditLog.js');
+const { default: IdempotencyRecord } = await import('./src/models/IdempotencyRecord.js');
+const { default: auditService } = await import('./src/services/auditService.js');
+const { default: payrollRunService } = await import('./src/services/payrollRunService.js');
+const { default: payrollSnapshotService } = await import('./src/services/payrollSnapshotService.js');
+const { default: payrollFinalizationService } = await import('./src/services/payrollFinalizationService.js');
+const { runInTransaction } = await import('./src/utils/transaction.js');
+const recon = await import('./scripts/lib/snapshotReconciliation.mjs');
+
+const MODELS = [Admin, Company, Employee, EmployeeAccount, SalaryStructure, ComplianceRuleVersion, PayrollRun, PayrollStagingResult, PayrollSnapshot, AuditLog, IdempotencyRecord];
+const PASSWORD = 'StrongPass123';
+const WORKER = fileURLToPath(new URL('./test_support/auditAppendWorker.mjs', import.meta.url));
+
+let server;
+let baseUrl;
+/** Fixture handles that group B creates and group C reuses (the groups run in file order). */
+const shared = {};
+
+const actorId = new mongoose.Types.ObjectId();
+const params = (i, action = 'HARDENING_TEST') => ({ action, actorId, entityType: 'TEST', entityId: new mongoose.Types.ObjectId(), meta: { i } });
+const resetChain = () => AuditLog.collection.deleteMany({});
+const sequences = async () => (await AuditLog.collection.find({}, { projection: { sequenceNumber: 1 } }).sort({ sequenceNumber: 1 }).toArray()).map((d) => d.sequenceNumber);
+const assertContiguous = async (expected) => {
+  const seqs = await sequences();
+  assert.deepEqual(seqs, Array.from({ length: expected }, (_, i) => i + 1), 'sequence numbers must be exactly 1..N with no gap and no duplicate');
+};
+const assertChainValid = async (message = '') => {
+  const verification = await auditService.verifyAuditChain();
+  assert.equal(verification.valid, true, `${message} ${verification.reason}`);
+  return verification;
+};
+const indexes = async () => AuditLog.collection.indexes();
+// Always reset the chain FIRST: a previous test may have left a deliberately forked chain, over which a unique index cannot be built.
+const restoreIndexes = async () => { await AuditLog.collection.dropIndexes(); await AuditLog.createIndexes(); auditService._resetIndexGuard?.(); };
+
+function createClient() {
+  let cookie = '';
+  const request = async (method, path, body, headers = {}) => {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers: { 'content-type': 'application/json', ...(cookie && { cookie }), ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const setCookie = response.headers.get('set-cookie');
+    if (setCookie) cookie = setCookie.split(';')[0];
+    const text = await response.text();
+    let json = null;
+    try { json = text ? JSON.parse(text) : null; } catch { json = text; }
+    return { status: response.status, body: json };
+  };
+  return { get: (p) => request('GET', p), post: (p, b = {}, h) => request('POST', p, b, h) };
+}
+
+/** Make auditService.log throw for matching calls; returns a restore function. */
+function injectAuditFailure(match) {
+  const original = auditService.log;
+  const seen = {};
+  auditService.log = async function injected(entry, session) {
+    seen[entry.action] = (seen[entry.action] || 0) + 1;
+    if (match(entry, seen[entry.action])) throw Object.assign(new Error(`Injected audit failure for ${entry.action}`), { injected: true });
+    return original.call(this, entry, session);
+  };
+  return () => { auditService.log = original; };
+}
+
+/** Let the audit write happen, THEN fail: a crash right after the write, inside whatever transaction the caller opened. */
+function injectFailureAfterAuditWrite(match) {
+  const original = auditService.log;
+  auditService.log = async function injectedAfter(entry, session) {
+    const written = await original.call(this, entry, session);
+    if (match(entry)) throw Object.assign(new Error(`Injected failure right after writing ${entry.action}`), { injected: true });
+    return written;
+  };
+  return () => { auditService.log = original; };
+}
+
+before(async () => {
+  await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
+  await mongoose.connection.dropDatabase();
+  await Promise.all(MODELS.map((model) => model.createIndexes()));
+  server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  baseUrl = `http://127.0.0.1:${server.address().port}/api`;
+});
+
+after(async () => {
+  try {
+    if (server) {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+    if (mongoose.connection.readyState === 1) await mongoose.connection.dropDatabase();
+  } finally {
+    await mongoose.disconnect();
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// Group A — the audit chain
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('A — audit chain: the database allows exactly one successor per predecessor', () => {
+  beforeEach(async () => { await resetChain(); await restoreIndexes(); });
+
+  test('the unique constraints exist: one on sequenceNumber and one on previousHash (a predecessor has one successor)', async () => {
+    const unique = (await indexes()).filter((index) => index.unique);
+    assert.ok(unique.some((index) => index.key.sequenceNumber === 1), 'unique sequenceNumber');
+    const successor = unique.find((index) => index.key.previousHash === 1);
+    assert.ok(successor, 'unique previousHash');
+    assert.deepEqual(successor.partialFilterExpression, { previousHash: { $type: 'string' } }, 'partial, so records written before chaining (no previousHash) cannot collide');
+  });
+
+  test('the DATABASE rejects a second successor of the same predecessor even under a different sequence number', async () => {
+    const first = await auditService.log(params(1));
+    const second = await auditService.log(params(2));
+    assert.equal(second.previousHash, first.hash);
+    const forged = { ...second.toObject(), _id: new mongoose.Types.ObjectId(), sequenceNumber: 9999, hash: 'f'.repeat(64) };
+    await assert.rejects(AuditLog.collection.insertOne(forged), (error) => error.code === 11000 && Boolean(error.keyPattern?.previousHash));
+    assert.equal(await AuditLog.collection.countDocuments({}), 2, 'nothing was written');
+  });
+
+  test('the DATABASE rejects a second record with the same sequence number', async () => {
+    const first = await auditService.log(params(1));
+    const forged = { ...first.toObject(), _id: new mongoose.Types.ObjectId(), previousHash: 'a'.repeat(64), hash: 'e'.repeat(64) };
+    await assert.rejects(AuditLog.collection.insertOne(forged), (error) => error.code === 11000 && Boolean(error.keyPattern?.sequenceNumber));
+    assert.equal(await AuditLog.collection.countDocuments({}), 1);
+  });
+});
+
+describe('A — audit chain: concurrent appends all succeed, linearly (liveness AND safety)', () => {
+  beforeEach(async () => { await resetChain(); await restoreIndexes(); });
+
+  test('100 concurrent appends in one process, three rounds: every one succeeds, sequence 1..N, chain valid', async () => {
+    for (let round = 1; round <= 3; round += 1) {
+      await resetChain();
+      const settled = await Promise.allSettled(Array.from({ length: 100 }, (_, i) => auditService.log(params(i))));
+      const failures = settled.filter((r) => r.status === 'rejected').map((r) => String(r.reason?.code ?? r.reason?.message));
+      assert.deepEqual(failures, [], `round ${round}: an append must never fail merely because another was logged at the same moment`);
+      await assertContiguous(100);
+      await assertChainValid(`round ${round}`);
+    }
+  });
+
+  test('25 concurrent TRANSACTIONS each doing business work + an audit append: all commit exactly once, none duplicated', async () => {
+    const scratch = mongoose.connection.collection('audit_hardening_scratch');
+    await scratch.deleteMany({});
+    const settled = await Promise.allSettled(Array.from({ length: 25 }, (_, i) => runInTransaction(async (session) => {
+      await scratch.insertOne({ i }, { session });
+      return auditService.log(params(i), session);
+    }, { label: 'a5' })));
+    assert.deepEqual(settled.filter((r) => r.status === 'rejected').map((r) => String(r.reason?.code ?? r.reason?.message)), []);
+    const rows = await scratch.find({}).toArray();
+    assert.equal(rows.length, 25, 'every business write committed');
+    assert.equal(new Set(rows.map((row) => row.i)).size, 25, 'and exactly once: a retried transaction must not duplicate its business write');
+    await assertContiguous(25);
+    await assertChainValid();
+  });
+
+  test('plain and transactional appends racing each other: all succeed, chain valid', async () => {
+    const settled = await Promise.allSettled(Array.from({ length: 60 }, (_, i) => (i % 2
+      ? runInTransaction((session) => auditService.log(params(i), session), { label: 'a6' })
+      : auditService.log(params(i)))));
+    assert.deepEqual(settled.filter((r) => r.status === 'rejected').map((r) => String(r.reason?.code ?? r.reason?.message)), []);
+    await assertContiguous(60);
+    await assertChainValid();
+  });
+
+  test('FOUR SEPARATE PROCESSES appending to one chain: every append succeeds, sequence 1..N, chain valid', async () => {
+    const run = (count, mode) => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [WORKER, TEST_DB_URI, String(count), mode], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      let err = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.stderr.on('data', (d) => { err += d; });
+      child.on('error', reject);
+      child.on('close', (code) => (code === 0 ? resolve(JSON.parse(out.trim().split('\n').pop())) : reject(new Error(`worker exited ${code}: ${err}`))));
+    });
+    const results = await Promise.all([run(40, 'plain'), run(40, 'plain'), run(40, 'txn'), run(40, 'txn')]);
+    for (const result of results) assert.equal(result.rejected, 0, JSON.stringify(result));
+    await assertContiguous(160);
+    await assertChainValid();
+  });
+
+  test('two audit events in ONE transaction are consecutive and linked; an abort leaves no trace and no gap', async () => {
+    const [a, b] = await runInTransaction(async (session) => [await auditService.log(params(1), session), await auditService.log(params(2), session)]);
+    assert.equal(b.sequenceNumber, a.sequenceNumber + 1);
+    assert.equal(b.previousHash, a.hash);
+    await assert.rejects(runInTransaction(async (session) => {
+      await auditService.log(params(3), session);
+      await auditService.log(params(4), session);
+      throw Object.assign(new Error('business failure after two audit writes'), { statusCode: 500 });
+    }), /business failure/);
+    await assertContiguous(2);
+    const next = await auditService.log(params(5));
+    assert.equal(next.sequenceNumber, 3, 'the aborted transaction consumed no sequence number');
+    await assertChainValid();
+  });
+
+  test('a transient transaction failure after the audit insert is retried: committed exactly once, no gap', async () => {
+    let attempts = 0;
+    const entry = await runInTransaction(async (session) => {
+      attempts += 1;
+      const logged = await auditService.log(params(1), session);
+      if (attempts === 1) throw Object.assign(new Error('injected transient failure'), { errorLabels: new Set(['TransientTransactionError']) });
+      return logged;
+    }, { label: 'a10' });
+    assert.equal(attempts, 2);
+    assert.equal(entry.sequenceNumber, 1);
+    await assertContiguous(1);
+    await assertChainValid();
+  });
+});
+
+describe('A — audit chain: explicit outcomes when an append cannot be made', () => {
+  beforeEach(async () => { await resetChain(); await restoreIndexes(); });
+
+  test('exhausted contention is a named, retryable 503 (AUDIT_CHAIN_CONTENTION); nothing is written and the chain stays valid', async () => {
+    const original = auditService._append;
+    const policy = auditService.appendPolicy;
+    let calls = 0;
+    auditService._append = async () => { calls += 1; throw Object.assign(new Error('E11000 duplicate key'), { code: 11000, keyPattern: { sequenceNumber: 1 } }); };
+    auditService.appendPolicy = { ...policy, maxWaitMs: 300 };
+    try {
+      await assert.rejects(auditService.log(params(1)), (error) => error.code === 'AUDIT_CHAIN_CONTENTION' && error.statusCode === 503 && error.retryable === true);
+      assert.ok(calls > 1, 'it retried before giving up');
+    } finally {
+      auditService._append = original;
+      auditService.appendPolicy = policy;
+    }
+    assert.equal(await AuditLog.collection.countDocuments({}), 0);
+    await assertChainValid();
+  });
+
+  test('inside a transaction an exhausted retry budget on AUDIT conflicts is the same explicit 503, nothing written; an unrelated conflict is not relabelled', async () => {
+    const original = auditService._append;
+    let calls = 0;
+    const transient = () => Object.assign(new Error('WriteConflict'), { code: 112, errorLabels: new Set(['TransientTransactionError']) });
+    auditService._append = async () => { calls += 1; throw transient(); };
+    try {
+      await assert.rejects(
+        runInTransaction((session) => auditService.log(params(1), session), { label: 'a-exhaust', maxAttempts: 4, maxWaitMs: 5000 }),
+        (error) => error.code === 'AUDIT_CHAIN_CONTENTION' && error.statusCode === 503 && error.retryable === true
+      );
+      assert.equal(calls, 4, 'the whole unit of work was re-run up to the attempt limit');
+      calls = 0;
+      auditService._append = async () => { calls += 1; throw Object.assign(new Error('E11000 duplicate key'), { code: 11000, keyPattern: { previousHash: 1 } }); };
+      await assert.rejects(
+        runInTransaction((session) => auditService.log(params(2), session), { label: 'a-exhaust-2', maxAttempts: 3, maxWaitMs: 5000 }),
+        (error) => error.code === 'AUDIT_CHAIN_CONTENTION'
+      );
+      assert.equal(calls, 3, 'a previousHash collision is retried like a sequenceNumber collision');
+    } finally {
+      auditService._append = original;
+    }
+    assert.equal(await AuditLog.collection.countDocuments({}), 0);
+
+    let attempts = 0;
+    await assert.rejects(runInTransaction(async () => { attempts += 1; throw transient(); }, { label: 'business-conflict', maxAttempts: 3, maxWaitMs: 5000 }), (error) => error.code === 112);
+    assert.equal(attempts, 3, 'a conflict that did not come from the audit insert is retried, then reported unchanged');
+    await assertChainValid();
+  });
+
+  test('a non-collision database error is NOT retried and is not disguised as contention', async () => {
+    const original = auditService._append;
+    let calls = 0;
+    auditService._append = async () => { calls += 1; throw Object.assign(new Error('disk exploded'), { code: 9999 }); };
+    try {
+      await assert.rejects(auditService.log(params(1)), (error) => error.code === 9999);
+      assert.equal(calls, 1);
+    } finally {
+      auditService._append = original;
+    }
+  });
+});
+
+describe('A — audit chain: the unique-index guard fails closed', () => {
+  beforeEach(async () => { await resetChain(); await restoreIndexes(); });
+
+  test('a dropped unique index is rebuilt before appending (no data conflicts), and the append then succeeds', async () => {
+    await auditService.log(params(1));
+    await AuditLog.collection.dropIndex('sequenceNumber_1');
+    auditService._resetIndexGuard();
+    await auditService.log(params(2));
+    const unique = (await indexes()).filter((index) => index.unique);
+    assert.ok(unique.some((index) => index.key.sequenceNumber === 1), 'the guard restored the unique index');
+    await assertContiguous(2);
+  });
+
+  test('the guard re-checks periodically: an index dropped while the process is running is restored on the next append once the re-check interval has passed', async () => {
+    const policy = auditService.appendPolicy;
+    auditService.appendPolicy = { ...policy, indexRecheckMs: 0 };
+    try {
+      await auditService.log(params(1)); // the guard has now checked and cached
+      await AuditLog.collection.dropIndex('previousHash_unique_successor');
+      await auditService.log(params(2)); // no manual reset: the (zero) interval has elapsed
+      assert.ok((await indexes()).some((index) => index.unique && index.key.previousHash === 1), 'the dropped guard was restored without any operator action');
+    } finally {
+      auditService.appendPolicy = policy;
+    }
+    auditService.appendPolicy = { ...policy, indexRecheckMs: 60 * 60 * 1000 };
+    try {
+      auditService._resetIndexGuard();
+      await auditService.log(params(3));
+      await AuditLog.collection.dropIndex('previousHash_unique_successor');
+      await auditService.log(params(4)); // inside the interval the cached check is trusted (documented residual window)
+      assert.equal((await indexes()).some((index) => index.unique && index.key.previousHash === 1), false, 'within the interval nothing re-checks: this is the documented window');
+    } finally {
+      auditService.appendPolicy = policy;
+      auditService._resetIndexGuard();
+    }
+  });
+
+  test('the guard verifies its own result: if a rebuild reports success but the guard is still missing, appends are refused', async () => {
+    await AuditLog.collection.dropIndex('previousHash_unique_successor');
+    auditService._resetIndexGuard();
+    const original = AuditLog.collection.createIndex;
+    AuditLog.collection.createIndex = async () => 'pretended-success';
+    try {
+      await assert.rejects(auditService.log(params(1)), (error) => error.code === 'AUDIT_CHAIN_INDEX_UNAVAILABLE' && error.statusCode === 503);
+    } finally {
+      AuditLog.collection.createIndex = original;
+    }
+    assert.equal(await AuditLog.collection.countDocuments({}), 0);
+  });
+
+  test('if the unique index is missing AND the chain already forked, appends are REFUSED (503 AUDIT_CHAIN_INDEX_UNAVAILABLE); nothing is written', async () => {
+    const first = await auditService.log(params(1));
+    await AuditLog.collection.dropIndexes();
+    await AuditLog.collection.insertOne({ ...first.toObject(), _id: new mongoose.Types.ObjectId(), hash: 'd'.repeat(64) }); // duplicate sequenceNumber 1
+    auditService._resetIndexGuard();
+    await assert.rejects(auditService.log(params(2)), (error) => error.code === 'AUDIT_CHAIN_INDEX_UNAVAILABLE' && error.statusCode === 503);
+    assert.equal(await AuditLog.collection.countDocuments({}), 2, 'the refused append wrote nothing');
+    const verification = await auditService.verifyAuditChain();
+    assert.equal(verification.valid, false, 'the fork stays detectable');
+  });
+});
+
+describe('A — audit chain: tamper-evidence after deliberate corruption (tamper-EVIDENT, not tamper-proof)', () => {
+  beforeEach(async () => { await resetChain(); await restoreIndexes(); });
+
+  const buildChain = async (n) => { for (let i = 1; i <= n; i += 1) await auditService.log(params(i)); };
+
+  test('deleting a middle record, rewriting a link, rewriting a hash and reordering are each detected, at the right sequence', async () => {
+    await buildChain(5);
+    await assertChainValid('before tampering');
+    const docs = await AuditLog.collection.find({}).sort({ sequenceNumber: 1 }).toArray();
+
+    await AuditLog.collection.deleteOne({ _id: docs[2]._id });
+    let verification = await auditService.verifyAuditChain();
+    assert.equal(verification.valid, false);
+    assert.equal(verification.firstBrokenSequence, 4);
+    assert.match(verification.reason, /Sequence continuity/);
+    await AuditLog.collection.insertOne(docs[2]);
+    await assertChainValid('after restoring the deleted record');
+
+    await AuditLog.collection.updateOne({ _id: docs[3]._id }, { $set: { previousHash: '0'.repeat(64) } });
+    verification = await auditService.verifyAuditChain();
+    assert.equal(verification.firstBrokenSequence, 4);
+    assert.match(verification.reason, /linkage/);
+    await AuditLog.collection.updateOne({ _id: docs[3]._id }, { $set: { previousHash: docs[3].previousHash } });
+
+    await AuditLog.collection.updateOne({ _id: docs[1]._id }, { $set: { hash: '1'.repeat(64) } });
+    verification = await auditService.verifyAuditChain();
+    assert.equal(verification.firstBrokenSequence, 2);
+    assert.match(verification.reason, /hash/i);
+    await AuditLog.collection.updateOne({ _id: docs[1]._id }, { $set: { hash: docs[1].hash } });
+
+    // the unique index even refuses to let a record be renumbered onto an existing sequence number
+    await assert.rejects(AuditLog.collection.updateOne({ _id: docs[4]._id }, { $set: { sequenceNumber: 3 } }), (error) => error.code === 11000);
+    await AuditLog.collection.updateOne({ _id: docs[4]._id }, { $set: { sequenceNumber: 99 } });
+    verification = await auditService.verifyAuditChain();
+    assert.equal(verification.valid, false);
+    assert.equal(verification.firstBrokenSequence, 99);
+    await AuditLog.collection.updateOne({ _id: docs[4]._id }, { $set: { sequenceNumber: 5 } });
+    await assertChainValid('after every corruption was reverted: verification is a pure function of the stored chain');
+  });
+
+  test('concurrent appends racing a verification never make a valid chain look broken', async () => {
+    await buildChain(10);
+    const writers = Array.from({ length: 30 }, (_, i) => auditService.log(params(100 + i)));
+    const verifications = await Promise.all(Array.from({ length: 5 }, () => auditService.verifyAuditChain()));
+    await Promise.all(writers);
+    for (const verification of verifications) assert.equal(verification.valid, true, verification.reason);
+    await assertChainValid();
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// Group B — payroll snapshot lifecycle
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('B — payroll snapshots: persistence, audit and finalization are atomic', () => {
+  const owner = createClient();
+  const state = { employees: [] };
+  let month = 0;
+
+  const nextRun = async () => {
+    month += 1;
+    const actor = { id: state.ownerId, email: 'owner@example.com', role: 'admin' };
+    const { run } = await payrollRunService.createPayrollRun({ companyId: state.companyId, periodMonth: month, periodYear: 2026, actorId: actor.id, actorEmail: actor.email, actorRole: actor.role });
+    const runId = String(run._id);
+    await payrollRunService.processPayrollRun(runId, state.companyId, actor);
+    const processed = await PayrollRun.findById(runId).lean();
+    assert.equal(processed.status, 'READY_FOR_FINALIZATION');
+    assert.equal(processed.successfulEmployeeCount, 3);
+    return { runId, actor };
+  };
+  const snapshotsOf = (runId) => PayrollSnapshot.find({ payrollRunId: runId }).lean();
+  const eventsOf = async (runId, action) => {
+    const ids = (await snapshotsOf(runId)).map((s) => s._id);
+    return AuditLog.countDocuments({ action, entityId: { $in: [...ids, new mongoose.Types.ObjectId(runId)] } });
+  };
+  const created = async (runId) => AuditLog.countDocuments({ action: 'PAYROLL_SNAPSHOT_CREATED', entityId: { $in: (await snapshotsOf(runId)).map((s) => s._id) } });
+  shared.nextRun = nextRun;
+  shared.state = state;
+
+  before(async () => {
+    await resetChain();
+    const res = await owner.post('/auth/register', { name: 'Owner One', email: 'owner@example.com', password: PASSWORD, confirmPassword: PASSWORD, companyName: 'Hardening Pvt Ltd' });
+    assert.equal(res.status, 201);
+    state.companyId = res.body.data.user.companyId;
+    state.ownerId = res.body.data.user.id;
+    const createdBy = new mongoose.Types.ObjectId();
+    await ComplianceRuleVersion.create([
+      { ruleType: 'EPF', jurisdiction: 'IN', effectiveFrom: new Date('2014-09-01'), createdBy, description: 'EPF test rule', epfParams: { employeeContributionRate: 0.12, employerContributionRate: 0.12, wageCapForContribution: 15000, epsRate: 0.0833, roundingMode: 'NEAREST_RUPEE' } },
+      { ruleType: 'ESI', jurisdiction: 'IN', effectiveFrom: new Date('2019-07-01'), createdBy, description: 'ESI test rule', esiParams: { employeeContributionRate: 0.0075, employerContributionRate: 0.0325, grossWageCeiling: 21000, roundingMode: 'CEIL_RUPEE' } },
+      { ruleType: 'PT', jurisdiction: 'MH', effectiveFrom: new Date('2000-01-01'), createdBy, description: 'MH PT test rule', ptSlabs: [{ upTo: 7500, monthlyTax: 0 }, { upTo: 10000, monthlyTax: 175 }, { upTo: null, monthlyTax: 200 }] },
+    ]);
+    for (const [first, last, special] of [['Asha', 'Verma', 4000], ['Ravi', 'Kumar', 4001], ['Meera', 'Iyer', 4002]]) {
+      const employee = await owner.post('/employees', { firstName: first, lastName: last, email: `${first}.${last}@example.com`.toLowerCase(), department: 'Engineering', position: 'Engineer', salary: 20000, hireDate: '2024-01-15', status: 'active' });
+      assert.equal(employee.status, 201, JSON.stringify(employee.body));
+      const id = employee.body.data.employee._id;
+      state.employees.push(id);
+      const salary = await owner.post(`/employees/${id}/salary`, { effectiveFrom: '2026-01-01', components: { basic: 12000, hra: 4000, specialAllowance: special }, workState: 'MH', pfEnrolled: true, esiEnrolled: true, ptEnrolled: true });
+      assert.equal(salary.status, 201, JSON.stringify(salary.body));
+    }
+  });
+
+  test('a snapshot and its PAYROLL_SNAPSHOT_CREATED event commit together: when the event cannot be written, the snapshot is not persisted', async () => {
+    const { runId, actor } = await nextRun();
+    const restore = injectAuditFailure((entry, n) => entry.action === 'PAYROLL_SNAPSHOT_CREATED' && n === 2);
+    let result;
+    try { result = await payrollSnapshotService.materializeSnapshots(runId, state.companyId, actor); } finally { restore(); }
+    assert.equal(result.errors, 1);
+    assert.equal(result.created, 2);
+    const persisted = await snapshotsOf(runId);
+    assert.equal(persisted.length, 2, 'the snapshot whose audit event failed must NOT exist');
+    assert.equal(await created(runId), persisted.length, 'every persisted snapshot has exactly one creation event');
+
+    const retry = await payrollSnapshotService.materializeSnapshots(runId, state.companyId, actor);
+    assert.equal(retry.created, 1);
+    assert.equal(retry.reused, 2);
+    assert.equal(retry.errors, 0);
+    assert.equal((await snapshotsOf(runId)).length, 3);
+    assert.equal(await created(runId), 3, 'and after the retry still exactly one event per snapshot (a reused snapshot logs nothing new)');
+    await assertChainValid();
+  });
+
+  test('a failure right AFTER the creation event was written rolls the event back with its snapshot (they share one transaction)', async () => {
+    const { runId, actor } = await nextRun();
+    const eventsBefore = await AuditLog.countDocuments({});
+    const restore = injectFailureAfterAuditWrite((entry) => entry.action === 'PAYROLL_SNAPSHOT_CREATED');
+    let result;
+    try { result = await payrollSnapshotService.materializeSnapshots(runId, state.companyId, actor); } finally { restore(); }
+    assert.equal(result.created, 0);
+    assert.equal(result.errors, 3, 'every employee failed after its event was written');
+    assert.equal((await snapshotsOf(runId)).length, 0, 'no snapshot persisted');
+    assert.equal(await AuditLog.countDocuments({}), eventsBefore, 'and no creation event survived: the event was written inside the transaction that was rolled back');
+    const retry = await payrollSnapshotService.materializeSnapshots(runId, state.companyId, actor);
+    assert.equal(retry.created, 3);
+    assert.equal(await created(runId), 3);
+    await assertChainValid();
+  });
+
+  test('a partially materialized run is completed by simply finalizing again: no duplicates, one event per snapshot, finalized once', async () => {
+    const { runId, actor } = await nextRun();
+    const restore = injectAuditFailure((entry, n) => entry.action === 'PAYROLL_SNAPSHOT_CREATED' && n === 3);
+    await payrollSnapshotService.materializeSnapshots(runId, state.companyId, actor).finally(restore);
+    assert.equal((await snapshotsOf(runId)).length, 2, 'two of three materialized');
+    assert.equal((await PayrollRun.findById(runId).lean()).status, 'READY_FOR_FINALIZATION');
+
+    const result = await payrollFinalizationService.finalize(runId, state.companyId, actor);
+    assert.equal(result.snapshotCount, 3);
+    const run = await PayrollRun.findById(runId).lean();
+    assert.equal(run.status, 'FINALIZED');
+    const snapshots = await snapshotsOf(runId);
+    assert.equal(snapshots.length, 3);
+    assert.ok(snapshots.every((s) => s.snapshotStatus === 'FINALIZED'));
+    assert.equal(await created(runId), 3);
+    assert.equal(await AuditLog.countDocuments({ action: 'PAYROLL_FINALIZED', entityId: runId }), 1);
+    await assertChainValid();
+  });
+
+  test('finalization is ALL-OR-NOTHING including its audit events: a failure at any event leaves the run READY and every snapshot PENDING', async () => {
+    for (const failing of ['PAYROLL_FINALIZED', 'PAYROLL_SNAPSHOT_FINALIZED']) {
+      const { runId, actor } = await nextRun();
+      await payrollSnapshotService.materializeSnapshots(runId, state.companyId, actor);
+      const before = await snapshotsOf(runId);
+      const eventsBefore = await AuditLog.countDocuments({});
+
+      const restore = injectAuditFailure((entry) => entry.action === failing);
+      await assert.rejects(payrollSnapshotService.finalizeRun(runId, state.companyId, actor), /Injected audit failure/, failing);
+      restore();
+
+      assert.equal((await PayrollRun.findById(runId).lean()).status, 'READY_FOR_FINALIZATION', `${failing}: the run must not be finalized`);
+      const after = await snapshotsOf(runId);
+      assert.ok(after.every((s) => s.snapshotStatus === 'PENDING_FINALIZATION'), `${failing}: no snapshot may be finalized`);
+      assert.deepEqual(after.map((s) => s.snapshotHash), before.map((s) => s.snapshotHash));
+      assert.equal(await AuditLog.countDocuments({}), eventsBefore, `${failing}: no audit event written`);
+      assert.equal(await AuditLog.countDocuments({ action: { $in: ['PAYROLL_FINALIZED', 'PAYROLL_SNAPSHOT_FINALIZED'] }, entityId: runId }), 0);
+
+      const retried = await payrollSnapshotService.finalizeRun(runId, state.companyId, actor);
+      assert.equal(retried.snapshotCount, 3);
+      assert.equal(await AuditLog.countDocuments({ action: 'PAYROLL_FINALIZED', entityId: runId }), 1, `${failing}: exactly one event after the retry`);
+      assert.equal(await AuditLog.countDocuments({ action: 'PAYROLL_SNAPSHOT_FINALIZED', entityId: runId }), 1);
+      await assertChainValid();
+    }
+  });
+
+  test('a failure right AFTER a finalization event was written leaves nothing behind (every finalization event shares the finalization transaction)', async () => {
+    for (const after of ['PAYROLL_FINALIZED', 'PAYROLL_SNAPSHOT_FINALIZED', 'HARDENING_LATE_EXTRA']) {
+      const { runId, actor } = await nextRun();
+      await payrollSnapshotService.materializeSnapshots(runId, state.companyId, actor);
+      const eventsBefore = await AuditLog.countDocuments({});
+      const extra = [{ action: 'HARDENING_LATE_EXTRA', actorId: actor.id, actorEmail: actor.email, actorRole: actor.role, entityType: 'PAYROLL_RUN', entityId: runId, companyId: state.companyId, meta: {} }];
+      const restore = injectFailureAfterAuditWrite((entry) => entry.action === after);
+      await assert.rejects(payrollSnapshotService.finalizeRun(runId, state.companyId, actor, { extraAuditEvents: extra }), /Injected failure right after/, after);
+      restore();
+      assert.equal(await AuditLog.countDocuments({}), eventsBefore, `${after}: every event written before the failure was rolled back with the transaction`);
+      assert.equal((await PayrollRun.findById(runId).lean()).status, 'READY_FOR_FINALIZATION', after);
+      assert.ok((await snapshotsOf(runId)).every((snap) => snap.snapshotStatus === 'PENDING_FINALIZATION'), after);
+      await payrollSnapshotService.finalizeRun(runId, state.companyId, actor);
+      await assertChainValid();
+    }
+  });
+
+  test('extra audit events handed to finalization (e.g. a variance override) are written in the same transaction', async () => {
+    const { runId, actor } = await nextRun();
+    await payrollSnapshotService.materializeSnapshots(runId, state.companyId, actor);
+    const extra = [{ action: 'PAYROLL_VARIANCE_OVERRIDDEN', actorId: actor.id, actorEmail: actor.email, actorRole: actor.role, entityType: 'PAYROLL_RUN', entityId: runId, companyId: state.companyId, meta: { reason: 'hardening test override reason' } }];
+
+    const restore = injectAuditFailure((entry) => entry.action === 'PAYROLL_VARIANCE_OVERRIDDEN');
+    await assert.rejects(payrollSnapshotService.finalizeRun(runId, state.companyId, actor, { extraAuditEvents: extra }), /Injected audit failure/);
+    restore();
+    assert.equal((await PayrollRun.findById(runId).lean()).status, 'READY_FOR_FINALIZATION', 'the override event failing aborts the whole finalization');
+
+    await payrollSnapshotService.finalizeRun(runId, state.companyId, actor, { extraAuditEvents: extra });
+    assert.equal(await AuditLog.countDocuments({ action: 'PAYROLL_VARIANCE_OVERRIDDEN', entityId: runId }), 1);
+    assert.equal((await PayrollRun.findById(runId).lean()).status, 'FINALIZED');
+    await assertChainValid();
+  });
+
+  test('several extra events are all-or-nothing together: when the LAST one fails, the earlier ones, every snapshot and the run are rolled back', async () => {
+    const { runId, actor } = await nextRun();
+    await payrollSnapshotService.materializeSnapshots(runId, state.companyId, actor);
+    const extra = (name) => ({ action: name, actorId: actor.id, actorEmail: actor.email, actorRole: actor.role, entityType: 'PAYROLL_RUN', entityId: runId, companyId: state.companyId, meta: { name } });
+    const events = [extra('HARDENING_EXTRA_ONE'), extra('HARDENING_EXTRA_TWO'), extra('HARDENING_EXTRA_THREE')];
+    const auditBefore = await AuditLog.countDocuments({});
+
+    const restore = injectAuditFailure((entry) => entry.action === 'HARDENING_EXTRA_THREE');
+    await assert.rejects(payrollSnapshotService.finalizeRun(runId, state.companyId, actor, { extraAuditEvents: events }), /Injected audit failure/);
+    restore();
+
+    assert.equal(await AuditLog.countDocuments({}), auditBefore, 'no event of the failed finalization survived, not even the ones that were written before the failure');
+    assert.equal(await AuditLog.countDocuments({ action: { $in: ['HARDENING_EXTRA_ONE', 'HARDENING_EXTRA_TWO'] } }), 0);
+    assert.equal((await PayrollRun.findById(runId).lean()).status, 'READY_FOR_FINALIZATION');
+    assert.ok((await snapshotsOf(runId)).every((s) => s.snapshotStatus === 'PENDING_FINALIZATION'));
+
+    await payrollSnapshotService.finalizeRun(runId, state.companyId, actor, { extraAuditEvents: events });
+    for (const event of events) assert.equal(await AuditLog.countDocuments({ action: event.action }), 1, `${event.action} exactly once after the retry`);
+    const chain = await AuditLog.find({ action: { $in: ['PAYROLL_FINALIZED', 'PAYROLL_SNAPSHOT_FINALIZED', 'HARDENING_EXTRA_ONE', 'HARDENING_EXTRA_TWO', 'HARDENING_EXTRA_THREE'] }, entityId: runId }).sort({ sequenceNumber: 1 }).lean();
+    assert.deepEqual(chain.map((e) => e.action), ['PAYROLL_FINALIZED', 'PAYROLL_SNAPSHOT_FINALIZED', 'HARDENING_EXTRA_ONE', 'HARDENING_EXTRA_TWO', 'HARDENING_EXTRA_THREE'], 'one transaction, consecutive and in order');
+    assert.deepEqual(chain.map((e) => e.sequenceNumber), chain.map((e, i) => chain[0].sequenceNumber + i));
+    await assertChainValid();
+  });
+
+  test('retried and duplicate finalization requests (8 at once, then again afterwards) change nothing: one winner, one event each, amounts and hashes untouched', async () => {
+    const { runId, actor } = await nextRun();
+    await payrollSnapshotService.materializeSnapshots(runId, state.companyId, actor);
+    const settled = await Promise.allSettled(Array.from({ length: 8 }, () => payrollSnapshotService.finalizeRun(runId, state.companyId, actor)));
+    assert.equal(settled.filter((r) => r.status === 'fulfilled').length, 1, 'exactly one finalization wins');
+    for (const r of settled.filter((x) => x.status === 'rejected')) assert.ok([409, 422].includes(r.reason.statusCode), `a loser is a clean conflict, not ${r.reason.statusCode}/${r.reason.code}: ${r.reason.message}`);
+    assert.equal(await AuditLog.countDocuments({ action: 'PAYROLL_FINALIZED', entityId: runId }), 1);
+    assert.equal(await AuditLog.countDocuments({ action: 'PAYROLL_SNAPSHOT_FINALIZED', entityId: runId }), 1);
+
+    const frozen = (await snapshotsOf(runId)).map((s) => ({ id: String(s._id), hash: s.snapshotHash, finalizedAt: String(s.finalizedAt), results: JSON.stringify(s.payrollResults), valid: computeSnapshotHash(s) === s.snapshotHash }));
+    assert.ok(frozen.every((s) => s.valid));
+    await assert.rejects(payrollSnapshotService.finalizeRun(runId, state.companyId, actor), (error) => error.statusCode === 409);
+    await assert.rejects(payrollFinalizationService.finalize(runId, state.companyId, actor), (error) => error.statusCode === 409);
+    const again = (await snapshotsOf(runId)).map((s) => ({ id: String(s._id), hash: s.snapshotHash, finalizedAt: String(s.finalizedAt), results: JSON.stringify(s.payrollResults), valid: computeSnapshotHash(s) === s.snapshotHash }));
+    assert.deepEqual(again, frozen, 'a retried finalization must not rewrite a finalized snapshot in any way');
+    assert.equal(await AuditLog.countDocuments({ action: 'PAYROLL_FINALIZED', entityId: runId }), 1);
+    await assertChainValid();
+  });
+
+  test('every FINALIZED run in the database has exactly one PAYROLL_FINALIZED and one PAYROLL_SNAPSHOT_FINALIZED event (no crash window leaves a gap)', async () => {
+    const runs = await PayrollRun.find({ status: 'FINALIZED' }).lean();
+    assert.ok(runs.length >= 3);
+    for (const run of runs) {
+      assert.equal(await AuditLog.countDocuments({ action: 'PAYROLL_FINALIZED', entityId: run._id }), 1, `run ${run._id} PAYROLL_FINALIZED`);
+      assert.equal(await AuditLog.countDocuments({ action: 'PAYROLL_SNAPSHOT_FINALIZED', entityId: run._id }), 1, `run ${run._id} PAYROLL_SNAPSHOT_FINALIZED`);
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// Group C — the pending-snapshot reconciliation tool
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('C — reconciliation tool: classification, safe by default, idempotent, guarded', () => {
+  const BACKEND = fileURLToPath(new URL('.', import.meta.url));
+  const SCRIPT = fileURLToPath(new URL('./scripts/reconcile-payroll-snapshots.mjs', import.meta.url));
+  const EVIDENCE = path.join(os.tmpdir(), `payguard-reconcile-${process.pid}-${Date.now()}`);
+  let synthYear = 2030;
+  let historical;
+
+  const collections = () => [PayrollSnapshot, PayrollRun, PayrollStagingResult, AuditLog].map((model) => model.collection.name);
+  /** A content fingerprint of everything the tool could possibly touch. */
+  const fingerprint = async () => {
+    const out = {};
+    for (const name of [...collections(), 'maintenance_locks']) {
+      const docs = await mongoose.connection.collection(name).find({}).sort({ _id: 1 }).toArray();
+      out[name] = { count: docs.length, sha: crypto.createHash('sha256').update(JSON.stringify(docs)).digest('hex') };
+    }
+    return out;
+  };
+
+  const baseRun = () => PayrollRun.findOne({ status: 'FINALIZED' }).lean();
+  const baseSnapshot = () => PayrollSnapshot.findOne({ snapshotStatus: 'FINALIZED' }).lean();
+  async function makeRun(status) {
+    const run = { ...(await baseRun()), _id: new mongoose.Types.ObjectId(), status, periodYear: (synthYear += 1), periodMonth: 1 };
+    delete run.idempotencyKey;
+    await PayrollRun.collection.insertOne(run);
+    return run;
+  }
+  async function makeSnapshot(run, { status = 'PENDING_FINALIZATION', tamper = null, employeeId = new mongoose.Types.ObjectId() } = {}) {
+    const base = await baseSnapshot();
+    const doc = {
+      ...base, _id: new mongoose.Types.ObjectId(), payrollRunId: run._id, periodYear: run.periodYear, periodMonth: run.periodMonth,
+      snapshotStatus: status, finalizedAt: status === 'FINALIZED' ? base.finalizedAt : null, finalizedBy: status === 'FINALIZED' ? base.finalizedBy : null,
+      employeeSnapshot: { ...base.employeeSnapshot, employeeId },
+    };
+    doc.snapshotHash = computeSnapshotHash(doc);
+    if (tamper === 'hash') doc.snapshotHash = '0'.repeat(64);
+    if (tamper === 'content') doc.payrollResults = { ...doc.payrollResults, netPayBeforeTDS: doc.payrollResults.netPayBeforeTDS + 1 };
+    await PayrollSnapshot.collection.insertOne(doc);
+    return doc;
+  }
+  const scanRun = (run) => recon.scanPayrollSnapshots({ runId: String(run._id) });
+  const exists = (id) => PayrollSnapshot.collection.countDocuments({ _id: new mongoose.Types.ObjectId(String(id)) });
+  const runCli = (args, env = {}) => new Promise((resolve) => {
+    execFile(process.execPath, [SCRIPT, ...args], { cwd: BACKEND, env: { ...process.env, MONGO_URI: TEST_DB_URI, ...env } }, (error, stdout, stderr) => resolve({ code: error ? error.code : 0, stdout, stderr }));
+  });
+
+  before(async () => {
+    historical = (await PayrollSnapshot.find({ snapshotStatus: 'FINALIZED' }).sort({ _id: 1 }).lean()).map((s) => JSON.stringify(s));
+    assert.ok(historical.length >= 12, 'the earlier groups produced finalized snapshots to protect');
+  });
+
+  after(() => { fs.rmSync(EVIDENCE, { recursive: true, force: true }); });
+
+  test('every state is classified, with the action the policy prescribes', async () => {
+    const expect = async (run, snap, cls, action) => {
+      const report = await scanRun(run);
+      const item = report.items.find((i) => i.snapshotId === String(snap._id));
+      assert.equal(item.class, cls, `${cls}: ${item.reason}`);
+      assert.equal(item.action, action, cls);
+    };
+    for (const status of ['FAILED', 'CANCELLED']) {
+      const run = await makeRun(status);
+      await expect(run, await makeSnapshot(run), recon.CLASSES.ORPHAN_PENDING, recon.ACTIONS.PURGE_ELIGIBLE);
+    }
+    const processing = await makeRun('PROCESSING');
+    await expect(processing, await makeSnapshot(processing), recon.CLASSES.PENDING_ON_ACTIVE_RUN, recon.ACTIONS.INVESTIGATE);
+    const closed = await makeRun('FINALIZED');
+    await expect(closed, await makeSnapshot(closed), recon.CLASSES.PENDING_UNDER_FINALIZED_RUN, recon.ACTIONS.INVESTIGATE);
+    await expect(closed, await makeSnapshot(closed, { status: 'FINALIZED' }), recon.CLASSES.OK, recon.ACTIONS.NONE);
+    const ready = await makeRun('READY_FOR_FINALIZATION');
+    await expect(ready, await makeSnapshot(ready, { status: 'FINALIZED' }), recon.CLASSES.FINALIZED_UNDER_UNFINALIZED_RUN, recon.ACTIONS.INVESTIGATE);
+    const hashRun = await makeRun('FAILED');
+    await expect(hashRun, await makeSnapshot(hashRun, { tamper: 'hash' }), recon.CLASSES.HASH_INVALID, recon.ACTIONS.INVESTIGATE);
+    await expect(hashRun, await makeSnapshot(hashRun, { tamper: 'content' }), recon.CLASSES.HASH_INVALID, recon.ACTIONS.INVESTIGATE);
+    await expect(closed, await makeSnapshot(closed, { status: 'FINALIZED', tamper: 'content' }), recon.CLASSES.HASH_INVALID, recon.ACTIONS.INVESTIGATE);
+    const ghost = { _id: new mongoose.Types.ObjectId(), periodYear: 2099, periodMonth: 1 };
+    await expect(ghost, await makeSnapshot(ghost), recon.CLASSES.RUN_MISSING, recon.ACTIONS.INVESTIGATE);
+  });
+
+  test('duplicates (only possible without the unique index) and a genuinely in-flight / stale run are classified', async () => {
+    // in flight: a real READY run, materialized from its real staging
+    const { runId, actor } = await shared.nextRun();
+    await payrollSnapshotService.materializeSnapshots(runId, shared.state.companyId, actor);
+    let report = await recon.scanPayrollSnapshots({ runId });
+    assert.deepEqual(report.byClass, { [recon.CLASSES.IN_FLIGHT]: 3 });
+    assert.ok(report.items.every((i) => i.action === recon.ACTIONS.FINALIZE_AGAIN));
+    assert.deepEqual(report.purgeEligible, []);
+    // stale: staging changed after materialization
+    const staging = await PayrollStagingResult.findOne({ runId }).lean();
+    await PayrollStagingResult.collection.updateOne({ _id: staging._id }, { $set: { totalEmployeeDeductions: staging.totalEmployeeDeductions + 1 } });
+    report = await recon.scanPayrollSnapshots({ runId });
+    assert.equal(report.byClass[recon.CLASSES.PENDING_STALE], 1);
+    assert.equal(report.byClass[recon.CLASSES.IN_FLIGHT], 2);
+    await PayrollStagingResult.collection.updateOne({ _id: staging._id }, { $set: { totalEmployeeDeductions: staging.totalEmployeeDeductions } });
+    shared.inFlightRun = runId;
+
+    // duplicates
+    const run = await makeRun('FAILED');
+    const employeeId = new mongoose.Types.ObjectId();
+    await makeSnapshot(run, { employeeId });
+    await PayrollSnapshot.collection.dropIndex('unique_snapshot_per_run_employee');
+    try {
+      await makeSnapshot(run, { employeeId });
+      report = await scanRun(run);
+      assert.deepEqual(report.byClass, { [recon.CLASSES.DUPLICATE_SNAPSHOT]: 2 });
+      assert.deepEqual(report.purgeEligible, [], 'a duplicate is never purged automatically');
+    } finally {
+      await PayrollSnapshot.collection.deleteMany({ payrollRunId: run._id });
+      await PayrollSnapshot.createIndexes();
+    }
+  });
+
+  test('audit gaps are reported, never repaired', async () => {
+    const run = await makeRun('FINALIZED');
+    const snapshot = await makeSnapshot(run, { status: 'FINALIZED' });
+    const before = await AuditLog.countDocuments({});
+    const report = await scanRun(run);
+    assert.ok(report.auditGaps.some((g) => g.snapshotId === String(snapshot._id)), 'no PAYROLL_SNAPSHOT_CREATED event');
+    const finding = report.runFindings.find((f) => f.runId === String(run._id));
+    assert.deepEqual(finding.missingAuditEvents, ['PAYROLL_FINALIZED', 'PAYROLL_SNAPSHOT_FINALIZED']);
+    assert.equal(await AuditLog.countDocuments({}), before, 'scanning backfills nothing');
+  });
+
+  test('DRY RUN IS THE DEFAULT AND WRITES NOTHING: the library scan and the CLI (with and without --purge-orphans) leave every byte unchanged', async () => {
+    const orphanRun = await makeRun('CANCELLED');
+    await makeSnapshot(orphanRun);
+    const before = await fingerprint();
+    await recon.scanPayrollSnapshots({});
+    const plain = await runCli([]);
+    assert.equal(plain.code, 0, plain.stderr);
+    assert.match(plain.stdout, /mode: DRY_RUN/);
+    assert.match(plain.stdout, /DRY RUN: nothing was written/);
+    assert.match(plain.stdout, /Eligible for purge: [1-9]/);
+    const asJson = await runCli(['--json']);
+    assert.equal(JSON.parse(asJson.stdout).mode, 'DRY_RUN');
+    const wantsPurgeButNoApply = await runCli(['--purge-orphans', '--operator', 'tester']);
+    assert.equal(wantsPurgeButNoApply.code, 0);
+    assert.match(wantsPurgeButNoApply.stdout, /DRY_RUN/);
+    assert.deepEqual(await fingerprint(), before, 'not one document, lock or audit record changed');
+    assert.equal(fs.existsSync(EVIDENCE), false, 'a dry run does not even create the evidence directory');
+    assert.equal(fs.existsSync(path.join(BACKEND, 'reconcile-evidence')), false, 'nor the default one');
+  });
+
+  test('--apply alone, an unknown flag, or a missing value is refused by the CLI before it touches anything', async () => {
+    const before = await fingerprint();
+    const cases = [
+      [['--apply'], /--apply needs to be told what to apply: add --purge-orphans/],
+      [['--apply', '--purge-orphans'], /operator/],
+      [['--frobnicate'], /unknown argument --frobnicate/],
+      [['--company'], /--company needs a value/],
+    ];
+    for (const [args, reason] of cases) {
+      const result = await runCli(args);
+      assert.equal(result.code, 1, args.join(' '));
+      assert.match(result.stderr, reason, `${args.join(' ')}: refused for the right reason`);
+    }
+    assert.deepEqual(await fingerprint(), before);
+  });
+
+  test('apply is refused, with nothing deleted and no lock left behind, when its preconditions fail: no operator, invalid chain, missing guards, unwritable evidence', async () => {
+    const scan = await recon.scanPayrollSnapshots({});
+    assert.ok(scan.purgeEligible.length >= 1);
+    const before = await fingerprint();
+    const refuses = async (options, pattern) => {
+      await assert.rejects(recon.purgeOrphans({ scan, evidenceDir: EVIDENCE, operator: 'tester', ...options }), (error) => error instanceof recon.ReconciliationRefused && pattern.test(error.message));
+      assert.deepEqual(await fingerprint(), before, `refusal (${pattern}) changed something`);
+    };
+    await refuses({ operator: '  ' }, /operator/);
+    // an unwritable evidence directory: a path below a regular file
+    fs.mkdirSync(EVIDENCE, { recursive: true });
+    const blocker = path.join(EVIDENCE, 'not-a-directory');
+    fs.writeFileSync(blocker, 'x');
+    await refuses({ evidenceDir: path.join(blocker, 'below') }, /evidence directory/);
+    // an invalid audit chain
+    const first = await AuditLog.collection.findOne({ sequenceNumber: 1 });
+    await AuditLog.collection.updateOne({ _id: first._id }, { $set: { action: 'TAMPERED' } });
+    try {
+      const tampered = await recon.scanPayrollSnapshots({});
+      assert.equal(tampered.auditChain.valid, false);
+      const withTamper = await fingerprint();
+      await assert.rejects(recon.purgeOrphans({ scan: tampered, evidenceDir: EVIDENCE, operator: 'tester' }), (error) => error instanceof recon.ReconciliationRefused && /audit chain is not valid/.test(error.message));
+      assert.deepEqual(await fingerprint(), withTamper);
+    } finally {
+      await AuditLog.collection.updateOne({ _id: first._id }, { $set: { action: first.action } });
+    }
+    // missing chain guards
+    await AuditLog.collection.dropIndex('previousHash_unique_successor');
+    try {
+      const noGuards = await recon.scanPayrollSnapshots({});
+      assert.equal(noGuards.auditChainGuards.ok, false);
+      await assert.rejects(recon.purgeOrphans({ scan: noGuards, evidenceDir: EVIDENCE, operator: 'tester' }), (error) => error instanceof recon.ReconciliationRefused && /guards are missing/.test(error.message));
+    } finally {
+      await AuditLog.createIndexes();
+    }
+    assert.equal(await mongoose.connection.collection('maintenance_locks').countDocuments({}), 0, 'a refused apply holds no lock');
+  });
+
+  test('the maintenance lock: a live lease blocks apply; an expired lease is taken over; release is owner-only', async () => {
+    const scan = await recon.scanPayrollSnapshots({});
+    const locks = mongoose.connection.collection('maintenance_locks');
+    await locks.insertOne({ _id: recon.LOCK_ID, owner: 'someone-else', acquiredAt: new Date(), expiresAt: new Date(Date.now() + 60_000) });
+    const before = await fingerprint();
+    await assert.rejects(recon.purgeOrphans({ scan, evidenceDir: EVIDENCE, operator: 'tester' }), (error) => error instanceof recon.ReconciliationRefused && /another reconciliation holds the lock/.test(error.message));
+    assert.deepEqual(await fingerprint(), before);
+    assert.equal((await locks.findOne({ _id: recon.LOCK_ID })).owner, 'someone-else', 'a refused apply never removes another holder\'s lock');
+    await recon.releaseLock('not-the-owner');
+    assert.equal(await locks.countDocuments({}), 1, 'release is owner-only');
+    await locks.updateOne({ _id: recon.LOCK_ID }, { $set: { expiresAt: new Date(Date.now() - 1000) } });
+    const taken = await recon.acquireLock({ owner: 'new-owner' });
+    assert.equal(taken.acquired, true);
+    // two takers racing for one expired lease: exactly one wins
+    await locks.updateOne({ _id: recon.LOCK_ID }, { $set: { expiresAt: new Date(Date.now() - 1000) } });
+    const race = await Promise.all(Array.from({ length: 8 }, (_, i) => recon.acquireLock({ owner: `racer-${i}` })));
+    assert.equal(race.filter((r) => r.acquired).length, 1);
+    await locks.deleteMany({});
+  });
+
+  test('APPLY purges exactly the eligible orphans, writes evidence and audit first-class, and leaves everything else byte-identical', async () => {
+    const scan = await recon.scanPayrollSnapshots({});
+    const eligible = new Set(scan.purgeEligible);
+    assert.ok(eligible.size >= 3);
+    const beforeSnapshots = new Map((await PayrollSnapshot.find({}).lean()).map((s) => [String(s._id), JSON.stringify(s)]));
+    const beforeRuns = JSON.stringify(await PayrollRun.find({}).sort({ _id: 1 }).lean());
+    const beforeStaging = JSON.stringify(await PayrollStagingResult.find({}).sort({ _id: 1 }).lean());
+    const auditBefore = await AuditLog.countDocuments({});
+
+    const outcome = await recon.purgeOrphans({ scan, evidenceDir: EVIDENCE, operator: 'tester' });
+    assert.equal(outcome.purged, eligible.size);
+    assert.ok(outcome.results.every((r) => r.outcome === 'PURGED'));
+
+    for (const [id, json] of beforeSnapshots) {
+      if (eligible.has(id)) assert.equal(await exists(id), 0, `${id} purged`);
+      else assert.equal(JSON.stringify(await PayrollSnapshot.findById(id).lean()), json, `${id} must be untouched`);
+    }
+    assert.equal(JSON.stringify(await PayrollRun.find({}).sort({ _id: 1 }).lean()), beforeRuns, 'no run changed');
+    assert.equal(JSON.stringify(await PayrollStagingResult.find({}).sort({ _id: 1 }).lean()), beforeStaging, 'no staging result changed');
+
+    assert.equal(await AuditLog.countDocuments({ action: recon.PURGE_ACTION }), eligible.size, 'one audit event per purge');
+    assert.equal(await AuditLog.countDocuments({}), auditBefore + eligible.size, 'and nothing else was appended');
+    await assertChainValid('after a supported recovery operation');
+
+    const lines = fs.readFileSync(outcome.evidenceFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const images = lines.filter((l) => l.kind === 'BEFORE_IMAGE');
+    assert.equal(images.length, eligible.size);
+    for (const image of images) assert.equal(JSON.stringify(JSON.parse(JSON.stringify(image.document))), JSON.stringify(JSON.parse(beforeSnapshots.get(image.snapshotId))), 'the before-image is the exact stored document');
+    assert.equal(await mongoose.connection.collection('maintenance_locks').countDocuments({}), 0, 'the lock was released');
+    shared.afterApply = await recon.scanPayrollSnapshots({});
+    assert.deepEqual(shared.afterApply.purgeEligible, []);
+  });
+
+  test('APPLY IS IDEMPOTENT: running it again deletes nothing, appends nothing, creates no evidence', async () => {
+    const before = await fingerprint();
+    const files = fs.readdirSync(EVIDENCE).length;
+    const outcome = await recon.purgeOrphans({ scan: await recon.scanPayrollSnapshots({}), evidenceDir: EVIDENCE, operator: 'tester' });
+    assert.equal(outcome.purged, 0);
+    assert.deepEqual(outcome.results, []);
+    assert.deepEqual(await fingerprint(), before);
+    assert.equal(fs.readdirSync(EVIDENCE).length, files);
+    // a STALE scan applied again (the orphans are already gone) is also a no-op
+    const stale = { ...shared.afterApply, items: [{ snapshotId: String(new mongoose.Types.ObjectId()), action: recon.ACTIONS.PURGE_ELIGIBLE, class: recon.CLASSES.ORPHAN_PENDING, snapshotHash: 'x' }] };
+    const replay = await recon.purgeOrphans({ scan: stale, evidenceDir: EVIDENCE, operator: 'tester' });
+    assert.deepEqual(replay.results.map((r) => r.outcome), ['SKIPPED']);
+    assert.deepEqual(await fingerprint(), before);
+  });
+
+  test('it never finalizes: pending snapshots under live, finalized or stale runs are still PENDING after an apply', async () => {
+    const live = await recon.scanPayrollSnapshots({ runId: shared.inFlightRun });
+    assert.ok(live.items.every((i) => i.snapshotStatus === 'PENDING_FINALIZATION'));
+    const closed = await PayrollSnapshot.find({ snapshotStatus: 'PENDING_FINALIZATION' }).lean();
+    assert.ok(closed.length >= 4, 'pending snapshots that must survive are still there');
+  });
+
+  test('races between the scan and the apply are caught INSIDE the transaction: a changed run, status or hash is skipped, not purged', async () => {
+    const make = async () => { const run = await makeRun('FAILED'); const snap = await makeSnapshot(run); return { run, snap }; };
+    const a = await make(); const b = await make(); const c = await make(); const d = await make();
+    const scan = await recon.scanPayrollSnapshots({});
+    for (const id of [a, b, c, d].map((x) => String(x.snap._id))) assert.ok(scan.purgeEligible.includes(id));
+    // after the scan: a's run is restarted, b's snapshot is finalized, c's hash drifts, d stays untouched
+    await PayrollRun.collection.updateOne({ _id: a.run._id }, { $set: { status: 'PROCESSING' } });
+    await PayrollSnapshot.collection.updateOne({ _id: b.snap._id }, { $set: { snapshotStatus: 'FINALIZED' } });
+    await PayrollSnapshot.collection.updateOne({ _id: c.snap._id }, { $set: { 'payrollResults.netPayBeforeTDS': c.snap.payrollResults.netPayBeforeTDS + 5 } });
+    const mine = { ...scan, items: scan.items.filter((i) => [a, b, c, d].some((x) => String(x.snap._id) === i.snapshotId)) };
+    const outcome = await recon.purgeOrphans({ scan: mine, evidenceDir: EVIDENCE, operator: 'tester' });
+    const byId = Object.fromEntries(outcome.results.map((r) => [r.snapshotId, r]));
+    assert.match(byId[String(a.snap._id)].reason, /run is now PROCESSING/);
+    assert.match(byId[String(b.snap._id)].reason, /snapshot is now FINALIZED/);
+    assert.match(byId[String(c.snap._id)].reason, /hash changed|no longer valid/);
+    assert.equal(byId[String(d.snap._id)].outcome, 'PURGED');
+    for (const x of [a, b, c]) assert.equal(await exists(x.snap._id), 1, 'skipped snapshots are still there');
+    assert.equal(await exists(d.snap._id), 0);
+    await assertChainValid();
+  });
+
+  test('two reconcilers at once never purge anything twice: exactly the eligible set is purged, once, with one audit event each', async () => {
+    const runs = await Promise.all(Array.from({ length: 6 }, () => makeRun('CANCELLED')));
+    const ids = [];
+    for (const run of runs) ids.push(String((await makeSnapshot(run))._id));
+    const scan = await recon.scanPayrollSnapshots({});
+    for (const id of ids) assert.ok(scan.purgeEligible.includes(id));
+    const mine = { ...scan, items: scan.items.filter((i) => ids.includes(i.snapshotId)) };
+    const settled = await Promise.allSettled([1, 2, 3, 4].map((n) => recon.purgeOrphans({ scan: mine, evidenceDir: EVIDENCE, operator: `racer-${n}` })));
+    const purged = settled.filter((r) => r.status === 'fulfilled').flatMap((r) => r.value.results.filter((x) => x.outcome === 'PURGED'));
+    for (const r of settled.filter((x) => x.status === 'rejected')) assert.ok(r.reason instanceof recon.ReconciliationRefused, String(r.reason));
+    assert.equal(purged.length, ids.length, 'each eligible snapshot purged exactly once across all reconcilers');
+    assert.equal(new Set(purged.map((p) => p.snapshotId)).size, ids.length);
+    for (const id of ids) assert.equal(await exists(id), 0);
+    assert.equal(await AuditLog.countDocuments({ action: recon.PURGE_ACTION, entityId: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) } }), ids.length);
+    assert.equal(await mongoose.connection.collection('maintenance_locks').countDocuments({}), 0);
+    await assertChainValid();
+  });
+
+  test('a failure during a purge (audit event cannot be written) rolls the delete back, keeps the before-image, releases the lock; a retry then succeeds', async () => {
+    const run = await makeRun('FAILED');
+    const snap = await makeSnapshot(run);
+    const scan = await recon.scanPayrollSnapshots({ runId: String(run._id) });
+    const before = await fingerprint();
+    const restore = injectAuditFailure((entry) => entry.action === recon.PURGE_ACTION);
+    let evidenceFile;
+    try {
+      await assert.rejects(recon.purgeOrphans({ scan, evidenceDir: EVIDENCE, operator: 'tester' }), /Injected audit failure/);
+    } finally {
+      restore();
+    }
+    assert.deepEqual(await fingerprint(), before, 'the snapshot, the runs and the audit chain are exactly as before');
+    assert.equal(await mongoose.connection.collection('maintenance_locks').countDocuments({}), 0, 'the lock was released');
+    const newest = fs.readdirSync(EVIDENCE).filter((f) => f.endsWith('.jsonl')).map((f) => path.join(EVIDENCE, f)).sort((x, y) => fs.statSync(y).mtimeMs - fs.statSync(x).mtimeMs)[0];
+    evidenceFile = newest;
+    assert.ok(fs.readFileSync(evidenceFile, 'utf8').includes(String(snap._id)), 'the before-image was written before the failed delete');
+
+    const outcome = await recon.purgeOrphans({ scan: await recon.scanPayrollSnapshots({ runId: String(run._id) }), evidenceDir: EVIDENCE, operator: 'tester' });
+    assert.equal(outcome.purged, 1);
+    assert.equal(await exists(snap._id), 0);
+    await assertChainValid();
+  });
+
+  test('the CLI in apply mode performs the same purge end to end and reports before and after', async () => {
+    const run = await makeRun('CANCELLED');
+    const snap = await makeSnapshot(run);
+    const reportFile = path.join(EVIDENCE, 'cli-report.json');
+    const result = await runCli(['--apply', '--purge-orphans', '--operator', 'cli-tester', '--evidence-dir', EVIDENCE, '--report', reportFile, '--run', String(run._id)]);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /purged 1 of 1 eligible/);
+    const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+    assert.equal(report.mode, 'APPLY');
+    assert.equal(report.before.purgeEligible.length, 1);
+    assert.equal(report.after.totals.snapshots, 0);
+    assert.equal(await exists(snap._id), 0);
+    const again = await runCli(['--apply', '--purge-orphans', '--operator', 'cli-tester', '--evidence-dir', EVIDENCE, '--run', String(run._id)]);
+    assert.equal(again.code, 0);
+    assert.match(again.stdout, /purged 0 of 0 eligible/);
+  });
+
+  test('historical integrity: every finalized snapshot that existed before this group is byte-identical, its hash valid, and the audit chain verifies', async () => {
+    const after = (await PayrollSnapshot.find({ snapshotStatus: 'FINALIZED' }).sort({ _id: 1 }).lean()).map((s) => JSON.stringify(s));
+    for (const original of historical) assert.ok(after.includes(original), 'a historical finalized snapshot changed');
+    for (const json of historical) { const snapshot = JSON.parse(json); assert.equal(computeSnapshotHash({ ...snapshot, payrollRunId: snapshot.payrollRunId, stagingResultId: snapshot.stagingResultId }), snapshot.snapshotHash, 'stored hash still equals the recomputed hash'); }
+    await assertChainValid('final check');
+  });
+});

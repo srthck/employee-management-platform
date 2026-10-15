@@ -51,3 +51,6 @@ temp/
 .env.production
 secrets/
 private_keys/
+
+# Payroll snapshot reconciliation evidence (before-images contain payroll data: never commit)
+reconcile-evidence/

@@ -214,10 +214,9 @@ const payrollFinalizationService = {
       override: overrideRecord,
     };
 
-    const result = await payrollSnapshotService.finalizeRun(runId, companyId, actor, { finalizationControls });
-
-    if (overrideRecord) {
-      await auditService.log({
+    // The override event is written inside the finalization transaction (all-or-nothing with it).
+    const extraAuditEvents = overrideRecord
+      ? [{
         action: 'PAYROLL_VARIANCE_OVERRIDDEN',
         actorId: actor.id,
         actorEmail: actor.email,
@@ -226,10 +225,10 @@ const payrollFinalizationService = {
         entityId: runId,
         companyId,
         meta: { reason: overrideRecord.reason, flags: overrideRecord.flags },
-      });
-    }
+      }]
+      : [];
 
-    return result;
+    return payrollSnapshotService.finalizeRun(runId, companyId, actor, { finalizationControls, extraAuditEvents });
   },
 };
 

@@ -113,6 +113,21 @@ const auditLogSchema = new mongoose.Schema(
   }
 );
 
+// ─── Chain-integrity indexes (the database, not the application, enforces a linear chain) ───
+// sequenceNumber is unique (declared on the field above): one record per position.
+// previousHash is unique too: a predecessor has exactly ONE successor, so two valid successors to the
+// same predecessor cannot exist whatever sequence numbers they carry. It is a PARTIAL index: records
+// written before chaining existed have no previousHash and must not collide with each other.
+// auditService refuses to append when either guard is missing and cannot be rebuilt.
+auditLogSchema.index(
+  { previousHash: 1 },
+  {
+    unique: true,
+    name: 'previousHash_unique_successor',
+    partialFilterExpression: { previousHash: { $type: 'string' } },
+  }
+);
+
 // ─── Indexes ──────────────────────────────────────────────────────────────────
 auditLogSchema.index({ entityType: 1, entityId: 1, createdAt: -1 });
 auditLogSchema.index({ actorId: 1, createdAt: -1 });

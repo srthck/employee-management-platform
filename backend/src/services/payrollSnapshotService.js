@@ -40,16 +40,20 @@
  *
  * ═══════════════════════════════════════════════════════════════════════════
  * TRANSACTION STRATEGY:
- *   T-materialize (per employee, outside transaction):
+ *   T-materialize (ONE short transaction per employee):
  *     - Read staging result (frozen historical data)
  *     - Build snapshot payload directly from staging
  *     - Insert snapshot (idempotent by payrollRunId + employeeId unique index)
+ *     - auditService.log(PAYROLL_SNAPSHOT_CREATED), in the SAME transaction, so a
+ *       snapshot never exists without its creation event (and vice versa)
  *
  *   T-finalize (short, atomic, via runInTransaction):
  *     - Pre-checks (counts, duplicates, hashes)
  *     - bulkMarkFinalized (snapshots → FINALIZED)
  *     - payrollRunRepository.finalize (run → FINALIZED)
- *     - auditService.log(PAYROLL_FINALIZED)
+ *     - auditService.log(PAYROLL_FINALIZED), then PAYROLL_SNAPSHOT_FINALIZED, then any
+ *       caller-supplied extra events (e.g. a variance override): finalization is
+ *       all-or-nothing INCLUDING every audit event
  *     - commit (session.startTransaction / commit handled by the helper)
  *
  * TENANCY:
@@ -62,6 +66,7 @@ import auditService from './auditService.js';
 import { computeSnapshotHash, verifySnapshotHash } from '../models/PayrollSnapshot.js';
 import { PAYROLL_STATUS } from '../models/PayrollRun.js';
 import { runInTransaction } from '../utils/transaction.js';
+import { isAuditChainCollision } from '../utils/auditErrors.js';
 import { roundToPaiseNoEpsilon } from '../utils/money.js';
 
 const runNotFound = () => Object.assign(new Error('Payroll run not found.'), { statusCode: 404 });
@@ -326,32 +331,43 @@ const payrollSnapshotService = {
         }
 
         const payload  = buildSnapshotPayloadFromStaging(staging, runObj);
-        const snapshot = await payrollSnapshotRepository.create(payload);
 
-        await auditService.log({
-          action:     'PAYROLL_SNAPSHOT_CREATED',
-          actorId:    actor.id,
-          actorEmail: actor.email,
-          actorRole:  actor.role,
-          entityType: 'PAYROLL_SNAPSHOT',
-          entityId:   snapshot._id,
-          companyId:  run.companyId,
-          meta: {
-            payrollRunId: runId,
-            employeeId:   staging.employeeId.toString(),
-            periodMonth:  run.periodMonth,
-            periodYear:   run.periodYear,
-          },
-        });
+        // The snapshot and its creation event commit together or not at all.
+        const snapshot = await runInTransaction(async (session) => {
+          const persisted = await payrollSnapshotRepository.create(payload, session);
+          await auditService.log({
+            action:     'PAYROLL_SNAPSHOT_CREATED',
+            actorId:    actor.id,
+            actorEmail: actor.email,
+            actorRole:  actor.role,
+            entityType: 'PAYROLL_SNAPSHOT',
+            entityId:   persisted._id,
+            companyId:  run.companyId,
+            meta: {
+              payrollRunId: runId,
+              employeeId:   staging.employeeId.toString(),
+              periodMonth:  run.periodMonth,
+              periodYear:   run.periodYear,
+            },
+          }, session);
+          return persisted;
+        }, { label: 'payroll.snapshot.create' });
 
         created.push(snapshot._id.toString());
 
       } catch (err) {
-        if (err.code === 11000) {
-          errors.push({
-            employeeId: staging.employeeId.toString(),
-            error: 'Duplicate snapshot insert blocked by unique index.',
-          });
+        if (err.code === 11000 && !isAuditChainCollision(err)) {
+          // Another request materialized this employee first. That is idempotent, not an error,
+          // provided what it stored is exactly what this request would have stored.
+          const winner = await payrollSnapshotRepository.findByRunAndEmployee(runId, staging.employeeId);
+          if (winner && !detectConflict(winner, buildSnapshotPayloadFromStaging(staging, runObj)).conflict) {
+            reused.push(winner._id.toString());
+          } else {
+            errors.push({
+              employeeId: staging.employeeId.toString(),
+              error: 'Duplicate snapshot insert blocked by unique index.',
+            });
+          }
         } else {
           errors.push({
             employeeId: staging.employeeId.toString(),
@@ -378,11 +394,13 @@ const payrollSnapshotService = {
   // ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * @param {{ finalizationControls?: object|null }} [options]
-   *   control-layer record (preparer, approver, variance summary, override)
-   *   stored on the run and in the audit event, atomically with finalization
+   * @param {{ finalizationControls?: object|null, extraAuditEvents?: object[] }} [options]
+   *   finalizationControls: control-layer record (preparer, approver, variance summary, override)
+   *     stored on the run and in the audit event, atomically with finalization.
+   *   extraAuditEvents: further audit events (complete auditService.log parameters, e.g. a variance
+   *     override) written in the SAME transaction, after PAYROLL_SNAPSHOT_FINALIZED.
    */
-  async finalizeRun(runId, companyId, actor, { finalizationControls = null } = {}) {
+  async finalizeRun(runId, companyId, actor, { finalizationControls = null, extraAuditEvents = [] } = {}) {
     const run = await payrollRunRepository.findById(runId);
     if (!run || !ownedBy(run, companyId)) throw runNotFound();
     if (run.status !== PAYROLL_STATUS.READY_FOR_FINALIZATION) {
@@ -504,6 +522,22 @@ const payrollSnapshotService = {
           session
         );
 
+        await auditService.log(
+          {
+            action:     'PAYROLL_SNAPSHOT_FINALIZED',
+            actorId:    actor.id,
+            actorEmail: actor.email,
+            actorRole:  actor.role,
+            entityType: 'PAYROLL_RUN',
+            entityId:   runId,
+            companyId:  run.companyId,
+            meta:       { snapshotCount, periodMonth: run.periodMonth, periodYear: run.periodYear },
+          },
+          session
+        );
+
+        for (const event of extraAuditEvents) await auditService.log(event, session);
+
         return updatedRun;
       }, { label: 'payroll.finalize' });
     } catch (err) {
@@ -518,17 +552,6 @@ const payrollSnapshotService = {
       }
       throw err;
     }
-
-    await auditService.log({
-      action:     'PAYROLL_SNAPSHOT_FINALIZED',
-      actorId:    actor.id,
-      actorEmail: actor.email,
-      actorRole:  actor.role,
-      entityType: 'PAYROLL_RUN',
-      entityId:   runId,
-      companyId:  run.companyId,
-      meta:       { snapshotCount, periodMonth: run.periodMonth, periodYear: run.periodYear },
-    });
 
     return { run: finalizedRun, snapshotCount };
   },
@@ -589,5 +612,8 @@ const payrollSnapshotService = {
     return snap;
   },
 };
+
+// Exported read-only for the reconciliation tool, which compares a stored snapshot with what staging would produce.
+export { buildSnapshotPayloadFromStaging };
 
 export default payrollSnapshotService;

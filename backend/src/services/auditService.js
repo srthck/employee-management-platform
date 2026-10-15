@@ -2,11 +2,30 @@ import AuditLog from '../models/AuditLog.js';
 import mongoose from 'mongoose';
 import crypto from 'crypto';
 import { getContext } from '../utils/requestContext.js';
+import {
+  auditChainContentionError, auditChainIndexError, backoffDelayMs, isAuditChainCollision, isTransientTransactionConflict, markAuditChainConflict, sleep,
+} from '../utils/auditErrors.js';
 
 export const GENESIS_HASH = 'GENESIS';
 const REDACTED = '[REDACTED]';
 const SENSITIVE_KEYS = new Set(['password', 'passwordHash', 'jwt', 'token', 'refreshToken', 'secret', 'bankAccount', 'bankCredentials', 'privateKey']);
-const MAX_APPEND_ATTEMPTS = 10;
+
+/**
+ * Append retry policy. A collision on the chain's uniqueness guards means another writer committed
+ * first, so waiting and re-reading the head always makes system-wide progress; the caller gives up only
+ * at the deadline, with an explicit, retryable 503 (nothing written). Tests may replace this object.
+ */
+const DEFAULT_APPEND_POLICY = Object.freeze({ maxWaitMs: 15000, baseDelayMs: 2, maxDelayMs: 150, indexRecheckMs: 10000 });
+
+// The two database guards that make the chain linear. Matched by key and uniqueness, not by name.
+const REQUIRED_CHAIN_INDEXES = Object.freeze([
+  { label: 'unique sequenceNumber', key: { sequenceNumber: 1 }, spec: { name: 'sequenceNumber_1', unique: true } },
+  {
+    label: 'unique previousHash (one successor per predecessor)',
+    key: { previousHash: 1 },
+    spec: { name: 'previousHash_unique_successor', unique: true, partialFilterExpression: { previousHash: { $type: 'string' } } },
+  },
+]);
 
 const normalize = (value) => {
   if (value === null || value === undefined) return value;
@@ -44,10 +63,56 @@ const hashPayload = (entry) => {
   return payload;
 };
 
-const isSequenceCollision = (err) =>
-  err?.code === 11000 && Boolean(err?.keyPattern?.sequenceNumber || /sequenceNumber/.test(err?.message || ''));
+const sameKey = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+let indexGuardCheckedAt = 0;
+let indexGuardInFlight = null;
+
+// Plain (non-transactional) appends from this process take turns: they would only collide with each other.
+// Cross-process and in-transaction contention is still resolved by the database guards and the back-off.
+// A plain append never waits on anything except other plain appends, so this cannot deadlock, and its
+// deadline starts when its own turn starts (time spent queued behind other appends is not "contention").
+let plainAppendTail = Promise.resolve();
+const takeTurn = (task) => {
+  const run = plainAppendTail.then(task, task);
+  plainAppendTail = run.catch(() => {});
+  return run;
+};
+
+async function missingChainGuards() {
+  let existing = [];
+  try {
+    existing = await AuditLog.collection.indexes();
+  } catch (err) {
+    if (err?.codeName !== 'NamespaceNotFound' && err?.code !== 26) throw err; // no collection yet: every guard is missing
+  }
+  return REQUIRED_CHAIN_INDEXES.filter((guard) => !existing.some((index) => index.unique && sameKey(index.key, guard.key)));
+}
+
+/**
+ * Verify, and if possible restore, the database guards before appending. Fails CLOSED: when a guard is
+ * missing and cannot be rebuilt (typically because the chain already forked, so the data violates it),
+ * nothing is appended. Checked at most once per `indexRecheckMs`; every concurrent caller shares one check.
+ */
+async function ensureChainGuards(policy) {
+  if (Date.now() - indexGuardCheckedAt < policy.indexRecheckMs) return;
+  if (!indexGuardInFlight) {
+    indexGuardInFlight = (async () => {
+      let missing = await missingChainGuards();
+      for (const guard of missing) {
+        try {
+          await AuditLog.collection.createIndex(guard.key, guard.spec);
+        } catch (cause) {
+          throw auditChainIndexError(`the ${guard.label} guard is missing and cannot be rebuilt (${cause.codeName || cause.code || cause.message}); the chain may already contain a fork.`, cause);
+        }
+      }
+      missing = await missingChainGuards();
+      if (missing.length > 0) throw auditChainIndexError(`the ${missing.map((g) => g.label).join(' and ')} guard is still missing after a rebuild attempt.`);
+      indexGuardCheckedAt = Date.now();
+    })().finally(() => { indexGuardInFlight = null; });
+  }
+  await indexGuardInFlight;
+}
 
 /**
  * AuditService — tamper-evident audit event emitter.
@@ -57,14 +122,20 @@ const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
  * - Support optional MongoDB session so audit writes participate in transactions.
  * - Provide structured audit records: who, what, when, on what entity, in which company.
  *
- * Concurrency:
+ * Concurrency (see docs/AUDIT-CHAIN-AND-SNAPSHOT-RECOVERY.md):
  *   Appending reads the chain head and inserts head+1. Two concurrent writers
- *   can read the same head; the unique index on sequenceNumber lets exactly one
- *   win. Outside a transaction the loser re-reads the head and retries here.
- *   Inside a transaction the collision aborts the transaction and
- *   runInTransaction retries the whole unit of work. Either way the chain
- *   stays strictly linear and a business operation never fails merely because
- *   another event was logged at the same moment.
+ *   can read the same head; the database lets exactly one win, through TWO
+ *   unique guards: sequenceNumber (one record per position) and previousHash
+ *   (one successor per predecessor). Both are verified before appending and the
+ *   append is refused (503) if they are missing and cannot be rebuilt.
+ *   Outside a transaction the loser waits (exponential back-off, full jitter) and
+ *   retries from the new head until a deadline; at the deadline the outcome is an
+ *   explicit retryable 503 and nothing was written. Inside a transaction the
+ *   collision aborts the transaction and runInTransaction retries the whole unit
+ *   of work with the same policy. Either way the chain stays strictly linear.
+ *   Inside a transaction the head is read from COMMITTED state (not the
+ *   transaction snapshot), so the conflict window is read-to-commit, not the whole
+ *   business transaction; the transaction's own earlier appends are included.
  *
  * Usage (outside transaction):
  *   await auditService.log({ action, actorId, actorEmail, actorRole,
@@ -77,6 +148,26 @@ const pause = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
  */
 
 const auditService = {
+  /** Replaceable by tests; see DEFAULT_APPEND_POLICY. */
+  appendPolicy: DEFAULT_APPEND_POLICY,
+
+  /** Verify (and if possible restore) the chain's uniqueness guards now; throws 503 AUDIT_CHAIN_INDEX_UNAVAILABLE when impossible. */
+  async assertChainIndexes() {
+    indexGuardCheckedAt = 0;
+    await ensureChainGuards(this.appendPolicy);
+  },
+
+  /** Read-only: which of the chain's uniqueness guards are missing right now (never creates anything). */
+  async chainGuardStatus() {
+    const missing = await missingChainGuards();
+    return { ok: missing.length === 0, missing: missing.map((guard) => guard.label) };
+  },
+
+  /** Forget the cached guard check (tests, and operators after repairing indexes). */
+  _resetIndexGuard() {
+    indexGuardCheckedAt = 0;
+  },
+
   /**
    * Emit a single audit event.
    *
@@ -103,17 +194,40 @@ const auditService = {
       ipAddress: params.ipAddress ?? context.ipAddress ?? null,
     };
 
-    for (let attempt = 1; ; attempt += 1) {
-      try {
-        return await this._append(entry, session);
-      } catch (err) {
-        if (!session && attempt < MAX_APPEND_ATTEMPTS && isSequenceCollision(err)) {
-          await pause(Math.floor(Math.random() * 10 * attempt));
-          continue;
+    const attempt = async () => {
+      const policy = this.appendPolicy;
+      await ensureChainGuards(policy);
+      const startedAt = Date.now();
+      for (let tries = 1; ; tries += 1) {
+        try {
+          return await this._append(entry, session);
+        } catch (err) {
+          // Inside a transaction the refusal has already aborted it: runInTransaction re-runs the whole unit of work.
+          // A conflict raised by THIS insert is marked, so an exhausted retry budget is reported as audit contention.
+          if (session && (isAuditChainCollision(err) || isTransientTransactionConflict(err))) throw markAuditChainConflict(err);
+          if (!isAuditChainCollision(err)) throw err;
+          const waited = Date.now() - startedAt;
+          if (waited >= policy.maxWaitMs) throw auditChainContentionError(tries, waited, err);
+          await sleep(backoffDelayMs(tries, policy.baseDelayMs, policy.maxDelayMs));
         }
-        throw err;
       }
-    }
+    };
+    return session ? attempt() : takeTurn(attempt);
+  },
+
+  /**
+   * The current chain head. Always includes what is committed NOW; inside a transaction it also includes
+   * the transaction's own earlier appends. The higher sequence number wins, so two events logged in one
+   * transaction chain correctly while another writer's newer commit is never hidden behind the
+   * transaction's start-time snapshot.
+   */
+  async _readHead(session) {
+    const committed = await AuditLog.findOne().sort({ sequenceNumber: -1 }).lean();
+    if (!session) return committed;
+    const own = await AuditLog.findOne().sort({ sequenceNumber: -1 }).session(session).lean();
+    if (!own) return committed;
+    if (!committed) return own;
+    return own.sequenceNumber >= committed.sequenceNumber ? own : committed;
   },
 
   async _append(params, session) {
@@ -131,9 +245,7 @@ const auditService = {
       ipAddress = null,
     } = params;
 
-    const query = AuditLog.findOne().sort({ sequenceNumber: -1 });
-    if (session) query.session(session);
-    const latest = await query.lean();
+    const latest = await this._readHead(session);
     const createdAt = new Date();
     const sequenceNumber = latest ? latest.sequenceNumber + 1 : 1;
     const previousHash = latest ? latest.hash : GENESIS_HASH;
