@@ -8,6 +8,7 @@ import { requestContext, securityHeaders, rejectOperatorInjection } from './midd
 import { errorEnvelope } from './middleware/errorEnvelope.js';
 import { apiRateLimiter } from './middleware/rateLimiter.js';
 import { supportsTransactions } from './utils/transaction.js';
+import logger from './utils/logger.js';
 
 import authRoutes from './routes/authRoutes.js';
 import employeeRoutes from './routes/employeeRoutes.js';
@@ -83,16 +84,35 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// Readiness: the process can safely serve payroll traffic.
+// Readiness: the process can safely serve payroll traffic. The transaction policy is part of the answer, so
+// an operator (or a deployment gate) can see not only whether transactions work but whether the process is
+// allowed to run without them.
+let lastReadinessKey = null;
 app.get('/api/ready', async (req, res) => {
   const databaseConnected = mongoose.connection.readyState === 1;
   const transactions = databaseConnected ? await supportsTransactions() : false;
   const ready = databaseConnected && (transactions || !config.requireTransactions);
+  const policy = config.transactionPolicy;
+
+  // Structured log on every CHANGE of readiness state (not on every probe).
+  const key = `${ready}|${databaseConnected}|${transactions}`;
+  if (key !== lastReadinessKey) {
+    lastReadinessKey = key;
+    logger[ready ? 'info' : 'error']('Readiness changed', {
+      ready, databaseConnected, transactions, requireTransactions: config.requireTransactions, environmentClass: policy.environmentClass,
+    });
+  }
 
   res.status(ready ? 200 : 503).json({
     status: ready ? 'ready' : 'not_ready',
     database: databaseConnected ? 'connected' : 'disconnected',
     transactions: transactions ? 'supported' : 'unavailable',
+    transactionPolicy: {
+      environmentClass: policy.environmentClass,
+      requireTransactions: policy.requireTransactions,
+      optOutRequested: policy.optOutRequested,
+      optOutHonoured: policy.optOutHonoured,
+    },
   });
 });
 

@@ -62,6 +62,20 @@ export async function supportsTransactions() {
   return cachedCapability;
 }
 
+/**
+ * Destructive or irreversible maintenance must not depend on application configuration: even where a
+ * development opt-out lets ordinary requests run without transactions, such a tool needs REAL
+ * multi-document transactions or it refuses. Throws 503 TRANSACTIONS_UNAVAILABLE unless the connected
+ * deployment is a replica set member or a mongos.
+ */
+export async function assertRealTransactions() {
+  if (await supportsTransactions()) return;
+  throw Object.assign(
+    new Error('This operation requires real MongoDB transactions (a replica set or sharded cluster); the connected deployment does not support them. Application configuration cannot waive this.'),
+    { statusCode: 503, code: 'TRANSACTIONS_UNAVAILABLE', retryable: false }
+  );
+}
+
 export function resetTransactionCapabilityCache() {
   cachedCapability = null;
   warnedAboutFallback = false;

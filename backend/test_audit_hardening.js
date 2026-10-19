@@ -9,7 +9,8 @@
  *           and tamper-evidence after deliberate corruption.
  * Group B — payroll snapshot lifecycle: snapshot + audit event are atomic, finalization is all-or-nothing
  *           including every audit event, retries and duplicate requests change nothing.
- * Group C — the pending-snapshot reconciliation tool: classification, safe-by-default, idempotent, guarded.
+ * Group C — the pending-snapshot reconciliation tool: classification and a read-only dry run. Destructive apply is
+ *           DISABLED (Phase 0 containment): the tests prove it refuses everything and that no code path can mutate.
  *
  * A test here proves an INVARIANT (state after the operation), never merely "an error was thrown".
  * Concurrency is exercised with genuinely concurrent operations (Promise.all, separate processes), never
@@ -655,7 +656,7 @@ describe('B — payroll snapshots: persistence, audit and finalization are atomi
 // Group C — the pending-snapshot reconciliation tool
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
-describe('C — reconciliation tool: classification, safe by default, idempotent, guarded', () => {
+describe('C — reconciliation tool: classification, read-only dry run, apply disabled', () => {
   const BACKEND = fileURLToPath(new URL('.', import.meta.url));
   const SCRIPT = fileURLToPath(new URL('./scripts/reconcile-payroll-snapshots.mjs', import.meta.url));
   const EVIDENCE = path.join(os.tmpdir(), `payguard-reconcile-${process.pid}-${Date.now()}`);
@@ -777,65 +778,138 @@ describe('C — reconciliation tool: classification, safe by default, idempotent
     assert.equal(await AuditLog.countDocuments({}), before, 'scanning backfills nothing');
   });
 
-  test('DRY RUN IS THE DEFAULT AND WRITES NOTHING: the library scan and the CLI (with and without --purge-orphans) leave every byte unchanged', async () => {
+  /** Every collection, its documents and its index names: the full observable shape of the database. */
+  const dbShape = async () => {
+    const shape = {};
+    for (const { name } of await mongoose.connection.db.listCollections().toArray()) {
+      const collection = mongoose.connection.collection(name);
+      const docs = await collection.find({}).sort({ _id: 1 }).toArray();
+      shape[name] = {
+        count: docs.length,
+        sha: crypto.createHash('sha256').update(JSON.stringify(docs)).digest('hex'),
+        indexes: (await collection.indexes()).map((index) => index.name).sort(),
+      };
+    }
+    return shape;
+  };
+
+  /** Names of the collections whose content or indexes differ between two dbShape() results ([] means identical). */
+  const changedCollections = (a, b) => [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((name) => JSON.stringify(a[name]) !== JSON.stringify(b[name]));
+
+  test('DRY RUN IS THE ONLY MODE AND WRITES NOTHING: the library scan and the CLI leave every document, collection and index unchanged, and create no file', async () => {
     const orphanRun = await makeRun('CANCELLED');
     await makeSnapshot(orphanRun);
-    const before = await fingerprint();
+    const before = await dbShape();
     await recon.scanPayrollSnapshots({});
     const plain = await runCli([]);
     assert.equal(plain.code, 0, plain.stderr);
     assert.match(plain.stdout, /mode: DRY_RUN/);
     assert.match(plain.stdout, /DRY RUN: nothing was written/);
-    assert.match(plain.stdout, /Eligible for purge: [1-9]/);
+    assert.match(plain.stdout, /purge-eligible \(informational only; apply is disabled\): [1-9]/);
     const asJson = await runCli(['--json']);
     assert.equal(JSON.parse(asJson.stdout).mode, 'DRY_RUN');
-    const wantsPurgeButNoApply = await runCli(['--purge-orphans', '--operator', 'tester']);
-    assert.equal(wantsPurgeButNoApply.code, 0);
-    assert.match(wantsPurgeButNoApply.stdout, /DRY_RUN/);
-    assert.deepEqual(await fingerprint(), before, 'not one document, lock or audit record changed');
-    assert.equal(fs.existsSync(EVIDENCE), false, 'a dry run does not even create the evidence directory');
-    assert.equal(fs.existsSync(path.join(BACKEND, 'reconcile-evidence')), false, 'nor the default one');
+    const scoped = await runCli(['--company', String(orphanRun.companyId), '--run', String(orphanRun._id)]);
+    assert.equal(scoped.code, 0, scoped.stderr);
+    assert.deepEqual(await dbShape(), before, 'not one document, collection or index changed');
+    assert.equal(fs.existsSync(path.join(BACKEND, 'reconcile-evidence')), false, 'no evidence directory is created');
   });
 
-  test('--apply alone, an unknown flag, or a missing value is refused by the CLI before it touches anything', async () => {
-    const before = await fingerprint();
+  test('--apply is refused BEFORE any database access, whatever else is passed: the CLI never connects (an unreachable database does not change the outcome) and nothing is created', async () => {
+    const unreachable = { MONGO_URI: 'mongodb://127.0.0.1:1/never_reached?serverSelectionTimeoutMS=100' };
+    const company = String(new mongoose.Types.ObjectId());
+    const run = String(new mongoose.Types.ObjectId());
+    const evidenceDir = path.join(EVIDENCE, 'must-not-exist');
+    for (const args of [
+      ['--apply'],
+      ['--apply', '--purge-orphans', '--operator', 'tester'],
+      ['--apply', '--purge-orphans', '--operator', 'tester', '--company', company, '--run', run, '--evidence-dir', evidenceDir],
+    ]) {
+      const started = Date.now();
+      const result = await runCli(args, unreachable);
+      assert.equal(result.code, 1, args.join(' '));
+      assert.match(result.stderr, /Refusing to apply: .*APPLY_DISABLED/, args.join(' '));
+      assert.doesNotMatch(result.stderr, /failed:|ECONNREFUSED|MongoServerSelection/, 'it was refused, it did not try to connect and fail');
+      assert.ok(Date.now() - started < 5000, 'refused without waiting for a database');
+    }
+    const withAllFlags = await runCli(['--apply', '--purge-orphans', '--operator', 'tester', '--company', company, '--run', run], unreachable);
+    assert.doesNotMatch(withAllFlags.stderr, /OPERATOR_INVALID|SCOPE_REQUIRED/, 'a complete, valid request is refused only because apply is disabled');
+    const incomplete = await runCli(['--apply', '--operator', '  x'], unreachable);
+    assert.match(incomplete.stderr, /SCOPE_REQUIRED: --company/);
+    assert.match(incomplete.stderr, /SCOPE_REQUIRED: --run/);
+    assert.equal(fs.existsSync(evidenceDir), false, 'no evidence directory is created by a refused apply');
+  });
+
+  test('arguments are parsed strictly: unknown, positional, duplicated, blank, valueless, malformed and --flag=value forms are all refused; no environment variable enables anything', async () => {
+    const before = await dbShape();
+    const reportPath = path.join(os.tmpdir(), `payguard-reconcile-report-${process.pid}.json`);
+    fs.writeFileSync(reportPath, 'keep-me');
+    const bad = String(new mongoose.Types.ObjectId());
     const cases = [
-      [['--apply'], /--apply needs to be told what to apply: add --purge-orphans/],
-      [['--apply', '--purge-orphans'], /operator/],
       [['--frobnicate'], /unknown argument --frobnicate/],
+      [['stray'], /unexpected argument "stray"/],
+      [['--json', '--json'], /--json was given more than once/],
+      [['--company', bad, '--company', bad], /--company was given more than once/],
       [['--company'], /--company needs a value/],
+      [['--company', '--run', bad], /--company needs a value/],
+      [['--company', ''], /--company must not be blank/],
+      [['--run', '   '], /--run must not be blank/],
+      [['--company', 'abc'], /--company must be a 24-character hexadecimal id/],
+      [['--run', 'zzzzzzzzzzzzzzzzzzzzzzzz'], /--run must be a 24-character hexadecimal id/],
+      [[`--company=${bad}`], /unknown argument --company=/],
+      [['--purge-orphans'], /only meaningful with --apply, which is disabled/],
+      [['--operator', 'someone'], /only meaningful with --apply, which is disabled/],
+      [['--evidence-dir', 'somewhere'], /only meaningful with --apply, which is disabled/],
     ];
     for (const [args, reason] of cases) {
       const result = await runCli(args);
       assert.equal(result.code, 1, args.join(' '));
       assert.match(result.stderr, reason, `${args.join(' ')}: refused for the right reason`);
     }
-    assert.deepEqual(await fingerprint(), before);
+    // --report never overwrites an existing file
+    const overwrite = await runCli(['--report', reportPath]);
+    assert.equal(overwrite.code, 1);
+    assert.match(overwrite.stderr, /EEXIST/);
+    assert.equal(fs.readFileSync(reportPath, 'utf8'), 'keep-me', 'an existing file is never overwritten');
+    fs.rmSync(reportPath);
+    // nothing in the environment can switch a mode on: these are ignored and the run stays a dry run
+    const hostile = await runCli([], { RECONCILE_APPLY: '1', APPLY: 'true', PURGE_ORPHANS: 'true', REQUIRE_TRANSACTIONS: 'false', NODE_ENV: 'development' });
+    assert.equal(hostile.code, 0, hostile.stderr);
+    assert.match(hostile.stdout, /mode: DRY_RUN/);
+    assert.deepEqual(await dbShape(), before);
   });
 
-  test('apply is refused, with nothing deleted and no lock left behind, when its preconditions fail: no operator, invalid chain, missing guards, unwritable evidence', async () => {
+  test('purgeOrphans() refuses UNCONDITIONALLY, even for a perfect request and a perfect scan, and reports every reason it can establish; the exported function is not a way around the CLI', async () => {
     const scan = await recon.scanPayrollSnapshots({});
-    assert.ok(scan.purgeEligible.length >= 1);
-    const before = await fingerprint();
-    const refuses = async (options, pattern) => {
-      await assert.rejects(recon.purgeOrphans({ scan, evidenceDir: EVIDENCE, operator: 'tester', ...options }), (error) => error instanceof recon.ReconciliationRefused && pattern.test(error.message));
-      assert.deepEqual(await fingerprint(), before, `refusal (${pattern}) changed something`);
+    assert.equal(scan.auditChain.valid, true);
+    const before = await dbShape();
+    const company = String(new mongoose.Types.ObjectId());
+    const run = String(new mongoose.Types.ObjectId());
+    const refuses = async (input, expected, unexpected = []) => {
+      const beforeThisCall = await dbShape(); // taken right before the call: some cases deliberately alter the database first
+      await assert.rejects(recon.purgeOrphans(input), (error) => {
+        assert.ok(error instanceof recon.ReconciliationRefused, 'a ReconciliationRefused, not a crash');
+        for (const code of ['APPLY_DISABLED', ...expected]) assert.ok(error.reasons.some((reason) => reason.startsWith(code)), `${code} is among the reasons: ${error.reasons.map((r) => r.slice(0, 24))}`);
+        for (const code of unexpected) assert.ok(!error.reasons.some((reason) => reason.startsWith(code)), `${code} must not be reported for this request`);
+        return true;
+      });
+      assert.deepEqual(changedCollections(beforeThisCall, await dbShape()), [], 'a refusal changes nothing');
     };
-    await refuses({ operator: '  ' }, /operator/);
-    // an unwritable evidence directory: a path below a regular file
-    fs.mkdirSync(EVIDENCE, { recursive: true });
-    const blocker = path.join(EVIDENCE, 'not-a-directory');
-    fs.writeFileSync(blocker, 'x');
-    await refuses({ evidenceDir: path.join(blocker, 'below') }, /evidence directory/);
-    // an invalid audit chain
+    // a perfect request: still refused, and only because apply is disabled
+    await refuses({ scan, operator: 'tester', company, run, evidenceDir: EVIDENCE }, [], ['OPERATOR_INVALID', 'SCOPE_REQUIRED', 'TRANSACTIONS_UNAVAILABLE', 'CHAIN_UNVERIFIED', 'CHAIN_GUARDS_UNVERIFIED']);
+    // each further reason is reported when it applies
+    await refuses({ scan, operator: '   ', company, run }, ['OPERATOR_INVALID']);
+    await refuses({ scan, operator: 'x'.repeat(101), company, run }, ['OPERATOR_INVALID']);
+    await refuses({ scan, operator: 'tester', company: '', run }, ['SCOPE_REQUIRED: --company']);
+    await refuses({ scan, operator: 'tester', company, run: 'not-an-id' }, ['SCOPE_REQUIRED: --run']);
+    await refuses({ operator: 'tester', company, run }, ['CHAIN_UNVERIFIED', 'CHAIN_GUARDS_UNVERIFIED']); // no scan at all: nothing is assumed
+    await refuses({ scan: { auditChain: { valid: true }, auditChainGuards: { ok: true } }, operator: 'tester', company, run }, [], ['CHAIN_UNVERIFIED']); // a caller-built scan can only ADD reasons, never authorize
+    // an invalid chain, as a scan reports it
     const first = await AuditLog.collection.findOne({ sequenceNumber: 1 });
     await AuditLog.collection.updateOne({ _id: first._id }, { $set: { action: 'TAMPERED' } });
     try {
       const tampered = await recon.scanPayrollSnapshots({});
       assert.equal(tampered.auditChain.valid, false);
-      const withTamper = await fingerprint();
-      await assert.rejects(recon.purgeOrphans({ scan: tampered, evidenceDir: EVIDENCE, operator: 'tester' }), (error) => error instanceof recon.ReconciliationRefused && /audit chain is not valid/.test(error.message));
-      assert.deepEqual(await fingerprint(), withTamper);
+      await refuses({ scan: tampered, operator: 'tester', company, run }, ['CHAIN_UNVERIFIED']);
     } finally {
       await AuditLog.collection.updateOne({ _id: first._id }, { $set: { action: first.action } });
     }
@@ -844,166 +918,27 @@ describe('C — reconciliation tool: classification, safe by default, idempotent
     try {
       const noGuards = await recon.scanPayrollSnapshots({});
       assert.equal(noGuards.auditChainGuards.ok, false);
-      await assert.rejects(recon.purgeOrphans({ scan: noGuards, evidenceDir: EVIDENCE, operator: 'tester' }), (error) => error instanceof recon.ReconciliationRefused && /guards are missing/.test(error.message));
+      await refuses({ scan: noGuards, operator: 'tester', company, run }, ['CHAIN_GUARDS_UNVERIFIED']);
     } finally {
       await AuditLog.createIndexes();
     }
-    assert.equal(await mongoose.connection.collection('maintenance_locks').countDocuments({}), 0, 'a refused apply holds no lock');
+    assert.deepEqual(changedCollections(before, await dbShape()), [], 'after the deliberate tamper and guard drop were restored, the database equals its state at the start');
+    assert.equal(fs.existsSync(EVIDENCE), false, 'no evidence directory, no file');
+    assert.equal(await mongoose.connection.db.listCollections({ name: 'maintenance_locks' }).hasNext(), false, 'no lock collection exists to be held');
   });
 
-  test('the maintenance lock: a live lease blocks apply; an expired lease is taken over; release is owner-only', async () => {
-    const scan = await recon.scanPayrollSnapshots({});
-    const locks = mongoose.connection.collection('maintenance_locks');
-    await locks.insertOne({ _id: recon.LOCK_ID, owner: 'someone-else', acquiredAt: new Date(), expiresAt: new Date(Date.now() + 60_000) });
-    const before = await fingerprint();
-    await assert.rejects(recon.purgeOrphans({ scan, evidenceDir: EVIDENCE, operator: 'tester' }), (error) => error instanceof recon.ReconciliationRefused && /another reconciliation holds the lock/.test(error.message));
-    assert.deepEqual(await fingerprint(), before);
-    assert.equal((await locks.findOne({ _id: recon.LOCK_ID })).owner, 'someone-else', 'a refused apply never removes another holder\'s lock');
-    await recon.releaseLock('not-the-owner');
-    assert.equal(await locks.countDocuments({}), 1, 'release is owner-only');
-    await locks.updateOne({ _id: recon.LOCK_ID }, { $set: { expiresAt: new Date(Date.now() - 1000) } });
-    const taken = await recon.acquireLock({ owner: 'new-owner' });
-    assert.equal(taken.acquired, true);
-    // two takers racing for one expired lease: exactly one wins
-    await locks.updateOne({ _id: recon.LOCK_ID }, { $set: { expiresAt: new Date(Date.now() - 1000) } });
-    const race = await Promise.all(Array.from({ length: 8 }, (_, i) => recon.acquireLock({ owner: `racer-${i}` })));
-    assert.equal(race.filter((r) => r.acquired).length, 1);
-    await locks.deleteMany({});
-  });
-
-  test('APPLY purges exactly the eligible orphans, writes evidence and audit first-class, and leaves everything else byte-identical', async () => {
-    const scan = await recon.scanPayrollSnapshots({});
-    const eligible = new Set(scan.purgeEligible);
-    assert.ok(eligible.size >= 3);
-    const beforeSnapshots = new Map((await PayrollSnapshot.find({}).lean()).map((s) => [String(s._id), JSON.stringify(s)]));
-    const beforeRuns = JSON.stringify(await PayrollRun.find({}).sort({ _id: 1 }).lean());
-    const beforeStaging = JSON.stringify(await PayrollStagingResult.find({}).sort({ _id: 1 }).lean());
-    const auditBefore = await AuditLog.countDocuments({});
-
-    const outcome = await recon.purgeOrphans({ scan, evidenceDir: EVIDENCE, operator: 'tester' });
-    assert.equal(outcome.purged, eligible.size);
-    assert.ok(outcome.results.every((r) => r.outcome === 'PURGED'));
-
-    for (const [id, json] of beforeSnapshots) {
-      if (eligible.has(id)) assert.equal(await exists(id), 0, `${id} purged`);
-      else assert.equal(JSON.stringify(await PayrollSnapshot.findById(id).lean()), json, `${id} must be untouched`);
+  test('the recovery tool contains NO code that can write: no insert, update, delete, replace, bulk write, index or collection operation, no transaction, no file write other than the exclusive-create report', async () => {
+    const strip = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\s\/\/ .*$/gm, '');
+    const forbidden = /\b(insertOne|insertMany|updateOne|updateMany|replaceOne|bulkWrite|deleteOne|deleteMany|findOneAndUpdate|findOneAndDelete|findOneAndReplace|findByIdAndUpdate|findByIdAndDelete|createIndex|createIndexes|ensureIndexes|dropIndex|dropIndexes|dropCollection|dropDatabase|createCollection|syncIndexes|runInTransaction|startTransaction|startSession)\b|\.(save|create|remove|collection)\(/;
+    for (const file of [SCRIPT, fileURLToPath(new URL('./scripts/lib/snapshotReconciliation.mjs', import.meta.url))]) {
+      const code = strip(fs.readFileSync(file, 'utf8'));
+      const hit = forbidden.exec(code);
+      assert.equal(hit, null, `${path.basename(file)} contains a write-capable call: ${hit && hit[0]}`);
     }
-    assert.equal(JSON.stringify(await PayrollRun.find({}).sort({ _id: 1 }).lean()), beforeRuns, 'no run changed');
-    assert.equal(JSON.stringify(await PayrollStagingResult.find({}).sort({ _id: 1 }).lean()), beforeStaging, 'no staging result changed');
-
-    assert.equal(await AuditLog.countDocuments({ action: recon.PURGE_ACTION }), eligible.size, 'one audit event per purge');
-    assert.equal(await AuditLog.countDocuments({}), auditBefore + eligible.size, 'and nothing else was appended');
-    await assertChainValid('after a supported recovery operation');
-
-    const lines = fs.readFileSync(outcome.evidenceFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    const images = lines.filter((l) => l.kind === 'BEFORE_IMAGE');
-    assert.equal(images.length, eligible.size);
-    for (const image of images) assert.equal(JSON.stringify(JSON.parse(JSON.stringify(image.document))), JSON.stringify(JSON.parse(beforeSnapshots.get(image.snapshotId))), 'the before-image is the exact stored document');
-    assert.equal(await mongoose.connection.collection('maintenance_locks').countDocuments({}), 0, 'the lock was released');
-    shared.afterApply = await recon.scanPayrollSnapshots({});
-    assert.deepEqual(shared.afterApply.purgeEligible, []);
-  });
-
-  test('APPLY IS IDEMPOTENT: running it again deletes nothing, appends nothing, creates no evidence', async () => {
-    const before = await fingerprint();
-    const files = fs.readdirSync(EVIDENCE).length;
-    const outcome = await recon.purgeOrphans({ scan: await recon.scanPayrollSnapshots({}), evidenceDir: EVIDENCE, operator: 'tester' });
-    assert.equal(outcome.purged, 0);
-    assert.deepEqual(outcome.results, []);
-    assert.deepEqual(await fingerprint(), before);
-    assert.equal(fs.readdirSync(EVIDENCE).length, files);
-    // a STALE scan applied again (the orphans are already gone) is also a no-op
-    const stale = { ...shared.afterApply, items: [{ snapshotId: String(new mongoose.Types.ObjectId()), action: recon.ACTIONS.PURGE_ELIGIBLE, class: recon.CLASSES.ORPHAN_PENDING, snapshotHash: 'x' }] };
-    const replay = await recon.purgeOrphans({ scan: stale, evidenceDir: EVIDENCE, operator: 'tester' });
-    assert.deepEqual(replay.results.map((r) => r.outcome), ['SKIPPED']);
-    assert.deepEqual(await fingerprint(), before);
-  });
-
-  test('it never finalizes: pending snapshots under live, finalized or stale runs are still PENDING after an apply', async () => {
-    const live = await recon.scanPayrollSnapshots({ runId: shared.inFlightRun });
-    assert.ok(live.items.every((i) => i.snapshotStatus === 'PENDING_FINALIZATION'));
-    const closed = await PayrollSnapshot.find({ snapshotStatus: 'PENDING_FINALIZATION' }).lean();
-    assert.ok(closed.length >= 4, 'pending snapshots that must survive are still there');
-  });
-
-  test('races between the scan and the apply are caught INSIDE the transaction: a changed run, status or hash is skipped, not purged', async () => {
-    const make = async () => { const run = await makeRun('FAILED'); const snap = await makeSnapshot(run); return { run, snap }; };
-    const a = await make(); const b = await make(); const c = await make(); const d = await make();
-    const scan = await recon.scanPayrollSnapshots({});
-    for (const id of [a, b, c, d].map((x) => String(x.snap._id))) assert.ok(scan.purgeEligible.includes(id));
-    // after the scan: a's run is restarted, b's snapshot is finalized, c's hash drifts, d stays untouched
-    await PayrollRun.collection.updateOne({ _id: a.run._id }, { $set: { status: 'PROCESSING' } });
-    await PayrollSnapshot.collection.updateOne({ _id: b.snap._id }, { $set: { snapshotStatus: 'FINALIZED' } });
-    await PayrollSnapshot.collection.updateOne({ _id: c.snap._id }, { $set: { 'payrollResults.netPayBeforeTDS': c.snap.payrollResults.netPayBeforeTDS + 5 } });
-    const mine = { ...scan, items: scan.items.filter((i) => [a, b, c, d].some((x) => String(x.snap._id) === i.snapshotId)) };
-    const outcome = await recon.purgeOrphans({ scan: mine, evidenceDir: EVIDENCE, operator: 'tester' });
-    const byId = Object.fromEntries(outcome.results.map((r) => [r.snapshotId, r]));
-    assert.match(byId[String(a.snap._id)].reason, /run is now PROCESSING/);
-    assert.match(byId[String(b.snap._id)].reason, /snapshot is now FINALIZED/);
-    assert.match(byId[String(c.snap._id)].reason, /hash changed|no longer valid/);
-    assert.equal(byId[String(d.snap._id)].outcome, 'PURGED');
-    for (const x of [a, b, c]) assert.equal(await exists(x.snap._id), 1, 'skipped snapshots are still there');
-    assert.equal(await exists(d.snap._id), 0);
-    await assertChainValid();
-  });
-
-  test('two reconcilers at once never purge anything twice: exactly the eligible set is purged, once, with one audit event each', async () => {
-    const runs = await Promise.all(Array.from({ length: 6 }, () => makeRun('CANCELLED')));
-    const ids = [];
-    for (const run of runs) ids.push(String((await makeSnapshot(run))._id));
-    const scan = await recon.scanPayrollSnapshots({});
-    for (const id of ids) assert.ok(scan.purgeEligible.includes(id));
-    const mine = { ...scan, items: scan.items.filter((i) => ids.includes(i.snapshotId)) };
-    const settled = await Promise.allSettled([1, 2, 3, 4].map((n) => recon.purgeOrphans({ scan: mine, evidenceDir: EVIDENCE, operator: `racer-${n}` })));
-    const purged = settled.filter((r) => r.status === 'fulfilled').flatMap((r) => r.value.results.filter((x) => x.outcome === 'PURGED'));
-    for (const r of settled.filter((x) => x.status === 'rejected')) assert.ok(r.reason instanceof recon.ReconciliationRefused, String(r.reason));
-    assert.equal(purged.length, ids.length, 'each eligible snapshot purged exactly once across all reconcilers');
-    assert.equal(new Set(purged.map((p) => p.snapshotId)).size, ids.length);
-    for (const id of ids) assert.equal(await exists(id), 0);
-    assert.equal(await AuditLog.countDocuments({ action: recon.PURGE_ACTION, entityId: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) } }), ids.length);
-    assert.equal(await mongoose.connection.collection('maintenance_locks').countDocuments({}), 0);
-    await assertChainValid();
-  });
-
-  test('a failure during a purge (audit event cannot be written) rolls the delete back, keeps the before-image, releases the lock; a retry then succeeds', async () => {
-    const run = await makeRun('FAILED');
-    const snap = await makeSnapshot(run);
-    const scan = await recon.scanPayrollSnapshots({ runId: String(run._id) });
-    const before = await fingerprint();
-    const restore = injectAuditFailure((entry) => entry.action === recon.PURGE_ACTION);
-    let evidenceFile;
-    try {
-      await assert.rejects(recon.purgeOrphans({ scan, evidenceDir: EVIDENCE, operator: 'tester' }), /Injected audit failure/);
-    } finally {
-      restore();
-    }
-    assert.deepEqual(await fingerprint(), before, 'the snapshot, the runs and the audit chain are exactly as before');
-    assert.equal(await mongoose.connection.collection('maintenance_locks').countDocuments({}), 0, 'the lock was released');
-    const newest = fs.readdirSync(EVIDENCE).filter((f) => f.endsWith('.jsonl')).map((f) => path.join(EVIDENCE, f)).sort((x, y) => fs.statSync(y).mtimeMs - fs.statSync(x).mtimeMs)[0];
-    evidenceFile = newest;
-    assert.ok(fs.readFileSync(evidenceFile, 'utf8').includes(String(snap._id)), 'the before-image was written before the failed delete');
-
-    const outcome = await recon.purgeOrphans({ scan: await recon.scanPayrollSnapshots({ runId: String(run._id) }), evidenceDir: EVIDENCE, operator: 'tester' });
-    assert.equal(outcome.purged, 1);
-    assert.equal(await exists(snap._id), 0);
-    await assertChainValid();
-  });
-
-  test('the CLI in apply mode performs the same purge end to end and reports before and after', async () => {
-    const run = await makeRun('CANCELLED');
-    const snap = await makeSnapshot(run);
-    const reportFile = path.join(EVIDENCE, 'cli-report.json');
-    const result = await runCli(['--apply', '--purge-orphans', '--operator', 'cli-tester', '--evidence-dir', EVIDENCE, '--report', reportFile, '--run', String(run._id)]);
-    assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /purged 1 of 1 eligible/);
-    const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
-    assert.equal(report.mode, 'APPLY');
-    assert.equal(report.before.purgeEligible.length, 1);
-    assert.equal(report.after.totals.snapshots, 0);
-    assert.equal(await exists(snap._id), 0);
-    const again = await runCli(['--apply', '--purge-orphans', '--operator', 'cli-tester', '--evidence-dir', EVIDENCE, '--run', String(run._id)]);
-    assert.equal(again.code, 0);
-    assert.match(again.stdout, /purged 0 of 0 eligible/);
+    const cli = strip(fs.readFileSync(SCRIPT, 'utf8'));
+    const writes = [...cli.matchAll(/fs\.(\w+)\(/g)].map((match) => match[1]);
+    assert.deepEqual(writes, ['writeFileSync'], 'the only file operation is the report write');
+    assert.match(cli, /flag: 'wx'/, 'and it is an exclusive create that never overwrites');
   });
 
   test('historical integrity: every finalized snapshot that existed before this group is byte-identical, its hash valid, and the audit chain verifies', async () => {

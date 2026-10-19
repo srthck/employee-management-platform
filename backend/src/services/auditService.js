@@ -65,6 +65,10 @@ const hashPayload = (entry) => {
 
 const sameKey = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
+// Records that predate the hash chain: lacking any of the three chain fields (null matches missing too).
+const unchainedFilter = () => ({ $or: [{ sequenceNumber: null }, { hash: null }, { previousHash: null }] });
+const MAX_BACKFILL_FINDINGS = 200;
+
 let indexGuardCheckedAt = 0;
 let indexGuardInFlight = null;
 
@@ -345,26 +349,131 @@ const auditService = {
   },
 
   /**
-   * One-time migration for audit records written before the hash chain
-   * existed. Uses the raw collection because the model is append-only by
-   * design; it only runs when unchained records are present.
+   * READ-ONLY. How many audit records predate the hash chain (lack any of sequenceNumber / previousHash /
+   * hash)? Used by startup to WARN; startup never changes audit history.
    */
-  async backfillLegacyChain() {
-    const unchained = await AuditLog.exists({
-      $or: [{ sequenceNumber: null }, { hash: null }, { previousHash: null }],
-    });
-    if (!unchained) return 0;
-    const records = await AuditLog.find().sort({ createdAt: 1, _id: 1 }).lean();
+  async legacyChainStatus() {
+    return { unchainedRecords: await AuditLog.countDocuments(unchainedFilter()) };
+  },
+
+  /**
+   * READ-ONLY. Plan the one-time migration of audit records written before the hash chain existed.
+   *
+   * The plan only ever FILLS records that have none of the three chain fields. It never changes a record
+   * that is already chained, so no stored hash of existing history can change. It REFUSES (ok:false) when
+   * the history is not safely extendable:
+   *   - the chained records do not form a valid chain from genesis (fork, duplicate, gap, bad link/hash);
+   *   - a record is partially chained or cannot be hashed (missing/invalid fields);
+   *   - an unchained record sorts before the chain's tail (filling it would require re-sealing chained
+   *     records, i.e. rewriting history).
+   * Output: every record that would change (before/after), the tail the new records would extend, and a
+   * digest of exactly that plan so an apply can be bound to what was reviewed.
+   */
+  async planLegacyBackfill() {
+    const findings = [];
+    const finding = (code, detail, record) => {
+      if (findings.length < MAX_BACKFILL_FINDINGS) findings.push({ code, detail, recordId: record ? String(record._id) : null, sequenceNumber: record?.sequenceNumber ?? null });
+    };
+
+    // Pass 1: the chained records must form a valid chain from genesis (same rules as verifyAuditChain).
+    let expectedSequence = 1;
     let previousHash = GENESIS_HASH;
-    for (let index = 0; index < records.length; index += 1) {
-      const record = records[index];
-      const sequenceNumber = index + 1;
-      const values = { ...record, sequenceNumber, previousHash };
-      const hash = calculateAuditHash(hashPayload(values));
-      await AuditLog.collection.updateOne({ _id: record._id }, { $set: { sequenceNumber, previousHash, hash } });
-      previousHash = hash;
+    let tail = null;
+    let chained = 0;
+    const chainedCursor = AuditLog.find({ sequenceNumber: { $ne: null }, hash: { $ne: null }, previousHash: { $ne: null } }).sort({ sequenceNumber: 1 }).lean().cursor();
+    try {
+      for await (const record of chainedCursor) {
+        chained += 1;
+        if (record.sequenceNumber !== expectedSequence) { finding('CHAIN_GAP_OR_DUPLICATE', `expected sequence ${expectedSequence}, found ${record.sequenceNumber}`, record); break; }
+        if (record.previousHash !== previousHash) { finding('CHAIN_LINK_BROKEN', 'previousHash does not match the preceding record', record); break; }
+        let recalculated;
+        try { recalculated = calculateAuditHash(hashPayload(record)); } catch (error) { finding('CHAIN_RECORD_MALFORMED', `hash cannot be recalculated: ${error.message}`, record); break; }
+        if (record.hash !== recalculated) { finding('CHAIN_HASH_MISMATCH', 'stored hash does not match the recalculated hash', record); break; }
+        previousHash = record.hash;
+        expectedSequence += 1;
+        tail = record;
+      }
+    } finally {
+      await chainedCursor.close();
     }
-    return records.length;
+
+    // Pass 2: records without chain fields, in the order the chain will take them.
+    const changes = [];
+    let examined = 0;
+    // (createdAt, _id) ascending: the order the original chain would have taken these records in.
+    const sortsAfter = (record, other) => {
+      const delta = new Date(record.createdAt).getTime() - new Date(other.createdAt).getTime();
+      return delta !== 0 ? delta > 0 : String(record._id) > String(other._id);
+    };
+    const legacyCursor = AuditLog.find(unchainedFilter()).sort({ createdAt: 1, _id: 1 }).lean().cursor();
+    try {
+      for await (const record of legacyCursor) {
+        examined += 1;
+        if ([record.sequenceNumber, record.hash, record.previousHash].some((value) => value !== null && value !== undefined)) {
+          finding('PARTIALLY_CHAINED', 'some, but not all, chain fields are set', record);
+          continue;
+        }
+        const createdAt = record.createdAt instanceof Date ? record.createdAt : null;
+        if (!createdAt || Number.isNaN(createdAt.getTime()) || !record.action || !record.actorId || !record.entityType || !record.entityId) {
+          finding('RECORD_MALFORMED', 'createdAt, action, actorId, entityType or entityId is missing or invalid', record);
+          continue;
+        }
+        if (tail && changes.length === 0 && !sortsAfter(record, tail)) {
+          finding('UNCHAINED_BEFORE_CHAIN_TAIL', 'sorts at or before the chain tail: filling it would require re-sealing chained records', record);
+          continue;
+        }
+        const sequenceNumber = expectedSequence + changes.length;
+        const prior = changes.length > 0 ? changes[changes.length - 1].hash : previousHash;
+        let hash;
+        try { hash = calculateAuditHash(hashPayload({ ...record, sequenceNumber, previousHash: prior })); } catch (error) { finding('RECORD_MALFORMED', `hash cannot be calculated: ${error.message}`, record); continue; }
+        changes.push({ id: record._id, recordId: String(record._id), action: record.action, createdAt: createdAt.toISOString(), sequenceNumber, previousHash: prior, hash });
+      }
+    } finally {
+      await legacyCursor.close();
+    }
+
+    const tailSummary = tail ? { sequenceNumber: tail.sequenceNumber, hash: tail.hash } : null;
+    const digest = crypto.createHash('sha256').update(JSON.stringify({
+      tail: tailSummary,
+      changes: changes.map((change) => [change.recordId, change.sequenceNumber, change.previousHash, change.hash]),
+    })).digest('hex');
+    return { ok: findings.length === 0, findings, counts: { chained, unchained: examined, wouldChange: changes.length }, tail: tailSummary, changes, digest };
+  },
+
+  /**
+   * The ONLY writer of legacy chain fields. Runs the same preflight as planLegacyBackfill and refuses
+   * unless the plan is acceptable AND its digest equals the one the operator reviewed. Each record is
+   * filled with a conditional update that matches only a record that is still completely unchained, one
+   * record at a time in chain order, so an interruption leaves a valid chained prefix and a re-run
+   * continues from it. Nothing already chained is ever modified. Uses the raw collection because the model
+   * is append-only by design. Never called at startup: run it from scripts/audit-chain-legacy-backfill.mjs
+   * with writers drained.
+   */
+  async applyLegacyBackfill({ expectedDigest } = {}) {
+    const plan = await this.planLegacyBackfill();
+    if (!plan.ok) {
+      throw Object.assign(new Error(`Legacy audit backfill refused: ${plan.findings.map((f) => f.code).join(', ')}.`), { code: 'LEGACY_BACKFILL_REFUSED', findings: plan.findings });
+    }
+    if (!expectedDigest || expectedDigest !== plan.digest) {
+      throw Object.assign(new Error('Legacy audit backfill refused: the plan digest does not match the reviewed plan (the data changed, or no digest was given).'), { code: 'LEGACY_BACKFILL_DIGEST_MISMATCH', digest: plan.digest });
+    }
+    let applied = 0;
+    for (const change of plan.changes) {
+      let result;
+      try {
+        result = await AuditLog.collection.updateOne(
+          { _id: change.id, $and: [{ sequenceNumber: null }, { hash: null }, { previousHash: null }] },
+          { $set: { sequenceNumber: change.sequenceNumber, previousHash: change.previousHash, hash: change.hash } },
+        );
+      } catch (error) {
+        throw Object.assign(error, { applied, stoppedAt: change.recordId });
+      }
+      if (result.matchedCount !== 1 || result.modifiedCount !== 1) {
+        throw Object.assign(new Error(`Legacy audit backfill stopped: record ${change.recordId} changed while the migration ran.`), { code: 'LEGACY_BACKFILL_CONFLICT', applied, stoppedAt: change.recordId });
+      }
+      applied += 1;
+    }
+    return { applied, digest: plan.digest, verification: await this.verifyAuditChain() };
   },
 };
 

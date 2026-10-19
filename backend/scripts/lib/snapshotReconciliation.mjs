@@ -1,6 +1,3 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import mongoose from 'mongoose';
 import PayrollSnapshot, { computeSnapshotHash } from '../../src/models/PayrollSnapshot.js';
 import PayrollRun, { PAYROLL_STATUS } from '../../src/models/PayrollRun.js';
@@ -8,19 +5,20 @@ import AuditLog from '../../src/models/AuditLog.js';
 import auditService from '../../src/services/auditService.js';
 import payrollRunRepository from '../../src/repositories/payrollRunRepository.js';
 import { buildSnapshotPayloadFromStaging } from '../../src/services/payrollSnapshotService.js';
-import { SYSTEM_ACTOR } from '../../src/services/payrollRunService.js';
-import { runInTransaction } from '../../src/utils/transaction.js';
+import { assertRealTransactions } from '../../src/utils/transaction.js';
+import { OBJECT_ID } from './cliArgs.mjs';
 
 /**
- * Pending-snapshot reconciliation (see docs/AUDIT-CHAIN-AND-SNAPSHOT-RECOVERY.md, section 3).
+ * Pending-snapshot reconciliation (see docs/AUDIT-CHAIN-AND-SNAPSHOT-RECOVERY.md and docs/integrity/).
  *
  * scanPayrollSnapshots()  READ-ONLY. Classifies every snapshot (and every finalized run) against its run,
  *                         its hash, the staging it was built from and the audit chain. Never writes.
- * purgeOrphans()          The ONLY mutation, and only for class ORPHAN_PENDING: a PENDING snapshot whose
- *                         run is FAILED or CANCELLED and whose hash is intact. Each purge writes a
- *                         before-image to an evidence file FIRST, then deletes inside one transaction that
- *                         re-checks every condition and appends an audit event. Everything else is reported
- *                         and left alone; a finalized snapshot is never selected, deleted or rewritten.
+ * purgeOrphans()          DISABLED. Destructive recovery is withdrawn: this module contains NO code that
+ *                         deletes or modifies a snapshot, a run, staging or an audit record. The previous
+ *                         implementation (commit 04c872b) was found to purge on stale run state and to ignore
+ *                         finalization history; it returns only through a proof-based rebuild with run-revision
+ *                         protection, fencing and an evidence protocol, independently verified. Until then
+ *                         purgeOrphans() refuses unconditionally and reports every reason it can establish.
  */
 
 export const CLASSES = Object.freeze({
@@ -48,8 +46,6 @@ const ORPHAN_RUN_STATES = new Set([PAYROLL_STATUS.FAILED, PAYROLL_STATUS.CANCELL
 const CLOSED_RUN_STATES = new Set([PAYROLL_STATUS.FINALIZED, PAYROLL_STATUS.DISBURSED]);
 const PENDING = 'PENDING_FINALIZATION';
 const FINALIZED = 'FINALIZED';
-export const PURGE_ACTION = 'PAYROLL_SNAPSHOT_ORPHAN_PURGED';
-export const LOCK_ID = 'payroll-snapshot-reconcile';
 
 const oid = (value) => new mongoose.Types.ObjectId(String(value));
 const str = (value) => (value == null ? null : String(value));
@@ -190,32 +186,7 @@ export async function scanPayrollSnapshots({ companyId = null, runId = null, now
   };
 }
 
-// ─── Concurrency protection: a single expiring lease in a unique-keyed document ───────────────────
-
-const locks = () => mongoose.connection.collection('maintenance_locks');
-
-export async function acquireLock({ owner, leaseMs = 10 * 60 * 1000, now = () => new Date() }) {
-  const t = now();
-  const doc = { _id: LOCK_ID, owner, acquiredAt: t, expiresAt: new Date(t.getTime() + leaseMs) };
-  try {
-    await locks().insertOne(doc);
-    return { acquired: true, doc };
-  } catch (error) {
-    if (error.code !== 11000) throw error;
-  }
-  // an EXPIRED lease may be taken over, atomically: only one taker can match the expiry condition
-  const result = await locks().findOneAndUpdate({ _id: LOCK_ID, expiresAt: { $lt: t } }, { $set: { owner, acquiredAt: t, expiresAt: doc.expiresAt } }, { returnDocument: 'after' });
-  const taken = result && Object.prototype.hasOwnProperty.call(result, 'value') ? result.value : result; // driver 5 wraps the document in { value }; driver 6 returns it
-  if (taken) return { acquired: true, doc: taken };
-  const holder = await locks().findOne({ _id: LOCK_ID });
-  return { acquired: false, holder };
-}
-
-export async function releaseLock(owner) {
-  await locks().deleteOne({ _id: LOCK_ID, owner });
-}
-
-// ─── The one mutation ────────────────────────────────────────────────────────────────────────────
+// ─── Apply is disabled ────────────────────────────────────────────────────────────────────────────
 
 export class ReconciliationRefused extends Error {
   constructor(message, reasons) {
@@ -225,94 +196,36 @@ export class ReconciliationRefused extends Error {
   }
 }
 
-function writeEvidence(file, record) {
-  const fd = fs.openSync(file, 'a');
-  try {
-    fs.writeSync(fd, `${JSON.stringify(record)}\n`);
-    fs.fsyncSync(fd); // the before-image is on disk before anything is deleted
-  } finally {
-    fs.closeSync(fd);
+export const APPLY_DISABLED_REASON =
+  'APPLY_DISABLED: destructive snapshot recovery is withdrawn until proof-based eligibility, run-revision protection, fencing and the evidence protocol are implemented and independently verified (docs/integrity/CLAIMS-LEDGER.md, Phase 4); no flag, environment variable or entry point enables it';
+
+/**
+ * Pure: every reason an apply request must be refused that can be established WITHOUT touching the
+ * database. APPLY_DISABLED is always among them.
+ */
+export function staticApplyRefusals({ operator, company, run } = {}) {
+  const reasons = [APPLY_DISABLED_REASON];
+  if (typeof operator !== 'string' || operator.trim() === '' || operator.length > 100 || /[ -]/.test(operator)) {
+    reasons.push('OPERATOR_INVALID: a non-blank operator name of at most 100 printable characters is required');
   }
+  if (!company || !OBJECT_ID.test(String(company))) reasons.push('SCOPE_REQUIRED: --company must be an explicit 24-hex company id (no default scope)');
+  if (!run || !OBJECT_ID.test(String(run))) reasons.push('SCOPE_REQUIRED: --run must be an explicit 24-hex run id (no default scope)');
+  return reasons;
 }
 
 /**
- * Purge the ORPHAN_PENDING snapshots found by `scan`. Requires: a valid audit chain with its guards, an
- * operator name, a writable evidence directory and the maintenance lease. Every other class is untouched.
- * Idempotent: a purged snapshot is gone, so a second call finds nothing eligible.
+ * Refuses, always. Computes the dynamic reasons too (real transactions, chain, guards) so an operator
+ * sees everything that is wrong, not just that apply is withdrawn. The `scan` is caller-supplied and is
+ * NEVER trusted to authorize anything: it can only add reasons.
  */
-export async function purgeOrphans({ scan, evidenceDir, operator, now = () => new Date(), leaseMs }) {
-  const reasons = [];
-  if (!operator || !String(operator).trim()) reasons.push('an --operator name is required to apply');
-  if (!scan.auditChain.valid) reasons.push(`the audit chain is not valid (${scan.auditChain.reason}); resolve that first`);
-  if (!scan.auditChainGuards.ok) reasons.push(`the audit chain guards are missing: ${scan.auditChainGuards.missing.join(', ')}`);
-  // Decide on everything that needs no disk access FIRST: a refused apply must leave nothing behind,
-  // not even an empty evidence directory.
-  if (reasons.length > 0) throw new ReconciliationRefused(`Refusing to apply: ${reasons.join('; ')}.`, reasons);
-  const eligible = scan.items.filter((i) => i.action === ACTIONS.PURGE_ELIGIBLE);
-  if (eligible.length === 0) return { evidenceFile: null, results: [], purged: 0 }; // nothing to do: no lock, no directory, no file
-
-  let evidenceFile = null;
+export async function purgeOrphans({ scan, operator, company, run } = {}) {
+  const reasons = staticApplyRefusals({ operator, company, run });
   try {
-    fs.mkdirSync(evidenceDir, { recursive: true });
-    evidenceFile = path.join(evidenceDir, `payroll-snapshot-reconcile-${now().toISOString().replace(/[:.]/g, '-')}-${process.pid}.jsonl`);
-    fs.accessSync(evidenceDir, fs.constants.W_OK);
-  } catch (error) {
-    throw new ReconciliationRefused(`Refusing to apply: the evidence directory is not writable (${error.message}).`, ['evidence directory']);
+    await assertRealTransactions();
+  } catch {
+    reasons.push('TRANSACTIONS_UNAVAILABLE: real MongoDB transactions cannot be established (application configuration is not consulted)');
   }
-
-  const owner = `${os.hostname()}:${process.pid}:${operator}`;
-  const lock = await acquireLock({ owner, leaseMs, now });
-  if (!lock.acquired) {
-    throw new ReconciliationRefused(`Refusing to apply: another reconciliation holds the lock (${lock.holder?.owner}, until ${lock.holder?.expiresAt?.toISOString?.()}).`, ['lock held']);
-  }
-
-  const results = [];
-  try {
-    for (const item of eligible) {
-      const before = await PayrollSnapshot.findById(item.snapshotId).lean();
-      if (!before) { results.push({ snapshotId: item.snapshotId, outcome: 'SKIPPED', reason: 'already gone (idempotent)' }); continue; }
-      writeEvidence(evidenceFile, { kind: 'BEFORE_IMAGE', at: now().toISOString(), operator, snapshotId: item.snapshotId, scannedClass: item.class, document: before });
-
-      const outcome = await runInTransaction(async (session) => {
-        const snapshot = await PayrollSnapshot.findOne({ _id: item.snapshotId }).session(session).lean();
-        if (!snapshot) return { outcome: 'SKIPPED', reason: 'already gone' };
-        const run = await PayrollRun.findById(snapshot.payrollRunId).session(session).lean();
-        // Every eligibility condition is re-checked INSIDE the transaction, against current data.
-        if (snapshot.snapshotStatus !== PENDING) return { outcome: 'SKIPPED', reason: `snapshot is now ${snapshot.snapshotStatus}` };
-        if (snapshot.snapshotHash !== item.snapshotHash || computeSnapshotHash(snapshot) !== snapshot.snapshotHash) return { outcome: 'SKIPPED', reason: 'snapshot hash changed or is no longer valid' };
-        if (!run || !ORPHAN_RUN_STATES.has(run.status)) return { outcome: 'SKIPPED', reason: `run is now ${run ? run.status : 'missing'}` };
-        if (await PayrollSnapshot.exists({ payrollRunId: snapshot.payrollRunId, snapshotStatus: FINALIZED }).session(session)) {
-          return { outcome: 'SKIPPED', reason: 'the run also has a FINALIZED snapshot: inconsistent, needs investigation' };
-        }
-        // The model's query hook adds snapshotStatus != FINALIZED; the filter below is stricter still.
-        const deleted = await PayrollSnapshot.deleteOne({ _id: snapshot._id, snapshotStatus: PENDING, snapshotHash: item.snapshotHash }, { session });
-        if (deleted.deletedCount !== 1) return { outcome: 'SKIPPED', reason: 'nothing matched the conditional delete' };
-        await auditService.log({
-          action: PURGE_ACTION,
-          actorId: SYSTEM_ACTOR.id,
-          actorEmail: SYSTEM_ACTOR.email,
-          actorRole: SYSTEM_ACTOR.role,
-          entityType: 'PAYROLL_SNAPSHOT',
-          entityId: snapshot._id,
-          companyId: snapshot.companyId,
-          meta: {
-            payrollRunId: String(snapshot.payrollRunId),
-            employeeId: String(snapshot.employeeSnapshot?.employeeId),
-            snapshotHash: snapshot.snapshotHash,
-            runStatus: run.status,
-            operator,
-            evidenceFile: path.basename(evidenceFile),
-            reason: 'pending snapshot under a FAILED/CANCELLED run (orphan)',
-          },
-        }, session);
-        return { outcome: 'PURGED', reason: `run ${run.status}` };
-      }, { label: 'payroll.snapshot.reconcile.purge' });
-
-      results.push({ snapshotId: item.snapshotId, runId: item.runId, ...outcome });
-      writeEvidence(evidenceFile, { kind: 'RESULT', at: now().toISOString(), snapshotId: item.snapshotId, ...outcome });
-    }
-  } finally {
-    await releaseLock(owner);
-  }
-  return { evidenceFile, results, purged: results.filter((r) => r.outcome === 'PURGED').length };
+  if (scan?.auditChain?.valid !== true) reasons.push('CHAIN_UNVERIFIED: the audit chain is invalid or was not verified');
+  if (scan?.auditChainGuards?.ok !== true) reasons.push('CHAIN_GUARDS_UNVERIFIED: the audit chain guards are missing or were not verified');
+  throw new ReconciliationRefused(`Refusing to apply: ${reasons.join('; ')}.`, reasons);
 }

@@ -36,6 +36,7 @@ const TEST_FILES = [
   'test_phase1d_applicability.js',
   'test_phase1d_isolation.js',
   'test_audit_hardening.js',
+  'test_integrity_phase0.js',
 ];
 
 const base = new URL(process.argv[2] || process.env.REPLICA_SET_URI || 'mongodb://127.0.0.1:27018/?replicaSet=rs0');
@@ -60,6 +61,7 @@ const env = {
   WAVE35C_MONGO_URI: databaseUri('payguard_wave35c_test'),
   WAVE35C5_MONGO_URI: databaseUri('payguard_wave35c5_test'),
   AUDIT_HARDENING_MONGO_URI: databaseUri('payguard_audit_hardening_test'),
+  INTEGRITY_P0_MONGO_URI: databaseUri('payguard_integrity_p0_test'),
 };
 
 console.log(`Running ${TEST_FILES.length} suites against ${base.host} with REQUIRE_TRANSACTIONS=true`);

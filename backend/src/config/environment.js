@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { resolveTransactionPolicy } from './transactionPolicy.js';
 
 /**
  * Environment Configuration
@@ -74,6 +75,15 @@ const sameSite = (() => {
   return { strict: 'Strict', lax: 'Lax', none: 'None' }[value] || 'Strict';
 })();
 
+// Financial writes are atomic in every environment. The one escape hatch (a standalone mongod for local
+// development) needs BOTH an explicit REQUIRE_TRANSACTIONS=false with NODE_ENV exactly development/test AND a
+// loopback-only database URI; see transactionPolicy.js.
+const transactionPolicy = resolveTransactionPolicy({
+  nodeEnv: env.NODE_ENV,
+  requireTransactionsFlag: env.REQUIRE_TRANSACTIONS,
+  mongoUri: env.MONGO_URI,
+});
+
 const frontendUrl = env.FRONTEND_URL || 'http://localhost:5173';
 const developmentOrigins = [
   'http://localhost:5173',
@@ -96,10 +106,11 @@ const config = {
   // Database
   mongoUri: env.MONGO_URI,
   // Financial writes are atomic in every environment, so development, tests
-  // and production share one set of semantics. Only an explicit
-  // REQUIRE_TRANSACTIONS=false (never allowed in production) lets a standalone
-  // mongod run without atomicity.
-  requireTransactions: isProduction || env.REQUIRE_TRANSACTIONS !== 'false',
+  // and production share one set of semantics. The opt-out is honoured only
+  // under the two-boundary rule in transactionPolicy.js (never in production,
+  // never for an unrecognized NODE_ENV, never against a non-loopback database).
+  requireTransactions: transactionPolicy.requireTransactions,
+  transactionPolicy,
 
   // Authentication
   jwtSecret:

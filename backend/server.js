@@ -34,6 +34,15 @@ const startServer = async () => {
   try {
     await connectDatabase();
 
+    // The policy is always visible in the log, including an opt-out that was requested but NOT honoured.
+    logger.info('Transaction policy', {
+      environmentClass: config.transactionPolicy.environmentClass,
+      requireTransactions: config.requireTransactions,
+      optOutRequested: config.transactionPolicy.optOutRequested,
+      optOutHonoured: config.transactionPolicy.optOutHonoured,
+    });
+    for (const note of config.transactionPolicy.notes) logger.warn(note);
+
     const transactions = await supportsTransactions();
     if (!transactions) {
       if (config.requireTransactions) {
@@ -48,9 +57,11 @@ const startServer = async () => {
       logger.warn('REQUIRE_TRANSACTIONS=false on a standalone MongoDB: payroll writes are NOT atomic.');
     }
 
-    const migratedAuditRecords = await auditService.backfillLegacyChain();
-    if (migratedAuditRecords) {
-      logger.info('Backfilled legacy audit records into the SHA-256 chain', { records: migratedAuditRecords });
+    // Startup NEVER rewrites, repairs or re-seals audit history. Records that predate the hash chain are only
+    // reported; migrating them is an explicit, reviewed maintenance step (scripts/audit-chain-legacy-backfill.mjs).
+    const { unchainedRecords } = await auditService.legacyChainStatus();
+    if (unchainedRecords > 0) {
+      logger.warn('Audit records that predate the hash chain exist and were NOT migrated (startup never changes audit history). Review and run scripts/audit-chain-legacy-backfill.mjs.', { unchainedRecords });
     }
   } catch (dbError) {
     if (config.isProduction) {
