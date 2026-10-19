@@ -95,12 +95,48 @@ This result is exact for these files and for Phase 0 mechanisms only. It says no
 5. **Everything not listed under Phase 0 claims is unchanged from the audit's status**, including F-01 (a fork is still committable when both unique indexes are absent or ineffective) and F-04/F-05 (business state can still commit before its audit event at the non-transactional call sites). **The system-level audit-integrity gate remains closed.**
 6. **A standalone server was never used.** Behaviour on a real standalone `mongod` is `SIMULATED` (stubbed `hello`).
 7. **Single-node replica set only.** Failover/stepdown is `UNVERIFIED`.
-8. **One unexplained intermittent failure in the full suite.** Of four valid full-suite runs on the Phase 0 files, three were 978/978 green (two consecutive: runs 3 and 4) and one had a single failure: `test_wave2.js` "bank accounts are versioned and masked…" stalled 49 s and then failed with `fetch failed / ECONNRESET`, where it normally takes ~100–250 ms. The MongoDB log shows no slow operation on that database; `test_wave2.js` run alone passed 8 of 8 (~100 ms); the Phase 0 diff does not touch the request or audit-append path. The cause is **not established** (candidates: host stall, or the in-process audit queue/transaction interaction described in audit findings L2-F07/L3-F02, which Phase 2 and 3 rework). It is recorded here rather than dismissed. Two earlier full-suite runs were invalid because the local replica set had stopped (logs kept as `INVALID_db_down_*`).
+8. **One intermittent failure in the full suite during Phase 0, now attributed to the host's power state.** Of four valid full-suite runs on the Phase 0 files, three were 978/978 green and one had a single failure: `test_wave2.js` "bank accounts are versioned and masked…" stalled 49 s and failed with `fetch failed / ECONNRESET` (normally ~100–250 ms). At the time the cause was recorded as not established. It has since been established with reasonable confidence: the Windows System log (Kernel-Power) shows the machine entered **Modern Standby at 18:59:57 and resumed at 19:01:07 on 2026-10-19**, which is exactly where that test ran, and the MongoDB log shows sockets "forcibly closed by the remote host" in the same minutes. A second run in Phase 1 stalled for ~33 minutes in `test_phase10.js` STEP-26 for the same reason (standby 19:25:30–19:59:10 and 19:59:10–20:08:44; the MongoDB replica-set monitor itself logged a 4,391,786 ms "no primary" gap at 20:08:43). Both logs are kept as `FLAKE_*` / `INVALID_host_standby_*`. Consequence for the evidence: a full-suite run is only counted when no standby/sleep event overlaps it. This is an inference from timestamps, not a reproduction. Two earlier runs were invalid because the local replica set had stopped (`INVALID_db_down_*`).
 
 ## Documentation corrected in Phase 0
 
 `docs/AUDIT-CHAIN-AND-SNAPSHOT-RECOVERY.md` no longer claims: a re-check "after any collision" (not implemented); that a dropped index can only fork "in principle" (it forked in three independent reproductions); that deletions are detected (tail truncation is not); that a dry run "writes nothing" without the collection-creation fix; that the purge race's worst outcome is a skipped record (false for run status); a working apply mode; or a lease that makes overlapping applies safe. Each corrected statement is marked *(corrected)* in that document.
 
+## Phase 1 claims — executable invariant models
+
+Everything in this section is model evidence: class `SIMULATED` (bounded exploration of abstract models), never `DB_ENFORCED` or `DIRECTLY_TESTED`. Full scenario table, assumptions, limitations and the shortest counterexample traces: `docs/integrity/MODEL-RESULTS.md` (generated; a test regenerates it and fails on any difference). Code: `backend/test_support/integrityModel/`. Tests: `backend/test_integrity_model.js` (78 tests, no database needed).
+
+| # | Claim | Class | Evidence |
+|---|---|---|---|
+| P1-1 | The exploration tool is a bespoke bounded breadth-first explicit-state explorer, **not** TLA+/TLC. **TLC and Apalache were not run** (no Java in this environment). | `UNVERIFIED` for any TLC result | `MODEL-RESULTS.md` header; explorer tested on a lost-update system (finds it, shortest trace of 4 steps), on its atomic version (clean), on truncation and on an initial-state violation |
+| P1-2 | The models of the **current** design reach the known failures: a chain fork with success reported while both unique indexes are absent (A4, F-01); business state committed without its audit event, a false "nothing was written", and duplicate application after an ambiguous commit (B1, B2: F-05, F-04); a purge on a stale run state, by a superseded lease owner, and of a snapshot with finalization evidence (C1, C2: F-02, F-03); re-sealed history by the old startup backfill (D1: F-07); a deleted snapshot without a durable before-image (E1) and without its audit event in the non-transactional fallback (E3: F-08) | `SIMULATED` | each trace is replayed step by step against the model's own transition function and verified to violate the invariant only at its last state |
+| P1-3 | Either unique index alone prevents the fork; neither does not (A2, A3, A4) — the audit's finding, reproduced independently in the model | `SIMULATED` | scenarios A1–A4 |
+| P1-4 | The **proposed** designs satisfy the named invariants within the bounds: transactional head compare-and-set with 2 and 3 writers and both indexes dropped (A5, A6); transactional path with an operation id checked in the same transaction (B4); run write + evidence check + fencing token (C3, C4); the explicit migration (D3, D4); directory fsync (E2) | `SIMULATED`, designs **not implemented yet** | complete explorations (860 states or fewer per scenario) |
+| P1-5 | Each protection is load-bearing: removing exactly one brings back exactly its violation (run write → `NoPurgeAfterEligibilityChanges`; evidence check → `NoPurgeOfEverFinalized`; fencing → `ExpiredOwnerCannotDelete`; version condition on the head → fork; operation-record lookup → duplicates). Single protections alone are insufficient (outbox alone: duplicates remain; run write alone or fencing alone: the other violation remains) | `SIMULATED` | scenarios A7, B3, B5, C5–C9 |
+| P1-6 | **Rollout condition:** the head-document protocol protects only writers that follow it. An old writer that bypasses the head breaks `HeadMatchesLastCommittedEntry` even with the unique indexes present, and forks the chain when they are absent. Old instances must be drained or blocked before the head becomes authoritative. | `SIMULATED` | scenarios A9, A10 |
+
+### Mutation result (exact files)
+
+18 hand-written defects in the explorer (6) and the models (12): **18 killed, 0 survived, 0 pattern-not-found**; every file restored and re-verified by hash. Honest caveat: mutant M4 (the guard cache never expires) was killed **only** by the document-regeneration test — in the explored configurations the cache-expiry action changes no scenario verdict (it can only reduce the fork window), so it is not shown to be load-bearing by this model.
+
+| File (under `backend/`) | sha256 |
+|---|---|
+| `test_support/integrityModel/explorer.mjs` | `754035f71601eecf380a09c4f1fc7cd1f9f5a5d08fcf006ef7a0c14d87059bd1` |
+| `test_support/integrityModel/auditChain.mjs` | `2d24e01b41ee9826ed8b2c843678a63279f41cd73adb1fd76ccf868aa35cdf07` |
+| `test_support/integrityModel/businessAudit.mjs` | `3a86616b315f82354992b114120d1ba610c9f8a0a83c1b5868468b94e662f10b` |
+| `test_support/integrityModel/recovery.mjs` | `7f5bd7e76d2ee619150527c8e1aabded7ef49425af69d2099ae4119bc160f09e` |
+| `test_support/integrityModel/historyAndEvidence.mjs` | `cbab3dfd1cec779ebd5008023f1e317ea2d34e65353b116c93e4aa97e42973ff` |
+| `test_support/integrityModel/scenarios.mjs` | `e80854ec59acbf140852e1f24838a64953ac77499957818da899a799d8678e91` |
+| `test_support/integrityModel/report.mjs` | `44163069cdb7a3e9fe10931995b601cc0784c8005586f6510a7cb9aefe933900` |
+| `test_support/integrityModel/run.mjs` | `975f30ab5b79bee7d38aa33a2d80dc723af320da57ebb75704b50c4acf6ae609` |
+| `test_integrity_model.js` | `0d05e104beefc631bb9185f2f42f41e2a7447da27c18aa49ebad16b44140370e` |
+
+### Phase 1 limits (summary; the full list is in `MODEL-RESULTS.md`)
+
+1. A clean model result is a statement about a **design** under stated assumptions, not about the implementation. No finding is closed by Phase 1; all statuses in the findings table above are unchanged.
+2. Bounded: 2 writers (3 for the head-compare-and-set model), at most 2 attempts, each index dropped at most once, one lease expiry, one run retry, one logical operation with at most 2 attempts, one global chain, power loss at most once.
+3. Commit is an atomic first-committer-wins step; time is abstract (no clock skew); safety only (no liveness); no failover, rollback, partition or replication lag.
+4. The bespoke explorer has not been cross-checked against TLC. If Java and TLC become available the same models should be re-expressed in TLA+ and checked; until then `UNVERIFIED`.
+
 ## Next phase
 
-Phase 1 (model the invariants) — entry criteria: Phase 0 committed, claims above unchanged, full backend suite green twice on the Phase 0 commit. Phase 4 (rebuild recovery) must not begin before Phase 2 and Phase 3 are complete, and apply stays disabled until all twelve Phase 4 release gates pass independently.
+Phase 2 (transactional chain head) — entry criteria: Phase 1 committed; the Phase 2 design must be exactly the model's `head-cas` protocol (read head, conditional update on the version, insert, one transaction), with old writers drained (P1-6); a controlled head initialization that refuses unresolved history; all legitimate append paths converted; deterministic multi-process tests including both indexes absent; a quantified performance gate. Phase 3 and Phase 4 follow in order; recovery apply stays disabled until all twelve Phase 4 release gates pass independently.
