@@ -11,6 +11,8 @@
  *   - Documents are copied byte-for-byte (same _id, same fields), so snapshot
  *     hashes and the audit hash chain stay verifiable.
  *   - Index definitions are recreated on the target.
+ *   - Collection validators (for example the audit chain's, which refuses audit records that lack headVersion) are applied
+ *     AFTER the documents are copied, so documents that predate a validator do not stop the copy.
  *   - Refuses to write into a target database that already has collections:
  *     it never merges into or overwrites existing data.
  *   - The source is only read.
@@ -47,7 +49,12 @@ try {
 
   const summary = [];
   for (const { name, options } of collections) {
-    await target.db.createCollection(name, options);
+    // The collection is created WITHOUT its validator and the validator is applied after the documents are in. Existing
+    // documents can legitimately fail a validator that governs NEW inserts: after the audit chain cutover every audit record
+    // written before the head protocol lacks headVersion, and loading them into a collection that already carries the
+    // validator would stop the copy at the first record. The documents are not changed; the same validator is in force afterwards.
+    const { validator, validationLevel, validationAction, ...creationOptions } = options ?? {};
+    await target.db.createCollection(name, creationOptions);
     const from = source.db.collection(name);
     const to = target.db.collection(name);
 
@@ -76,7 +83,11 @@ try {
     if (sourceCount !== targetCount) {
       throw new Error(`Count mismatch in ${name}: source ${sourceCount}, target ${targetCount}`);
     }
-    summary.push({ collection: name, documents: copied, indexes: indexes.length });
+    const hasValidator = Boolean(validator) && Object.keys(validator).length > 0;
+    if (hasValidator) {
+      await target.db.command({ collMod: name, validator, ...(validationLevel && { validationLevel }), ...(validationAction && { validationAction }) });
+    }
+    summary.push({ collection: name, documents: copied, indexes: indexes.length, validator: hasValidator });
   }
 
   console.table(summary);

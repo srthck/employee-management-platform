@@ -88,7 +88,7 @@ async function registerFailedAttempt(Model, doc, entityType) {
       { _id: doc._id },
       { $set: { lockUntil, failedLoginAttempts: 0 } }
     );
-    await auditService.log({
+    await auditService.logStandalone({
       action: 'AUTH_ACCOUNT_LOCKED',
       actorId: doc._id,
       actorEmail: doc.email,
@@ -251,7 +251,7 @@ export const login = async (req, res) => {
     ? String(admin.companyId || admin._id)
     : String(account.companyId || employee.createdBy);
 
-  await auditService.log({
+  await auditService.logStandalone({
     action: 'AUTH_LOGIN_SUCCEEDED',
     actorId: principal._id,
     actorEmail: principal.email,
@@ -320,7 +320,7 @@ export const logoutAll = async (req, res) => {
   const Model = req.user.role === 'employee' ? EmployeeAccount : Admin;
   await Model.updateOne({ _id: req.user.id }, { $inc: { tokenVersion: 1 } });
 
-  await auditService.log({
+  await auditService.logStandalone({
     action: 'AUTH_SESSIONS_REVOKED',
     actorId: req.user.id,
     actorEmail: req.user.email,

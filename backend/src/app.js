@@ -7,8 +7,9 @@ import { errorHandler } from './middleware/errorHandler.js';
 import { requestContext, securityHeaders, rejectOperatorInjection } from './middleware/security.js';
 import { errorEnvelope } from './middleware/errorEnvelope.js';
 import { apiRateLimiter } from './middleware/rateLimiter.js';
-import { supportsTransactions } from './utils/transaction.js';
+import { supportsTransactions, transactionLaneStatus } from './utils/transaction.js';
 import logger from './utils/logger.js';
+import auditService from './services/auditService.js';
 
 import authRoutes from './routes/authRoutes.js';
 import employeeRoutes from './routes/employeeRoutes.js';
@@ -88,18 +89,52 @@ app.get('/api/health', (req, res) => {
 // an operator (or a deployment gate) can see not only whether transactions work but whether the process is
 // allowed to run without them.
 let lastReadinessKey = null;
+let auditReadiness = { at: 0, value: null };
+const AUDIT_READINESS_TTL_MS = 5000;
+const AUDIT_READINESS_TIMEOUT_MS = 3000;
+let auditStatusRun = null; // the status computation in progress; it survives a timeout so a hung database cannot accumulate runs
+/**
+ * The audit chain's head/index/validator state, cached for a few seconds so probes cannot hammer the database. Concurrent probes
+ * share ONE computation (single flight), the computation is bounded by a timeout (a slow database answers "not ready"), and the
+ * response carries only fixed codes: driver error text (hosts, namespaces) goes to the log, never to an unauthenticated caller.
+ */
+async function auditChainReadiness() {
+  if (auditReadiness.value && Date.now() - auditReadiness.at < AUDIT_READINESS_TTL_MS) return auditReadiness.value;
+  if (!auditStatusRun) {
+    auditStatusRun = Promise.resolve().then(() => auditService.protocolStatus()).finally(() => { auditStatusRun = null; });
+    auditStatusRun.catch(() => {}); // observed below; a late failure after a timeout must not become an unhandled rejection
+  }
+  let value;
+  let timer;
+  try {
+    const timeout = new Promise((_resolve, reject) => { timer = setTimeout(() => reject(Object.assign(new Error('the audit chain status did not complete in time'), { code: 'READINESS_TIMEOUT' })), AUDIT_READINESS_TIMEOUT_MS); });
+    const status = await Promise.race([auditStatusRun, timeout]);
+    value = { ok: status.ok, mode: status.mode, issues: status.issues.map((i) => `${i.severity}:${i.code}`) };
+  } catch (error) {
+    logger.error('Audit chain status unavailable', { error: error.message, code: error.code });
+    value = { ok: false, mode: auditService.protocolMode(), issues: [error.code === 'READINESS_TIMEOUT' ? 'error:STATUS_TIMEOUT' : 'error:STATUS_UNAVAILABLE'] };
+  } finally {
+    clearTimeout(timer);
+  }
+  auditReadiness = { at: Date.now(), value };
+  return value;
+}
+// Test seam: forget the cached audit-chain readiness (it is cached for a few seconds).
+app.locals.resetAuditReadiness = () => { auditReadiness = { at: 0, value: null }; };
 app.get('/api/ready', async (req, res) => {
   const databaseConnected = mongoose.connection.readyState === 1;
   const transactions = databaseConnected ? await supportsTransactions() : false;
-  const ready = databaseConnected && (transactions || !config.requireTransactions);
+  const auditChain = databaseConnected ? await auditChainReadiness() : { ok: false, mode: auditService.protocolMode(), issues: ['error:DATABASE_DISCONNECTED'] };
+  const ready = databaseConnected && (transactions || !config.requireTransactions) && auditChain.ok;
   const policy = config.transactionPolicy;
 
   // Structured log on every CHANGE of readiness state (not on every probe).
-  const key = `${ready}|${databaseConnected}|${transactions}`;
+  const key = `${ready}|${databaseConnected}|${transactions}|${auditChain.issues.join(',')}`;
   if (key !== lastReadinessKey) {
     lastReadinessKey = key;
     logger[ready ? 'info' : 'error']('Readiness changed', {
       ready, databaseConnected, transactions, requireTransactions: config.requireTransactions, environmentClass: policy.environmentClass,
+      auditChainOk: auditChain.ok, auditChainIssues: auditChain.issues,
     });
   }
 
@@ -107,6 +142,9 @@ app.get('/api/ready', async (req, res) => {
     status: ready ? 'ready' : 'not_ready',
     database: databaseConnected ? 'connected' : 'disconnected',
     transactions: transactions ? 'supported' : 'unavailable',
+    auditChain,
+    // How busy this process's transaction lane is (liveness information only; the lane never decides readiness).
+    transactionLane: (({ enabled, busy, queued, holder }) => ({ enabled, busy, queued, heldMs: holder ? holder.heldMs : null }))(transactionLaneStatus()),
     transactionPolicy: {
       environmentClass: policy.environmentClass,
       requireTransactions: policy.requireTransactions,

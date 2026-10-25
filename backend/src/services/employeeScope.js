@@ -52,7 +52,7 @@ export async function decryptSensitive(ciphertext, { context, actor, companyId, 
   try {
     return decryptField(ciphertext, { context });
   } catch (err) {
-    await auditService.log({
+    await auditService.logStandalone({
       action: 'SENSITIVE_FIELD_INTEGRITY_FAILED',
       actorId: actor.id,
       actorEmail: actor.email,

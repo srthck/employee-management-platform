@@ -583,7 +583,7 @@ describe('Phase 12 — hardened payroll platform', () => {
   test('concurrent audit writes produce one linear, verifiable chain', async () => {
     const actorId = new mongoose.Types.ObjectId();
     const entityId = new mongoose.Types.ObjectId();
-    const writes = Array.from({ length: 25 }, (_, index) => auditService.log({
+    const writes = Array.from({ length: 25 }, (_, index) => auditService.logStandalone({
       action: 'CONCURRENCY_TEST',
       actorId,
       entityType: 'TEST',

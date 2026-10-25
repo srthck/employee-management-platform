@@ -170,7 +170,7 @@ const statutoryProfileService = {
       field: `statutory.${field}`,
     });
 
-    await auditService.log({
+    await auditService.logStandalone({
       action: 'SENSITIVE_FIELD_REVEALED',
       actorId: actor.id,
       actorEmail: actor.email,

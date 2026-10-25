@@ -1,31 +1,20 @@
 import AuditLog from '../models/AuditLog.js';
+import AuditChainHead from '../models/AuditChainHead.js';
 import mongoose from 'mongoose';
 import crypto from 'crypto';
+import config from '../config/environment.js';
 import { getContext } from '../utils/requestContext.js';
+import { runInTransaction, inTransactionContext, inNestedTransactionContext, supportsTransactions } from '../utils/transaction.js';
+import { isLoopbackHost } from '../config/transactionPolicy.js';
 import {
-  auditChainContentionError, auditChainIndexError, backoffDelayMs, isAuditChainCollision, isTransientTransactionConflict, markAuditChainConflict, sleep,
+  auditChainHeadConflictError, auditChainInconsistentError, auditChainNotInitializedError, auditNestedTransactionError, auditSessionRequiredError,
+  backoffDelayMs, isAuditChainCollision, isAuditChainConflict, isTransientTransactionConflict, markAuditChainConflict, sleep,
 } from '../utils/auditErrors.js';
+import { AUDIT_COLLECTION, HEAD_ID, evaluateIndexes, evaluateValidator } from './auditChainSpec.js';
 
 export const GENESIS_HASH = 'GENESIS';
 const REDACTED = '[REDACTED]';
 const SENSITIVE_KEYS = new Set(['password', 'passwordHash', 'jwt', 'token', 'refreshToken', 'secret', 'bankAccount', 'bankCredentials', 'privateKey']);
-
-/**
- * Append retry policy. A collision on the chain's uniqueness guards means another writer committed
- * first, so waiting and re-reading the head always makes system-wide progress; the caller gives up only
- * at the deadline, with an explicit, retryable 503 (nothing written). Tests may replace this object.
- */
-const DEFAULT_APPEND_POLICY = Object.freeze({ maxWaitMs: 15000, baseDelayMs: 2, maxDelayMs: 150, indexRecheckMs: 10000 });
-
-// The two database guards that make the chain linear. Matched by key and uniqueness, not by name.
-const REQUIRED_CHAIN_INDEXES = Object.freeze([
-  { label: 'unique sequenceNumber', key: { sequenceNumber: 1 }, spec: { name: 'sequenceNumber_1', unique: true } },
-  {
-    label: 'unique previousHash (one successor per predecessor)',
-    key: { previousHash: 1 },
-    spec: { name: 'previousHash_unique_successor', unique: true, partialFilterExpression: { previousHash: { $type: 'string' } } },
-  },
-]);
 
 const normalize = (value) => {
   if (value === null || value === undefined) return value;
@@ -63,117 +52,67 @@ const hashPayload = (entry) => {
   return payload;
 };
 
-const sameKey = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-
 // Records that predate the hash chain: lacking any of the three chain fields (null matches missing too).
 const unchainedFilter = () => ({ $or: [{ sequenceNumber: null }, { hash: null }, { previousHash: null }] });
 const MAX_BACKFILL_FINDINGS = 200;
 
-let indexGuardCheckedAt = 0;
-let indexGuardInFlight = null;
+const heads = () => AuditChainHead.collection;
+const DEGRADED_MAX_ATTEMPTS = 60;
 
-// Plain (non-transactional) appends from this process take turns: they would only collide with each other.
-// Cross-process and in-transaction contention is still resolved by the database guards and the back-off.
-// A plain append never waits on anything except other plain appends, so this cannot deadlock, and its
-// deadline starts when its own turn starts (time spent queued behind other appends is not "contention").
-let plainAppendTail = Promise.resolve();
-const takeTurn = (task) => {
-  const run = plainAppendTail.then(task, task);
-  plainAppendTail = run.catch(() => {});
-  return run;
-};
-
-async function missingChainGuards() {
-  let existing = [];
-  try {
-    existing = await AuditLog.collection.indexes();
-  } catch (err) {
-    if (err?.codeName !== 'NamespaceNotFound' && err?.code !== 26) throw err; // no collection yet: every guard is missing
-  }
-  return REQUIRED_CHAIN_INDEXES.filter((guard) => !existing.some((index) => index.unique && sameKey(index.key, guard.key)));
-}
+/** Development/test only: an EMPTY chain may create its own genesis head. Anywhere else the head comes from the explicit initialization. An allow-list: an unknown mode never bootstraps. */
+const bootstrapAllowed = (mode) => mode === 'relaxed';
 
 /**
- * Verify, and if possible restore, the database guards before appending. Fails CLOSED: when a guard is
- * missing and cannot be rebuilt (typically because the chain already forked, so the data violates it),
- * nothing is appended. Checked at most once per `indexRecheckMs`; every concurrent caller shares one check.
+ * True only when EVERY host this process is connected to is a loopback address, i.e. a local development/test database.
+ * The environment label (NODE_ENV) is a string anyone can mistype; a head must never be invented on a shared or remote
+ * database because of one. Unknown or unresolved hosts count as not loopback (fail closed).
  */
-async function ensureChainGuards(policy) {
-  if (Date.now() - indexGuardCheckedAt < policy.indexRecheckMs) return;
-  if (!indexGuardInFlight) {
-    indexGuardInFlight = (async () => {
-      let missing = await missingChainGuards();
-      for (const guard of missing) {
-        try {
-          await AuditLog.collection.createIndex(guard.key, guard.spec);
-        } catch (cause) {
-          throw auditChainIndexError(`the ${guard.label} guard is missing and cannot be rebuilt (${cause.codeName || cause.code || cause.message}); the chain may already contain a fork.`, cause);
-        }
-      }
-      missing = await missingChainGuards();
-      if (missing.length > 0) throw auditChainIndexError(`the ${missing.map((g) => g.label).join(' and ')} guard is still missing after a rebuild attempt.`);
-      indexGuardCheckedAt = Date.now();
-    })().finally(() => { indexGuardInFlight = null; });
+const connectedToLoopbackOnly = () => {
+  try {
+    const hosts = mongoose.connection.getClient().options.hosts;
+    return Array.isArray(hosts) && hosts.length > 0 && hosts.every((entry) => typeof entry?.host === 'string' && isLoopbackHost(entry.host.toLowerCase()));
+  } catch {
+    return false;
   }
-  await indexGuardInFlight;
-}
+};
 
 /**
  * AuditService — tamper-evident audit event emitter.
  *
- * Responsibilities:
- * - Record tamper-evident audit events for meaningful system actions.
- * - Support optional MongoDB session so audit writes participate in transactions.
- * - Provide structured audit records: who, what, when, on what entity, in which company.
+ * THE APPEND PROTOCOL (docs/integrity/AUDIT-CHAIN-HEAD.md; the Phase 1 model `head-cas`):
+ *   One authoritative head document {sequence n, hash h, version v}. An append is one MongoDB transaction that
+ *     1. reads the head,
+ *     2. builds the record with the existing canonical hash (sequence n+1, previousHash h),
+ *     3. advances the head with an update that matches ONLY {sequence n, hash h, version v} and sets
+ *        {n+1, h', v+1} (exactly one document must match),
+ *     4. inserts the record (carrying headVersion = v+1),
+ *     5. commits with the caller's business writes.
+ *   Two transactions cannot both advance the same head, so the chain cannot fork for any writer that follows the
+ *   protocol, whatever the state of the unique indexes (those, and a collection validator, are defence in depth and
+ *   block writers that do not know the protocol). Several events in one transaction extend each other because the
+ *   head is read inside the transaction and sees the transaction's own earlier advance.
  *
- * Concurrency (see docs/AUDIT-CHAIN-AND-SNAPSHOT-RECOVERY.md):
- *   Appending reads the chain head and inserts head+1. Two concurrent writers
- *   can read the same head; the database lets exactly one win, through TWO
- *   unique guards: sequenceNumber (one record per position) and previousHash
- *   (one successor per predecessor). Both are verified before appending and the
- *   append is refused (503) if they are missing and cannot be rebuilt.
- *   Outside a transaction the loser waits (exponential back-off, full jitter) and
- *   retries from the new head until a deadline; at the deadline the outcome is an
- *   explicit retryable 503 and nothing was written. Inside a transaction the
- *   collision aborts the transaction and runInTransaction retries the whole unit
- *   of work with the same policy. Either way the chain stays strictly linear.
- *   Inside a transaction the head is read from COMMITTED state (not the
- *   transaction snapshot), so the conflict window is read-to-commit, not the whole
- *   business transaction; the transaction's own earlier appends are included.
- *
- * Usage (outside transaction):
- *   await auditService.log({ action, actorId, actorEmail, actorRole,
- *                            entityType, entityId, meta });
- *
- * Usage (inside transaction):
- *   await auditService.log({ ... }, session);
+ *   log(params, session)   the session MUST be a caller-owned session with an active transaction; otherwise
+ *                          AUDIT_SESSION_REQUIRED and nothing is written. There is no silent independent commit.
+ *   logStandalone(params)  an audit-only event with no business mutation: opens and owns its transaction. Refused
+ *                          (AUDIT_NESTED_TRANSACTION) from inside a runInTransaction callback.
  *
  * ipAddress and companyId default to the current request context.
  */
 
 const auditService = {
-  /** Replaceable by tests; see DEFAULT_APPEND_POLICY. */
-  appendPolicy: DEFAULT_APPEND_POLICY,
+  /** Test seam: 'strict' | 'relaxed' | null (null = from configuration). */
+  _modeOverride: null,
 
-  /** Verify (and if possible restore) the chain's uniqueness guards now; throws 503 AUDIT_CHAIN_INDEX_UNAVAILABLE when impossible. */
-  async assertChainIndexes() {
-    indexGuardCheckedAt = 0;
-    await ensureChainGuards(this.appendPolicy);
-  },
-
-  /** Read-only: which of the chain's uniqueness guards are missing right now (never creates anything). */
-  async chainGuardStatus() {
-    const missing = await missingChainGuards();
-    return { ok: missing.length === 0, missing: missing.map((guard) => guard.label) };
-  },
-
-  /** Forget the cached guard check (tests, and operators after repairing indexes). */
-  _resetIndexGuard() {
-    indexGuardCheckedAt = 0;
+  /** 'strict' (production, unrecognized environments, or AUDIT_CHAIN_STRICT=true): the head must have been initialized by the operator. 'relaxed' (development/test): an empty chain bootstraps itself. */
+  protocolMode() {
+    const mode = this._modeOverride || (config.auditChainStrict ? 'strict' : 'relaxed');
+    if (mode !== 'strict' && mode !== 'relaxed') throw new Error(`unknown audit chain protocol mode ${JSON.stringify(mode)}`);
+    return mode;
   },
 
   /**
-   * Emit a single audit event.
+   * Append one event inside the caller's transaction.
    *
    * @param {object} params
    * @param {string}   params.action         - Uppercase event name, e.g. 'PAYROLL_RUN_CREATED'
@@ -187,7 +126,7 @@ const auditService = {
    * @param {string}   [params.newStatus]
    * @param {object}   [params.meta]         - Additional context (arbitrary key/value)
    * @param {string}   [params.ipAddress]    - Defaults to the request's client IP
-   * @param {import('mongoose').ClientSession} [session] - Optional transaction session
+   * @param {import('mongoose').ClientSession} session - REQUIRED: a session with an active transaction
    * @returns {Promise<AuditLog>}
    */
   async log(params, session = null) {
@@ -198,64 +137,65 @@ const auditService = {
       ipAddress: params.ipAddress ?? context.ipAddress ?? null,
     };
 
-    const attempt = async () => {
-      const policy = this.appendPolicy;
-      await ensureChainGuards(policy);
-      const startedAt = Date.now();
-      for (let tries = 1; ; tries += 1) {
-        try {
-          return await this._append(entry, session);
-        } catch (err) {
-          // Inside a transaction the refusal has already aborted it: runInTransaction re-runs the whole unit of work.
-          // A conflict raised by THIS insert is marked, so an exhausted retry budget is reported as audit contention.
-          if (session && (isAuditChainCollision(err) || isTransientTransactionConflict(err))) throw markAuditChainConflict(err);
-          if (!isAuditChainCollision(err)) throw err;
-          const waited = Date.now() - startedAt;
-          if (waited >= policy.maxWaitMs) throw auditChainContentionError(tries, waited, err);
-          await sleep(backoffDelayMs(tries, policy.baseDelayMs, policy.maxDelayMs));
-        }
-      }
-    };
-    return session ? attempt() : takeTurn(attempt);
+    if (!session) {
+      // The development fallback (no real transactions at all) is the ONLY case without a session, and only when the
+      // transaction policy allows it. With real transactions available a missing session is a bug, never a quiet commit.
+      if (config.requireTransactions || (await supportsTransactions())) throw auditSessionRequiredError('no session was passed');
+      return this._appendWithoutTransactions(entry);
+    }
+    if (typeof session.inTransaction !== 'function' || !session.inTransaction()) throw auditSessionRequiredError('the session has no active transaction');
+    // An audited append inside a transaction that was itself started from inside another transaction's callback would be a
+    // second, independent transaction contending with its parent on the one head document (stall until the retry budget is
+    // spent, or the inner effects committed twice when the parent re-runs). Refused, like logStandalone.
+    if (inNestedTransactionContext()) throw auditNestedTransactionError('nested-log');
+
+    try {
+      return await this._append(entry, session);
+    } catch (err) {
+      // A conflict raised by THIS append is marked, so an exhausted retry budget is reported as audit contention.
+      if (isTransientTransactionConflict(err) || isAuditChainConflict(err)) throw markAuditChainConflict(err);
+      throw err;
+    }
   },
 
   /**
-   * The current chain head. Always includes what is committed NOW; inside a transaction it also includes
-   * the transaction's own earlier appends. The higher sequence number wins, so two events logged in one
-   * transaction chain correctly while another writer's newer commit is never hidden behind the
-   * transaction's start-time snapshot.
+   * An audit-only event with no business mutation to be atomic with. Opens and owns its transaction (retried by
+   * runInTransaction). NOT for use inside a transaction callback: that would be a second, independent transaction.
    */
-  async _readHead(session) {
-    const committed = await AuditLog.findOne().sort({ sequenceNumber: -1 }).lean();
-    if (!session) return committed;
-    const own = await AuditLog.findOne().sort({ sequenceNumber: -1 }).session(session).lean();
-    if (!own) return committed;
-    if (!committed) return own;
-    return own.sequenceNumber >= committed.sequenceNumber ? own : committed;
+  async logStandalone(params, options = {}) {
+    if (inTransactionContext()) throw auditNestedTransactionError();
+    return runInTransaction((session) => this.log(params, session), { label: 'audit.standalone', ...options });
   },
 
-  async _append(params, session) {
-    const {
-      action,
-      actorId,
-      actorEmail,
-      actorRole,
-      entityType,
-      entityId,
-      companyId = null,
-      previousStatus = null,
-      newStatus = null,
-      meta = {},
-      ipAddress = null,
-    } = params;
+  /** The head to extend, read inside the transaction (so it includes this transaction's own earlier advances). */
+  async _loadHead(session) {
+    const head = await heads().findOne({ _id: HEAD_ID }, { session });
+    if (head) return head;
+    if (!bootstrapAllowed(this.protocolMode())) throw auditChainNotInitializedError('there is no head document');
+    if (!connectedToLoopbackOnly()) throw auditChainNotInitializedError('there is no head document, and the relaxed protocol only creates one on a loopback (local development/test) database');
+    const existing = await AuditLog.collection.countDocuments({}, { session, limit: 1 });
+    if (existing > 0) throw auditChainNotInitializedError('the chain has records but no head document');
+    const genesis = {
+      _id: HEAD_ID, scope: 'global', formatVersion: 1, sequence: 0, hash: GENESIS_HASH, version: 1,
+      baseline: { sequence: 0, hash: GENESIS_HASH, source: 'auto-bootstrap-empty', at: new Date(), operator: null, planDigest: null, commit: null },
+    };
+    try {
+      await heads().insertOne(genesis, { session });
+    } catch (error) {
+      if (error?.code === 11000) throw auditChainHeadConflictError('another transaction created the head first');
+      throw error;
+    }
+    return genesis;
+  },
 
-    const latest = await this._readHead(session);
+  _build(entry, head) {
+    const {
+      action, actorId, actorEmail, actorRole, entityType, entityId, companyId = null,
+      previousStatus = null, newStatus = null, meta = {}, ipAddress = null,
+    } = entry;
     const createdAt = new Date();
-    const sequenceNumber = latest ? latest.sequenceNumber + 1 : 1;
-    const previousHash = latest ? latest.hash : GENESIS_HASH;
-    const redactedMeta = normalize(meta);
     const logEntry = new AuditLog({
-      sequenceNumber,
+      sequenceNumber: head.sequence + 1,
       action,
       actorId,
       actorEmail,
@@ -265,18 +205,179 @@ const auditService = {
       entityId,
       previousStatus,
       newStatus,
-      meta: redactedMeta,
+      meta: normalize(meta),
       ipAddress,
-      previousHash,
+      previousHash: head.hash,
+      headVersion: head.version + 1,
       createdAt,
       updatedAt: createdAt,
     });
-
     logEntry.hash = calculateAuditHash(hashPayload(logEntry));
-
-    const options = session ? { session } : {};
-    await logEntry.save(options);
     return logEntry;
+  },
+
+  async _append(entry, session) {
+    const head = await this._loadHead(session);
+    const logEntry = this._build(entry, head);
+
+    // Advance the head: matches only the exact state this transaction read. A concurrent committed advance makes the
+    // server raise WriteConflict; a stale match (should not happen inside one snapshot) matches nothing. Either way
+    // the whole transaction is retried from a fresh head.
+    const advanced = await heads().updateOne(
+      { _id: HEAD_ID, sequence: head.sequence, hash: head.hash, version: head.version },
+      { $set: { sequence: logEntry.sequenceNumber, hash: logEntry.hash }, $inc: { version: 1 } },
+      { session },
+    );
+    if (advanced.matchedCount !== 1 || advanced.modifiedCount !== 1) {
+      throw auditChainHeadConflictError(`the conditional head update matched ${advanced.matchedCount} document(s)`);
+    }
+    try {
+      await logEntry.save({ session });
+    } catch (error) {
+      // The head said this position was free; a unique index says it is taken. A writer outside the protocol wrote
+      // to the chain. That is not contention and retrying cannot fix it.
+      if (isAuditChainCollision(error)) throw auditChainInconsistentError('a unique index refused a record at a position the head said was free', error);
+      throw error;
+    }
+    return logEntry;
+  },
+
+  /** Development/test fallback WITHOUT real transactions: NOT atomic. The head advance and the insert are two writes; a failed insert reverts the head best-effort. */
+  async _appendWithoutTransactions(entry) {
+    for (let attempt = 1; ; attempt += 1) {
+      let head;
+      try {
+        head = await this._loadHead(undefined);
+      } catch (error) {
+        // Two first appends on an empty chain race to create the head (no snapshot to turn the loser into a WriteConflict
+        // here, so it sees a duplicate key). The loser takes another turn from the head the winner created.
+        if (!isAuditChainConflict(error) || attempt >= DEGRADED_MAX_ATTEMPTS) throw error;
+        await sleep(backoffDelayMs(attempt, 2, 100));
+        continue;
+      }
+      const logEntry = this._build(entry, head);
+      const advanced = await heads().updateOne(
+        { _id: HEAD_ID, sequence: head.sequence, hash: head.hash, version: head.version },
+        { $set: { sequence: logEntry.sequenceNumber, hash: logEntry.hash }, $inc: { version: 1 } },
+      );
+      if (advanced.matchedCount !== 1) {
+        if (attempt >= DEGRADED_MAX_ATTEMPTS) throw auditChainHeadConflictError('retries exhausted without real transactions');
+        await sleep(backoffDelayMs(attempt, 2, 100));
+        continue;
+      }
+      try {
+        await logEntry.save();
+        return logEntry;
+      } catch (error) {
+        await heads().updateOne(
+          { _id: HEAD_ID, version: head.version + 1, hash: logEntry.hash },
+          { $set: { sequence: head.sequence, hash: head.hash }, $inc: { version: -1 } },
+        ).catch(() => {});
+        if (isAuditChainCollision(error)) throw auditChainInconsistentError('a unique index refused a record at a position the head said was free', error);
+        throw error;
+      }
+    }
+  },
+
+  /**
+   * READ-ONLY. Does the head agree with the last committed record? Reads both in one snapshot (when transactions
+   * exist) so a concurrent append cannot make a healthy chain look broken.
+   * @returns {{ ok: boolean, code: string|null, reason: string|null, head: object|null, tail: object|null }}
+   */
+  async verifyHead() {
+    const read = async (session) => ({
+      head: await heads().findOne({ _id: HEAD_ID }, { session }),
+      tail: await AuditLog.collection.find({}, { session, sort: { sequenceNumber: -1 }, limit: 1, projection: { sequenceNumber: 1, hash: 1, headVersion: 1 } }).next(),
+    });
+    let snapshot;
+    if (await supportsTransactions()) {
+      const session = await mongoose.startSession();
+      try {
+        session.startTransaction({ readConcern: { level: 'snapshot' } });
+        snapshot = await read(session);
+        await session.commitTransaction();
+      } finally {
+        await session.endSession();
+      }
+    } else {
+      snapshot = await read(undefined);
+    }
+    const { head, tail } = snapshot;
+    const result = (ok, code, reason) => ({ ok, code, reason, head, tail });
+    if (!head) return result(false, 'HEAD_MISSING', 'there is no head document');
+    if (!tail) {
+      return head.sequence === 0 && head.hash === GENESIS_HASH && head.version === 1
+        ? result(true, null, null)
+        : result(false, 'HEAD_AHEAD_OF_CHAIN', `the chain is empty but the head says sequence ${head.sequence}, version ${head.version}`);
+    }
+    if (head.sequence !== tail.sequenceNumber) return result(false, 'HEAD_SEQUENCE_MISMATCH', `head sequence ${head.sequence} but the last record is ${tail.sequenceNumber}`);
+    if (head.hash !== tail.hash) return result(false, 'HEAD_HASH_MISMATCH', `head hash ${head.hash} but the last record's hash is ${tail.hash}`);
+    if (tail.headVersion !== undefined) {
+      if (head.version !== tail.headVersion) return result(false, 'HEAD_VERSION_MISMATCH', `head version ${head.version} but the last record carries headVersion ${tail.headVersion}`);
+    } else if (head.version !== 1 || head.baseline?.sequence !== tail.sequenceNumber) {
+      return result(false, 'HEAD_VERSION_MISMATCH', `no record carries a headVersion yet, but the head is at version ${head.version} (baseline sequence ${head.baseline?.sequence})`);
+    }
+    return result(true, null, null);
+  },
+
+  /** READ-ONLY. Is an index build running on the audit collection right now? 'UNAVAILABLE' (not 'NONE') when the database user may not ask. */
+  async indexBuildState() {
+    try {
+      const ns = `${mongoose.connection.name}.${AUDIT_COLLECTION}`;
+      const operations = await mongoose.connection.getClient().db('admin')
+        .aggregate([{ $currentOp: { allUsers: true } }, { $match: { ns, 'command.createIndexes': { $exists: true } } }])
+        .toArray();
+      return { state: operations.length > 0 ? 'RUNNING' : 'NONE', detail: null };
+    } catch (error) {
+      return { state: 'UNAVAILABLE', detail: error.message };
+    }
+  },
+
+  /** READ-ONLY. The three unique indexes and the validator, judged against the exact specification (auditChainSpec). */
+  async databaseShape() {
+    let live = [];
+    try {
+      live = await AuditLog.collection.indexes();
+    } catch (err) {
+      if (err?.codeName !== 'NamespaceNotFound' && err?.code !== 26) throw err;
+    }
+    const info = await mongoose.connection.db.listCollections({ name: AUDIT_COLLECTION }).toArray();
+    return { indexes: evaluateIndexes(live), validator: evaluateValidator(info[0]?.options) };
+  },
+
+  /** READ-ONLY. Compatibility view used by the reconciliation report: which required indexes are not effective. */
+  async chainGuardStatus() {
+    const { indexes } = await this.databaseShape();
+    const missing = indexes.filter((index) => index.status !== 'OK').map((index) => `${index.label}${index.status === 'INCOMPATIBLE' ? ` (incompatible: ${index.detail})` : ''}`);
+    return { ok: missing.length === 0, missing };
+  },
+
+  /**
+   * READ-ONLY. Everything an operator or a readiness probe needs: head consistency, exact index specifications,
+   * the validator and a running index build. `ok` is false only for ERRORS; in relaxed mode (development/test) a
+   * missing index or validator and a not-yet-created head on an empty chain are warnings, never errors.
+   */
+  async protocolStatus({ checkBuilds = true } = {}) {
+    const mode = this.protocolMode();
+    const issues = [];
+    const add = (severity, code, detail) => issues.push({ severity, code, detail });
+    const shape = await this.databaseShape();
+    for (const index of shape.indexes) {
+      if (index.status === 'INCOMPATIBLE') add('error', 'INDEX_INCOMPATIBLE', `${index.label}: ${index.detail}`);
+      else if (index.status === 'MISSING') add(mode === 'strict' ? 'error' : 'warning', 'INDEX_MISSING', index.label);
+    }
+    if (shape.validator.status === 'INCOMPATIBLE') add('error', 'VALIDATOR_INCOMPATIBLE', shape.validator.detail);
+    else if (shape.validator.status === 'MISSING') add(mode === 'strict' ? 'error' : 'warning', 'VALIDATOR_MISSING', 'the collection validator that blocks writers outside the protocol is not set');
+    const head = await this.verifyHead();
+    if (!head.ok) {
+      const emptyChain = head.code === 'HEAD_MISSING' && (await AuditLog.collection.countDocuments({}, { limit: 1 })) === 0;
+      if (emptyChain && mode === 'relaxed' && connectedToLoopbackOnly()) add('warning', 'HEAD_NOT_YET_CREATED', 'the chain is empty; the head is created by the first audited event');
+      else add('error', head.code, head.reason);
+    }
+    const build = checkBuilds ? await this.indexBuildState() : { state: 'SKIPPED', detail: null };
+    if (build.state === 'RUNNING') add('error', 'INDEX_BUILD_RUNNING', 'an index build on the audit collection has not finished');
+    else if (build.state === 'UNAVAILABLE') add('warning', 'INDEX_BUILD_UNOBSERVABLE', `cannot observe running index builds (${build.detail}); an unfinished build looks like a finished index`);
+    return { ok: !issues.some((i) => i.severity === 'error'), mode, issues, indexes: shape.indexes, validator: shape.validator, head: { ok: head.ok, code: head.code, reason: head.reason, sequence: head.head?.sequence ?? null, version: head.head?.version ?? null }, build };
   },
 
   /**
@@ -374,6 +475,9 @@ const auditService = {
     const finding = (code, detail, record) => {
       if (findings.length < MAX_BACKFILL_FINDINGS) findings.push({ code, detail, recordId: record ? String(record._id) : null, sequenceNumber: record?.sequenceNumber ?? null });
     };
+    if (await heads().findOne({ _id: HEAD_ID }, { projection: { _id: 1 } })) {
+      finding('HEAD_ALREADY_INITIALIZED', 'the chain head exists: records filled in now would bypass it. Legacy records must be migrated BEFORE the head is initialized', null);
+    }
 
     // Pass 1: the chained records must form a valid chain from genesis (same rules as verifyAuditChain).
     let expectedSequence = 1;

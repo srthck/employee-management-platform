@@ -558,7 +558,7 @@ const payrollRunService = {
       resolvedAt: new Date(),
     });
 
-    await auditService.log({
+    await auditService.logStandalone({
       action:     'PAYROLL_PREFLIGHT_COMPLETED',
       actorId:    actor.id,
       actorEmail: actor.email,
@@ -658,7 +658,7 @@ const payrollRunService = {
     // C7: Delete stale staging results from any prior failed attempt
     await payrollRunRepository.deleteStagingResults(runId, currentVersion - 1);
 
-    await auditService.log({
+    await auditService.logStandalone({
       action:         'PAYROLL_PROCESSING_STARTED',
       actorId:        actor.id,
       actorEmail:     actor.email,
@@ -1236,7 +1236,7 @@ const payrollRunService = {
       if (!failed) continue;
 
       recovered += 1;
-      await auditService.log({
+      await auditService.logStandalone({
         action:         'PAYROLL_PROCESSING_FAILED',
         actorId:        SYSTEM_ACTOR.id,
         actorEmail:     SYSTEM_ACTOR.email,
@@ -1265,7 +1265,7 @@ const payrollRunService = {
     );
 
     if (failed) {
-      await auditService.log({
+      await auditService.logStandalone({
         action:         'PAYROLL_PROCESSING_FAILED',
         actorId:        actor.id,
         actorEmail:     actor.email,

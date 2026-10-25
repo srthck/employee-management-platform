@@ -47,6 +47,7 @@ const CONFIG_URL = pathToFileURL(path.join(BACKEND, 'src/config/environment.js')
 
 const { default: app } = await import('./src/app.js');
 const { default: AuditLog } = await import('./src/models/AuditLog.js');
+const { default: AuditChainHead } = await import('./src/models/AuditChainHead.js');
 const { default: auditService, GENESIS_HASH } = await import('./src/services/auditService.js');
 const { assertRealTransactions, supportsTransactions, resetTransactionCapabilityCache, runInTransaction } = await import('./src/utils/transaction.js');
 const { resolveTransactionPolicy, mongoHosts, isLoopbackOnlyUri } = await import('./src/config/transactionPolicy.js');
@@ -62,6 +63,9 @@ let baseUrl;
 before(async () => {
   await mongoose.connect(TEST_DB_URI, { serverSelectionTimeoutMS: 5000 });
   await mongoose.connection.dropDatabase();
+  // Mongoose creates the schema indexes in the background after the first use of a model. Readiness (correctly) reports an
+  // unfinished index build as not ready, so tests that probe readiness wait for the indexes first.
+  await Promise.all([AuditLog.init(), AuditChainHead.init()]);
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
   baseUrl = `http://127.0.0.1:${server.address().port}/api`;
@@ -180,15 +184,18 @@ describe('A — transaction policy: no silent fallback', () => {
       assert.equal(body.status, 'not_ready');
       assert.equal(body.transactions, 'unavailable');
       assert.deepEqual(Object.keys(body.transactionPolicy).sort(), ['environmentClass', 'optOutHonoured', 'optOutRequested', 'requireTransactions']);
+      assert.ok(body.auditChain && typeof body.auditChain.ok === 'boolean', 'readiness also reports the audit chain protocol state');
       assert.equal(body.transactionPolicy.requireTransactions, true);
     } finally {
       if (original) Object.defineProperty(mongoose.connection.db, 'admin', original); else delete mongoose.connection.db.admin;
       resetTransactionCapabilityCache();
     }
     assert.equal(await supportsTransactions(), true, 'restored');
+    app.locals.resetAuditReadiness();
     const ready = await fetch(`${baseUrl.replace('/api', '')}/api/ready`);
-    assert.equal(ready.status, 200);
-    assert.equal((await ready.json()).transactions, 'supported');
+    const readyBody = await ready.json();
+    assert.equal(ready.status, 200, JSON.stringify(readyBody));
+    assert.equal(readyBody.transactions, 'supported');
   });
 });
 
@@ -197,10 +204,13 @@ describe('A — transaction policy: no silent fallback', () => {
 // ════════════════════════════════════════════════════════════════════════════════════════════════
 
 const actorId = new mongoose.Types.ObjectId();
-const resetAudit = async () => { await AuditLog.collection.drop().catch(() => {}); auditService._resetIndexGuard(); };
+const resetAudit = async () => { await AuditLog.collection.drop().catch(() => {}); await AuditChainHead.collection.drop().catch(() => {}); };
 const dropAuditIndexes = () => AuditLog.collection.dropIndexes().catch(() => {});
+// A chain as it existed BEFORE the head protocol: valid hashes, no head document, no headVersion on the records.
 const appendChained = async (count, prefix = 'CHAINED') => {
-  for (let i = 1; i <= count; i += 1) await auditService.log({ action: `${prefix}_${i}`, actorId, entityType: 'TEST', entityId: new mongoose.Types.ObjectId(), meta: { i } });
+  for (let i = 1; i <= count; i += 1) await auditService.logStandalone({ action: `${prefix}_${i}`, actorId, entityType: 'TEST', entityId: new mongoose.Types.ObjectId(), meta: { i } });
+  await AuditChainHead.collection.deleteMany({});
+  await AuditLog.collection.updateMany({}, { $unset: { headVersion: 1 } });
 };
 const legacy = (action, createdAt, extra = {}) => ({ action, actorId, entityType: 'TEST', entityId: new mongoose.Types.ObjectId(), meta: {}, createdAt, updatedAt: createdAt, ...extra });
 const insertLegacy = (...docs) => AuditLog.collection.insertMany(docs);
@@ -275,8 +285,10 @@ describe('B — startup never rewrites, repairs or re-seals audit history', () =
     try {
       await sleep(1500); // time for any startup migration to (wrongly) run
       const ready = await fetch(`http://127.0.0.1:${running.port}/api/ready`);
-      assert.equal(ready.status, 200);
       const body = await ready.json();
+      // A chain that has records but no head document is NOT ready: an operator must initialize the head first.
+      assert.equal(ready.status, 503);
+      assert.ok(body.auditChain.issues.includes('error:HEAD_MISSING'), JSON.stringify(body.auditChain));
       assert.equal(body.transactions, 'supported');
       assert.equal(body.transactionPolicy.requireTransactions, true);
       assert.equal(body.transactionPolicy.environmentClass, 'test');

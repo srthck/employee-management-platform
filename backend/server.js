@@ -57,6 +57,18 @@ const startServer = async () => {
       logger.warn('REQUIRE_TRANSACTIONS=false on a standalone MongoDB: payroll writes are NOT atomic.');
     }
 
+    // The audit chain protocol (head document, exact index specifications, validator) is judged and REPORTED here;
+    // readiness (/api/ready) keeps failing while it is not acceptable. This code creates and repairs nothing. Be aware that
+    // Mongoose itself (autoIndex, its default) builds the schema-declared indexes of every model when it connects, including
+    // the three unique chain indexes: additive and idempotent, but NOT a controlled step. What only the explicit
+    // initialization (scripts/audit-chain-head.mjs) does is create the head and set the collection validator.
+    try {
+      const chain = await auditService.protocolStatus();
+      logger[chain.ok ? 'info' : 'error']('Audit chain protocol status', { ok: chain.ok, mode: chain.mode, issues: chain.issues.map((i) => `${i.severity}:${i.code}: ${i.detail}`) });
+    } catch (error) {
+      logger.error('Audit chain protocol status unavailable', { error: error.message });
+    }
+
     // Startup NEVER rewrites, repairs or re-seals audit history. Records that predate the hash chain are only
     // reported; migrating them is an explicit, reviewed maintenance step (scripts/audit-chain-legacy-backfill.mjs).
     const { unchainedRecords } = await auditService.legacyChainStatus();

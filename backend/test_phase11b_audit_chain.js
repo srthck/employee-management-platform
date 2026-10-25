@@ -23,9 +23,9 @@ after(async () => {
 
 test('audit chain detects historical tampering', async () => {
   const params = { actorId, actorEmail: 'audit-test@example.invalid', actorRole: 'admin', entityType: 'TEST', entityId, meta: { token: 'should-not-persist' } };
-  const first = await auditService.log({ ...params, action: 'TEST_ONE' });
-  const second = await auditService.log({ ...params, action: 'TEST_TWO' });
-  const third = await auditService.log({ ...params, action: 'TEST_THREE' });
+  const first = await auditService.logStandalone({ ...params, action: 'TEST_ONE' });
+  const second = await auditService.logStandalone({ ...params, action: 'TEST_TWO' });
+  const third = await auditService.logStandalone({ ...params, action: 'TEST_THREE' });
 
   assert.equal(first.sequenceNumber, 1);
   assert.equal(first.previousHash, GENESIS_HASH);

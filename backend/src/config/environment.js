@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import { resolveTransactionPolicy } from './transactionPolicy.js';
+import { resolveAuditChainPolicy } from './auditChainPolicy.js';
 
 /**
  * Environment Configuration
@@ -84,6 +85,11 @@ const transactionPolicy = resolveTransactionPolicy({
   mongoUri: env.MONGO_URI,
 });
 
+const auditChainPolicy = resolveAuditChainPolicy({
+  environmentClass: transactionPolicy.environmentClass,
+  strictFlag: env.AUDIT_CHAIN_STRICT,
+});
+
 const frontendUrl = env.FRONTEND_URL || 'http://localhost:5173';
 const developmentOrigins = [
   'http://localhost:5173',
@@ -111,6 +117,11 @@ const config = {
   // never for an unrecognized NODE_ENV, never against a non-loopback database).
   requireTransactions: transactionPolicy.requireTransactions,
   transactionPolicy,
+  // The audit chain head must have been initialized by the operator (scripts/audit-chain-head.mjs) in production, in any
+  // environment we cannot classify and whenever AUDIT_CHAIN_STRICT is true OR not understood; only development and test
+  // may bootstrap an EMPTY chain (and only on a loopback database). Nothing can make production relaxed.
+  auditChainPolicy,
+  auditChainStrict: auditChainPolicy.strict,
 
   // Authentication
   jwtSecret:

@@ -102,6 +102,13 @@ const auditLogSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    // The version of the chain head produced by the transition that appended this record (see AuditChainHead).
+    // NOT part of the hash payload. Records written before the head protocol do not have it; every new record does,
+    // and the collection validator refuses a new record that lacks it (blocks writers that do not know the protocol).
+    headVersion: {
+      type: Number,
+      min: 1,
+    },
     hash: {
       type: String,
       required: true,
@@ -113,18 +120,30 @@ const auditLogSchema = new mongoose.Schema(
   }
 );
 
-// ─── Chain-integrity indexes (the database, not the application, enforces a linear chain) ───
-// sequenceNumber is unique (declared on the field above): one record per position.
-// previousHash is unique too: a predecessor has exactly ONE successor, so two valid successors to the
-// same predecessor cannot exist whatever sequence numbers they carry. It is a PARTIAL index: records
-// written before chaining existed have no previousHash and must not collide with each other.
-// auditService refuses to append when either guard is missing and cannot be rebuilt.
+// ─── Chain-integrity indexes: DEFENCE IN DEPTH ────────────────────────────────────────────────
+// Linearity of the chain comes from the transactional head protocol in auditService (one head document advanced by
+// compare-and-set in the same transaction as the record). These three unique indexes and the collection validator
+// (src/services/auditChainSpec.js is the exact specification) are a second, independent barrier, and the validator
+// is what blocks writers that do not know the protocol.
+//   sequenceNumber (declared on the field above): one record per position.
+//   previousHash: a predecessor has exactly ONE successor. PARTIAL, so records written before chaining existed
+//                 (no previousHash) do not collide with each other.
+//   headVersion: one record per head transition. PARTIAL, so records written before the head protocol do not collide.
+// The names and options below are compared against the live database by auditChainSpec.evaluateIndexes().
 auditLogSchema.index(
   { previousHash: 1 },
   {
     unique: true,
     name: 'previousHash_unique_successor',
     partialFilterExpression: { previousHash: { $type: 'string' } },
+  }
+);
+auditLogSchema.index(
+  { headVersion: 1 },
+  {
+    unique: true,
+    name: 'headVersion_unique_transition',
+    partialFilterExpression: { headVersion: { $type: 'number' } },
   }
 );
 

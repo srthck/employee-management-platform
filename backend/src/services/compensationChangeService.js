@@ -350,10 +350,12 @@ const compensationChangeService = {
     let activated = 0;
 
     for (const { _id } of due) {
+      // The callback may run more than once (a retried transaction), so it must not touch anything outside the
+      // transaction: it RETURNS whether it activated the change, and the count is taken only after the commit.
       // eslint-disable-next-line no-await-in-loop
-      await runInTransaction(async (session) => {
+      const didActivate = await runInTransaction(async (session) => {
         const request = await CompensationChangeRequest.findOne({ _id, status: 'SCHEDULED' }).session(session);
-        if (!request) return;
+        if (!request) return false;
         request.status = 'EFFECTIVE';
         request.effectiveAt = now;
         await request.save({ session });
@@ -369,8 +371,9 @@ const compensationChangeService = {
           newStatus: 'EFFECTIVE',
           meta: { employeeId: String(request.employeeId), effectiveFrom: dateOnly(request.effectiveFrom) },
         }, session);
-        activated += 1;
+        return true;
       }, { label: 'compensation.change.activate' });
+      if (didActivate) activated += 1;
     }
     return activated;
   },

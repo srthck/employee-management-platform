@@ -48,12 +48,14 @@ const { default: PayrollRun } = await import('./src/models/PayrollRun.js');
 const { default: PayrollStagingResult } = await import('./src/models/PayrollStagingResult.js');
 const { default: PayrollSnapshot, computeSnapshotHash } = await import('./src/models/PayrollSnapshot.js');
 const { default: AuditLog } = await import('./src/models/AuditLog.js');
+const { default: AuditChainHead } = await import('./src/models/AuditChainHead.js');
+const { evaluateIndexes } = await import('./src/services/auditChainSpec.js');
 const { default: IdempotencyRecord } = await import('./src/models/IdempotencyRecord.js');
 const { default: auditService } = await import('./src/services/auditService.js');
 const { default: payrollRunService } = await import('./src/services/payrollRunService.js');
 const { default: payrollSnapshotService } = await import('./src/services/payrollSnapshotService.js');
 const { default: payrollFinalizationService } = await import('./src/services/payrollFinalizationService.js');
-const { runInTransaction } = await import('./src/utils/transaction.js');
+const { runInTransaction, transactionLane } = await import('./src/utils/transaction.js');
 const recon = await import('./scripts/lib/snapshotReconciliation.mjs');
 
 const MODELS = [Admin, Company, Employee, EmployeeAccount, SalaryStructure, ComplianceRuleVersion, PayrollRun, PayrollStagingResult, PayrollSnapshot, AuditLog, IdempotencyRecord];
@@ -67,7 +69,8 @@ const shared = {};
 
 const actorId = new mongoose.Types.ObjectId();
 const params = (i, action = 'HARDENING_TEST') => ({ action, actorId, entityType: 'TEST', entityId: new mongoose.Types.ObjectId(), meta: { i } });
-const resetChain = () => AuditLog.collection.deleteMany({});
+// A pristine empty chain is the records AND the head: a head that no longer matches the chain is (correctly) refused.
+const resetChain = async () => { await AuditLog.collection.deleteMany({}); await AuditChainHead.collection.deleteMany({}); };
 const sequences = async () => (await AuditLog.collection.find({}, { projection: { sequenceNumber: 1 } }).sort({ sequenceNumber: 1 }).toArray()).map((d) => d.sequenceNumber);
 const assertContiguous = async (expected) => {
   const seqs = await sequences();
@@ -76,11 +79,14 @@ const assertContiguous = async (expected) => {
 const assertChainValid = async (message = '') => {
   const verification = await auditService.verifyAuditChain();
   assert.equal(verification.valid, true, `${message} ${verification.reason}`);
+  const records = await AuditLog.collection.countDocuments({});
+  if (records > 0) await assertHeadConsistent(message); // a valid chain AND a head that agrees with its last record
   return verification;
 };
 const indexes = async () => AuditLog.collection.indexes();
 // Always reset the chain FIRST: a previous test may have left a deliberately forked chain, over which a unique index cannot be built.
-const restoreIndexes = async () => { await AuditLog.collection.dropIndexes(); await AuditLog.createIndexes(); auditService._resetIndexGuard?.(); };
+const restoreIndexes = async () => { await AuditLog.collection.dropIndexes(); await AuditLog.createIndexes(); };
+const assertHeadConsistent = async (message = '') => { const head = await auditService.verifyHead(); assert.equal(head.ok, true, `${message} ${head.reason}`); return head; };
 
 function createClient() {
   let cookie = '';
@@ -151,17 +157,16 @@ after(async () => {
 describe('A — audit chain: the database allows exactly one successor per predecessor', () => {
   beforeEach(async () => { await resetChain(); await restoreIndexes(); });
 
-  test('the unique constraints exist: one on sequenceNumber and one on previousHash (a predecessor has one successor)', async () => {
+  test('the three defence-in-depth unique indexes exist with EXACTLY the required specification (sequenceNumber; previousHash partial string; headVersion partial number)', async () => {
+    assert.deepEqual(evaluateIndexes(await indexes()).map((r) => [r.id, r.status]), [['sequence', 'OK'], ['predecessor', 'OK'], ['headVersion', 'OK']]);
     const unique = (await indexes()).filter((index) => index.unique);
-    assert.ok(unique.some((index) => index.key.sequenceNumber === 1), 'unique sequenceNumber');
-    const successor = unique.find((index) => index.key.previousHash === 1);
-    assert.ok(successor, 'unique previousHash');
-    assert.deepEqual(successor.partialFilterExpression, { previousHash: { $type: 'string' } }, 'partial, so records written before chaining (no previousHash) cannot collide');
+    assert.deepEqual(unique.find((index) => index.key.previousHash === 1).partialFilterExpression, { previousHash: { $type: 'string' } }, 'partial, so records written before chaining (no previousHash) cannot collide');
+    assert.deepEqual(unique.find((index) => index.key.headVersion === 1).partialFilterExpression, { headVersion: { $type: 'number' } }, 'partial, so records written before the head protocol cannot collide');
   });
 
   test('the DATABASE rejects a second successor of the same predecessor even under a different sequence number', async () => {
-    const first = await auditService.log(params(1));
-    const second = await auditService.log(params(2));
+    const first = await auditService.logStandalone(params(1));
+    const second = await auditService.logStandalone(params(2));
     assert.equal(second.previousHash, first.hash);
     const forged = { ...second.toObject(), _id: new mongoose.Types.ObjectId(), sequenceNumber: 9999, hash: 'f'.repeat(64) };
     await assert.rejects(AuditLog.collection.insertOne(forged), (error) => error.code === 11000 && Boolean(error.keyPattern?.previousHash));
@@ -169,7 +174,7 @@ describe('A — audit chain: the database allows exactly one successor per prede
   });
 
   test('the DATABASE rejects a second record with the same sequence number', async () => {
-    const first = await auditService.log(params(1));
+    const first = await auditService.logStandalone(params(1));
     const forged = { ...first.toObject(), _id: new mongoose.Types.ObjectId(), previousHash: 'a'.repeat(64), hash: 'e'.repeat(64) };
     await assert.rejects(AuditLog.collection.insertOne(forged), (error) => error.code === 11000 && Boolean(error.keyPattern?.sequenceNumber));
     assert.equal(await AuditLog.collection.countDocuments({}), 1);
@@ -182,11 +187,28 @@ describe('A — audit chain: concurrent appends all succeed, linearly (liveness 
   test('100 concurrent appends in one process, three rounds: every one succeeds, sequence 1..N, chain valid', async () => {
     for (let round = 1; round <= 3; round += 1) {
       await resetChain();
-      const settled = await Promise.allSettled(Array.from({ length: 100 }, (_, i) => auditService.log(params(i))));
+      const settled = await Promise.allSettled(Array.from({ length: 100 }, (_, i) => auditService.logStandalone(params(i))));
       const failures = settled.filter((r) => r.status === 'rejected').map((r) => String(r.reason?.code ?? r.reason?.message));
       assert.deepEqual(failures, [], `round ${round}: an append must never fail merely because another was logged at the same moment`);
       await assertContiguous(100);
       await assertChainValid(`round ${round}`);
+    }
+  });
+
+  test('GENUINE contention (the per-process transaction lane is OFF): 60 concurrent audit-only appends race on the head; every outcome is a commit or the explicit bounded refusal, never a fork, and the head agrees with the chain', async () => {
+    transactionLane.enabled = false;
+    try {
+      const settled = await Promise.allSettled(Array.from({ length: 60 }, (_, i) => auditService.logStandalone(params(i), { maxAttempts: 40, maxWaitMs: 15000 })));
+      const committed = settled.filter((r) => r.status === 'fulfilled');
+      const refused = settled.filter((r) => r.status === 'rejected');
+      for (const r of refused) assert.equal(r.reason.code, 'AUDIT_CHAIN_CONTENTION', `a refusal must be the explicit bounded one, got ${r.reason?.code} ${r.reason?.message}`);
+      assert.equal(committed.length + refused.length, 60);
+      assert.ok(committed.length > 0, 'progress is made');
+      await assertContiguous(committed.length);
+      await assertChainValid('no fork under real contention');
+      assert.equal((await auditService.verifyHead()).head.version, 1 + committed.length, 'the head advanced exactly once per committed record');
+    } finally {
+      transactionLane.enabled = true;
     }
   });
 
@@ -208,13 +230,15 @@ describe('A — audit chain: concurrent appends all succeed, linearly (liveness 
   test('plain and transactional appends racing each other: all succeed, chain valid', async () => {
     const settled = await Promise.allSettled(Array.from({ length: 60 }, (_, i) => (i % 2
       ? runInTransaction((session) => auditService.log(params(i), session), { label: 'a6' })
-      : auditService.log(params(i)))));
+      : auditService.logStandalone(params(i)))));
     assert.deepEqual(settled.filter((r) => r.status === 'rejected').map((r) => String(r.reason?.code ?? r.reason?.message)), []);
     await assertContiguous(60);
     await assertChainValid();
   });
 
-  test('FOUR SEPARATE PROCESSES appending to one chain: every append succeeds, sequence 1..N, chain valid', async () => {
+  test('FOUR SEPARATE PROCESSES appending to one chain (two with the in-process queue OFF, two transactional): every outcome is a commit or the explicit bounded refusal; no fork; the head agrees; every committed business write exists exactly once', async () => {
+    const scratch = mongoose.connection.collection('audit_hardening_scratch');
+    await scratch.deleteMany({});
     const run = (count, mode) => new Promise((resolve, reject) => {
       const child = spawn(process.execPath, [WORKER, TEST_DB_URI, String(count), mode], { stdio: ['ignore', 'pipe', 'pipe'] });
       let out = '';
@@ -224,10 +248,40 @@ describe('A — audit chain: concurrent appends all succeed, linearly (liveness 
       child.on('error', reject);
       child.on('close', (code) => (code === 0 ? resolve(JSON.parse(out.trim().split('\n').pop())) : reject(new Error(`worker exited ${code}: ${err}`))));
     });
-    const results = await Promise.all([run(40, 'plain'), run(40, 'plain'), run(40, 'txn'), run(40, 'txn')]);
-    for (const result of results) assert.equal(result.rejected, 0, JSON.stringify(result));
+    const modes = ['plain-noqueue', 'plain-noqueue', 'txn', 'txn'];
+    const results = await Promise.all(modes.map((mode) => run(40, mode)));
+    let committed = 0;
+    let refused = 0;
+    for (const result of results) {
+      committed += result.fulfilled;
+      refused += result.rejected;
+      for (const code of Object.keys(result.rejectionCodes)) assert.equal(code, 'AUDIT_CHAIN_CONTENTION', `a refusal must be the explicit bounded one: ${JSON.stringify(result)}`);
+    }
+    assert.equal(committed + refused, 160, 'every operation ended as a commit or an explicit refusal');
+    assert.ok(committed >= 40, `real progress under contention (committed ${committed})`);
+    await assertContiguous(committed);
+    await assertChainValid('four processes');
+    assert.equal(await scratch.countDocuments({}), results.filter((_, i) => modes[i] === 'txn').reduce((sum, r) => sum + r.fulfilled, 0), 'every committed transactional operation wrote its business document exactly once, and no refused one did');
+  });
+
+  test('PRODUCTION CONFIGURATION, FOUR SEPARATE PROCESSES (the per-process transaction lane ON in each: two audit-only, two transactional): every append SUCCEEDS, sequence 1..N, chain valid, the head agrees, every business write exists exactly once', async () => {
+    const scratch = mongoose.connection.collection('audit_hardening_scratch');
+    await scratch.deleteMany({});
+    const run = (count, mode) => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [WORKER, TEST_DB_URI, String(count), mode], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      let err = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.stderr.on('data', (d) => { err += d; });
+      child.on('error', reject);
+      child.on('close', (code) => (code === 0 ? resolve(JSON.parse(out.trim().split('\n').pop())) : reject(new Error(`worker exited ${code}: ${err}`))));
+    });
+    const modes = ['plain', 'plain', 'txn-lane', 'txn-lane'];
+    const results = await Promise.all(modes.map((mode) => run(40, mode)));
+    for (const result of results) assert.equal(result.rejected, 0, `with the lane on no append may be refused: ${JSON.stringify(result)}`);
     await assertContiguous(160);
-    await assertChainValid();
+    await assertChainValid('four processes, lane on');
+    assert.equal(await scratch.countDocuments({}), 80, 'every transactional operation wrote its business document exactly once');
   });
 
   test('two audit events in ONE transaction are consecutive and linked; an abort leaves no trace and no gap', async () => {
@@ -240,7 +294,7 @@ describe('A — audit chain: concurrent appends all succeed, linearly (liveness 
       throw Object.assign(new Error('business failure after two audit writes'), { statusCode: 500 });
     }), /business failure/);
     await assertContiguous(2);
-    const next = await auditService.log(params(5));
+    const next = await auditService.logStandalone(params(5));
     assert.equal(next.sequenceNumber, 3, 'the aborted transaction consumed no sequence number');
     await assertChainValid();
   });
@@ -263,131 +317,100 @@ describe('A — audit chain: concurrent appends all succeed, linearly (liveness 
 describe('A — audit chain: explicit outcomes when an append cannot be made', () => {
   beforeEach(async () => { await resetChain(); await restoreIndexes(); });
 
-  test('exhausted contention is a named, retryable 503 (AUDIT_CHAIN_CONTENTION); nothing is written and the chain stays valid', async () => {
-    const original = auditService._append;
-    const policy = auditService.appendPolicy;
-    let calls = 0;
-    auditService._append = async () => { calls += 1; throw Object.assign(new Error('E11000 duplicate key'), { code: 11000, keyPattern: { sequenceNumber: 1 } }); };
-    auditService.appendPolicy = { ...policy, maxWaitMs: 300 };
-    try {
-      await assert.rejects(auditService.log(params(1)), (error) => error.code === 'AUDIT_CHAIN_CONTENTION' && error.statusCode === 503 && error.retryable === true);
-      assert.ok(calls > 1, 'it retried before giving up');
-    } finally {
-      auditService._append = original;
-      auditService.appendPolicy = policy;
-    }
-    assert.equal(await AuditLog.collection.countDocuments({}), 0);
-    await assertChainValid();
-  });
+  /** A transaction that has advanced the head and not committed: the head document is write-locked for everyone else. */
+  const holdHead = async () => {
+    const holder = await mongoose.startSession();
+    holder.startTransaction();
+    await auditService.log(params(0), holder);
+    return { release: async () => { await holder.abortTransaction(); await holder.endSession(); } };
+  };
 
-  test('inside a transaction an exhausted retry budget on AUDIT conflicts is the same explicit 503, nothing written; an unrelated conflict is not relabelled', async () => {
-    const original = auditService._append;
-    let calls = 0;
-    const transient = () => Object.assign(new Error('WriteConflict'), { code: 112, errorLabels: new Set(['TransientTransactionError']) });
-    auditService._append = async () => { calls += 1; throw transient(); };
+  test('exhausted contention is a named, retryable 503 (AUDIT_CHAIN_CONTENTION); nothing is written and the chain stays valid', async () => {
+    await auditService.logStandalone(params(1));
+    const held = await holdHead();
     try {
       await assert.rejects(
-        runInTransaction((session) => auditService.log(params(1), session), { label: 'a-exhaust', maxAttempts: 4, maxWaitMs: 5000 }),
+        auditService.logStandalone(params(2), { maxAttempts: 3, maxWaitMs: 5000 }),
         (error) => error.code === 'AUDIT_CHAIN_CONTENTION' && error.statusCode === 503 && error.retryable === true
       );
-      assert.equal(calls, 4, 'the whole unit of work was re-run up to the attempt limit');
-      calls = 0;
-      auditService._append = async () => { calls += 1; throw Object.assign(new Error('E11000 duplicate key'), { code: 11000, keyPattern: { previousHash: 1 } }); };
-      await assert.rejects(
-        runInTransaction((session) => auditService.log(params(2), session), { label: 'a-exhaust-2', maxAttempts: 3, maxWaitMs: 5000 }),
-        (error) => error.code === 'AUDIT_CHAIN_CONTENTION'
-      );
-      assert.equal(calls, 3, 'a previousHash collision is retried like a sequenceNumber collision');
     } finally {
-      auditService._append = original;
+      await held.release();
     }
+    assert.equal(await AuditLog.collection.countDocuments({}), 1, 'neither the refused append nor the aborted holder left a record');
+    await assertChainValid();
+    const after = await auditService.logStandalone(params(3));
+    assert.equal(after.sequenceNumber, 2, 'the refused attempts consumed no sequence number');
+  });
+
+  test('inside a business transaction an exhausted retry budget is the same explicit 503 and the WHOLE unit of work is re-run each attempt; an unrelated conflict is not relabelled', async () => {
+    const held = await holdHead();
+    const scratch = mongoose.connection.collection('audit_hardening_scratch');
+    await scratch.deleteMany({});
+    let executions = 0;
+    try {
+      await assert.rejects(
+        runInTransaction(async (session) => { executions += 1; await scratch.insertOne({ n: executions }, { session }); return auditService.log(params(1), session); }, { label: 'a-exhaust', maxAttempts: 4, maxWaitMs: 5000 }),
+        (error) => error.code === 'AUDIT_CHAIN_CONTENTION' && error.statusCode === 503 && error.retryable === true
+      );
+    } finally {
+      await held.release();
+    }
+    assert.equal(executions, 4, 'the whole unit of work was re-run up to the attempt limit');
+    assert.equal(await scratch.countDocuments({}), 0, 'no attempt left a business write behind');
     assert.equal(await AuditLog.collection.countDocuments({}), 0);
 
+    const transient = () => Object.assign(new Error('WriteConflict'), { code: 112, errorLabels: new Set(['TransientTransactionError']) });
     let attempts = 0;
     await assert.rejects(runInTransaction(async () => { attempts += 1; throw transient(); }, { label: 'business-conflict', maxAttempts: 3, maxWaitMs: 5000 }), (error) => error.code === 112);
-    assert.equal(attempts, 3, 'a conflict that did not come from the audit insert is retried, then reported unchanged');
+    assert.equal(attempts, 3, 'a conflict that did not come from the audit append is retried, then reported unchanged');
     await assertChainValid();
   });
 
-  test('a non-collision database error is NOT retried and is not disguised as contention', async () => {
+  test('a non-conflict database error is NOT retried and is not disguised as contention; a duplicate key from ANOTHER collection that merely mentions previousHash is not an audit event', async () => {
     const original = auditService._append;
     let calls = 0;
     auditService._append = async () => { calls += 1; throw Object.assign(new Error('disk exploded'), { code: 9999 }); };
     try {
-      await assert.rejects(auditService.log(params(1)), (error) => error.code === 9999);
+      await assert.rejects(auditService.logStandalone(params(1)), (error) => error.code === 9999);
       assert.equal(calls, 1);
+      calls = 0;
+      auditService._append = async () => {
+        calls += 1;
+        throw Object.assign(new Error('E11000 duplicate key error collection: payroll.employees index: email_1 dup key: { email: "previousHash@example.com" }'), { code: 11000, keyPattern: { previousHash: 1 } });
+      };
+      await assert.rejects(auditService.logStandalone(params(2), { maxAttempts: 5 }), (error) => error.code === 11000 && error.code !== 'AUDIT_CHAIN_CONTENTION');
+      assert.equal(calls, 1, 'an unrelated duplicate key is a single attempt and is reported as itself');
     } finally {
       auditService._append = original;
     }
   });
-});
 
-describe('A — audit chain: the unique-index guard fails closed', () => {
-  beforeEach(async () => { await resetChain(); await restoreIndexes(); });
-
-  test('a dropped unique index is rebuilt before appending (no data conflicts), and the append then succeeds', async () => {
-    await auditService.log(params(1));
-    await AuditLog.collection.dropIndex('sequenceNumber_1');
-    auditService._resetIndexGuard();
-    await auditService.log(params(2));
-    const unique = (await indexes()).filter((index) => index.unique);
-    assert.ok(unique.some((index) => index.key.sequenceNumber === 1), 'the guard restored the unique index');
-    await assertContiguous(2);
-  });
-
-  test('the guard re-checks periodically: an index dropped while the process is running is restored on the next append once the re-check interval has passed', async () => {
-    const policy = auditService.appendPolicy;
-    auditService.appendPolicy = { ...policy, indexRecheckMs: 0 };
+  test('a writer OUTSIDE the protocol that took the next position is detected WHEN THE UNIQUE INDEXES ARE PRESENT, not retried forever: AUDIT_CHAIN_HEAD_INCONSISTENT (503, not retryable), nothing written, head unchanged (with the indexes ineffective it is NOT detected at append time: pinned in test_audit_chain_head.js, group F2)', async () => {
+    const first = await auditService.logStandalone(params(1));
+    // a rogue raw insert at the position the head says is free (indexes present, so the database also refuses a duplicate)
+    const rogue = { ...first.toObject(), _id: new mongoose.Types.ObjectId(), sequenceNumber: 2, previousHash: first.hash, hash: 'c'.repeat(64) };
+    delete rogue.headVersion;
+    await AuditLog.collection.insertOne(rogue);
+    let calls = 0;
+    const original = auditService._append;
+    auditService._append = function counting(...args) { calls += 1; return original.apply(this, args); };
     try {
-      await auditService.log(params(1)); // the guard has now checked and cached
-      await AuditLog.collection.dropIndex('previousHash_unique_successor');
-      await auditService.log(params(2)); // no manual reset: the (zero) interval has elapsed
-      assert.ok((await indexes()).some((index) => index.unique && index.key.previousHash === 1), 'the dropped guard was restored without any operator action');
+      await assert.rejects(auditService.logStandalone(params(2)), (error) => error.code === 'AUDIT_CHAIN_HEAD_INCONSISTENT' && error.statusCode === 503 && error.retryable === false);
     } finally {
-      auditService.appendPolicy = policy;
+      auditService._append = original;
     }
-    auditService.appendPolicy = { ...policy, indexRecheckMs: 60 * 60 * 1000 };
-    try {
-      auditService._resetIndexGuard();
-      await auditService.log(params(3));
-      await AuditLog.collection.dropIndex('previousHash_unique_successor');
-      await auditService.log(params(4)); // inside the interval the cached check is trusted (documented residual window)
-      assert.equal((await indexes()).some((index) => index.unique && index.key.previousHash === 1), false, 'within the interval nothing re-checks: this is the documented window');
-    } finally {
-      auditService.appendPolicy = policy;
-      auditService._resetIndexGuard();
-    }
-  });
-
-  test('the guard verifies its own result: if a rebuild reports success but the guard is still missing, appends are refused', async () => {
-    await AuditLog.collection.dropIndex('previousHash_unique_successor');
-    auditService._resetIndexGuard();
-    const original = AuditLog.collection.createIndex;
-    AuditLog.collection.createIndex = async () => 'pretended-success';
-    try {
-      await assert.rejects(auditService.log(params(1)), (error) => error.code === 'AUDIT_CHAIN_INDEX_UNAVAILABLE' && error.statusCode === 503);
-    } finally {
-      AuditLog.collection.createIndex = original;
-    }
-    assert.equal(await AuditLog.collection.countDocuments({}), 0);
-  });
-
-  test('if the unique index is missing AND the chain already forked, appends are REFUSED (503 AUDIT_CHAIN_INDEX_UNAVAILABLE); nothing is written', async () => {
-    const first = await auditService.log(params(1));
-    await AuditLog.collection.dropIndexes();
-    await AuditLog.collection.insertOne({ ...first.toObject(), _id: new mongoose.Types.ObjectId(), hash: 'd'.repeat(64) }); // duplicate sequenceNumber 1
-    auditService._resetIndexGuard();
-    await assert.rejects(auditService.log(params(2)), (error) => error.code === 'AUDIT_CHAIN_INDEX_UNAVAILABLE' && error.statusCode === 503);
-    assert.equal(await AuditLog.collection.countDocuments({}), 2, 'the refused append wrote nothing');
-    const verification = await auditService.verifyAuditChain();
-    assert.equal(verification.valid, false, 'the fork stays detectable');
+    assert.equal(calls, 1, 'retrying cannot help, so it is not retried');
+    assert.equal(await AuditLog.collection.countDocuments({}), 2, 'only the first record and the rogue record exist');
+    const head = await auditService.verifyHead();
+    assert.equal(head.ok, false);
+    assert.equal(head.code, 'HEAD_SEQUENCE_MISMATCH', 'the head still says 1: operators see the disagreement');
   });
 });
 
 describe('A — audit chain: tamper-evidence after deliberate corruption (tamper-EVIDENT, not tamper-proof)', () => {
   beforeEach(async () => { await resetChain(); await restoreIndexes(); });
 
-  const buildChain = async (n) => { for (let i = 1; i <= n; i += 1) await auditService.log(params(i)); };
+  const buildChain = async (n) => { for (let i = 1; i <= n; i += 1) await auditService.logStandalone(params(i)); };
 
   test('deleting a middle record, rewriting a link, rewriting a hash and reordering are each detected, at the right sequence', async () => {
     await buildChain(5);
@@ -426,7 +449,7 @@ describe('A — audit chain: tamper-evidence after deliberate corruption (tamper
 
   test('concurrent appends racing a verification never make a valid chain look broken', async () => {
     await buildChain(10);
-    const writers = Array.from({ length: 30 }, (_, i) => auditService.log(params(100 + i)));
+    const writers = Array.from({ length: 30 }, (_, i) => auditService.logStandalone(params(100 + i)));
     const verifications = await Promise.all(Array.from({ length: 5 }, () => auditService.verifyAuditChain()));
     await Promise.all(writers);
     for (const verification of verifications) assert.equal(verification.valid, true, verification.reason);
