@@ -1,421 +1,222 @@
-import { useEffect, useState, useContext } from 'react';
+import { useContext } from 'react';
 import { Link } from 'react-router-dom';
-import apiClient from '../services/api';
+import '@fontsource-variable/schibsted-grotesk/wght.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
+import '../components/site/site.css';
 import { AuthContext } from '../contexts/AuthContext';
+import SiteNav from '../components/site/SiteNav';
+import ProoflineDemo from '../components/site/ProoflineDemo';
+import RunLifecycle from '../components/site/RunLifecycle';
+import ServiceStatus from '../components/site/ServiceStatus';
+import ProoflineMark from '../components/site/ProoflineMark';
 
 /**
- * PayGuard Landing Page
+ * PayGuard public site — "The Proofline".
  *
- * Professional landing page for the PayGuard payroll platform.
- * Existing authentication and backend health-check functionality
- * is preserved.
+ * Narrative: promise → a traced sample result → how a run closes → what the
+ * product does → what its integrity checks can and cannot prove → action.
+ * Design rules: docs/design/PROOFLINE-DESIGN-SYSTEM.md. Every product claim on
+ * this page names behaviour that exists in the backend today.
  */
 
+const CAPABILITIES = [
+  {
+    title: 'Payslips that explain themselves',
+    body: 'Each deduction shows the amount it was calculated on and the rule version that set it. Where a basis was not recorded, the payslip says so instead of guessing.',
+    where: 'Payslips · Employee self-service',
+  },
+  {
+    title: 'Variance that names a cause',
+    body: 'Pay changes against the last finalized run are matched to causes the payroll data can prove: a salary revision, a rule change, an enrolment change, a work-state change or part-period pay.',
+    where: 'Payroll run → Variance',
+  },
+  {
+    title: 'Effective-dated statutory rules',
+    body: 'EPF, ESI and professional-tax rules are stored as versions with effective dates and source notes. Past payroll keeps the version it used.',
+    where: 'Compliance',
+  },
+  {
+    title: 'Pay changes priced before approval',
+    body: 'A proposed change shows before, after and delta for gross, deductions, net pay and CTC, with the same rule versions on both sides. Under maker-checker, a second person approves it.',
+    where: 'Compensation',
+  },
+  {
+    title: 'Sensitive details, revealed on record',
+    body: 'Bank accounts and PAN, UAN, ESIC and PF identifiers are encrypted field by field. Revealing one takes a written reason, recorded in the audit trail before the value is shown.',
+    where: 'Employee profile',
+  },
+  {
+    title: 'Roles and separation of duties',
+    body: 'Administrator, payroll administrator, payroll approver, HR manager, auditor and employee. Under maker-checker, nobody approves their own calculation or pay proposal.',
+    where: 'Settings',
+  },
+];
+
+const CHECKS = [
+  ['Snapshot hash', 'Every finalized payroll record carries a SHA-256 hash of its canonical content. Verify recomputes it and reports a mismatch.'],
+  ['Audit chain', 'Each audit record holds the hash of the one before it. New records are appended through a single chain head inside a transaction, and verification walks the whole chain.'],
+  ['Atomic finalization', 'Finalization requires database transactions: the run and its snapshots are finalized together or not at all.'],
+  ['Encrypted fields', 'Bank and statutory identifiers are encrypted at field level and looked up through blind indexes.'],
+];
+
+const LIMITS = [
+  ['Tamper-evident, not tamper-proof', 'A hash shows that a record changed. It cannot stop someone with database access from changing it.'],
+  ['The chain starts from a trusted point', 'Without an external checkpoint, removal of records before the chain’s recorded starting point cannot be proven.'],
+  ['Income tax is not calculated yet', 'Net pay is shown before TDS, and every payslip says so.'],
+  ['No certification claimed', 'PayGuard does not claim any third-party security or compliance certification.'],
+];
+
+function SectionMark({ index, label }) {
+  return (
+    <p className="site-section-mark">
+      <span className="site-section-mark__node" aria-hidden="true" />
+      <span className="site-section-mark__index" aria-hidden="true">{index}</span>
+      {label}
+    </p>
+  );
+}
+
 export default function Home() {
-  const { user, logout } = useContext(AuthContext);
-
-  const [apiStatus, setApiStatus] = useState(null);
-  const [apiLoading, setApiLoading] = useState(true);
-
-  useEffect(() => {
-    const checkAPI = async () => {
-      try {
-        const response = await apiClient.get('/health');
-        setApiStatus(response.data);
-      } catch (err) {
-        setApiStatus(null);
-      } finally {
-        setApiLoading(false);
-      }
-    };
-
-    checkAPI();
-  }, []);
-
-  const isAPIOnline = !apiLoading && apiStatus;
+  const { user, loading } = useContext(AuthContext);
+  const primaryAction = user
+    ? { to: '/dashboard', label: 'Open dashboard' }
+    : { to: '/register', label: 'Create an account' };
 
   return (
-    <div className="min-h-screen bg-[#FFFDF8] text-[#241F20]">
+    <div className="pg-site">
+      <a className="skip-link" href="#main">Skip to content</a>
+      <SiteNav />
 
-      {/* =========================================================
-          NAVIGATION
-      ========================================================== */}
-      <nav className="border-b border-[#E7D8D5] bg-[#FFFDF8]">
-        <div className="mx-auto flex h-[78px] max-w-[1450px] items-center justify-between px-8 lg:px-16">
-
-          {/* PayGuard Logo */}
-          <Link
-            to="/"
-            className="flex items-center gap-3"
-          >
-            <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#A6192E] shadow-[0_6px_16px_rgba(60,25,30,0.12)]">
-              <span className="text-lg font-semibold text-white">
-                P
-              </span>
-            </div>
-
-            <span className="text-[19px] font-semibold tracking-[-0.025em] text-[#241F20]">
-              PayGuard
-            </span>
-          </Link>
-
-          {/* Navigation Links */}
-          <div className="hidden items-center gap-12 md:flex">
-            <a
-              href="#features"
-              className="text-[14px] font-medium text-[#6F6565] transition-colors hover:text-[#A6192E]"
-            >
-              Features
-            </a>
-
-            <a
-              href="#security"
-              className="text-[14px] font-medium text-[#6F6565] transition-colors hover:text-[#A6192E]"
-            >
-              Security
-            </a>
-
-            <a
-              href="#compliance"
-              className="text-[14px] font-medium text-[#6F6565] transition-colors hover:text-[#A6192E]"
-            >
-              Compliance
-            </a>
-          </div>
-
-          {/* Authentication */}
-          <div className="flex items-center gap-3">
-            {user ? (
-              <>
-                <span className="hidden text-sm text-[#6F6565] lg:block">
-                  {user.name}
-                </span>
-
-                <Link
-                  to="/dashboard"
-                  className="rounded-[9px] bg-[#A6192E] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#7D1022]"
-                >
-                  Dashboard
-                </Link>
-
-                <button
-                  type="button"
-                  onClick={logout}
-                  className="rounded-[9px] border border-[#E7D8D5] bg-white px-5 py-2.5 text-sm font-semibold text-[#A6192E] transition hover:border-[#A6192E] hover:bg-[#F8E8EA]"
-                >
-                  Sign Out
-                </button>
-              </>
-            ) : (
-              <Link
-                to="/login"
-                className="rounded-[9px] border border-[#E7D8D5] bg-white px-6 py-2.5 text-sm font-semibold text-[#A6192E] transition hover:border-[#A6192E] hover:bg-[#F8E8EA]"
-              >
-                Sign In
+      <main id="main">
+        <section className="hero site-container" aria-labelledby="hero-title">
+          <div className="hero__copy">
+            <p className="hero__eyebrow">
+              Payroll operations for India · <span className="nowrap">EPF · ESI · Professional tax</span>
+            </p>
+            <h1 className="hero__title" id="hero-title">
+              Payroll, <span className="hero__title-line">with proof<span className="hero__point">.</span></span>
+            </h1>
+            <p className="hero__lede">
+              <strong>Every rupee, every reason.</strong> PayGuard ties each payslip to the salary version,
+              statutory rule and approval behind it, then freezes the finalized result so it can be checked later.
+            </p>
+            <div className="hero__actions" data-loading={loading ? '' : undefined}>
+              <Link to={primaryAction.to} className="site-btn site-btn--primary site-btn--large">
+                {primaryAction.label}
+                <span aria-hidden="true" className="site-btn__arrow">→</span>
               </Link>
-            )}
-          </div>
-        </div>
-      </nav>
-
-      {/* =========================================================
-          MAIN CONTENT
-      ========================================================== */}
-      <main>
-
-        {/* =======================================================
-            HERO
-        ======================================================== */}
-        <section className="mx-auto max-w-[1450px] px-8 pb-16 pt-16 lg:px-16 lg:pb-20 lg:pt-18">
-
-          <div className="grid items-center gap-14 lg:grid-cols-[1fr_0.94fr] lg:gap-16">
-
-            {/* =================================================
-                LEFT SIDE
-            ================================================== */}
-            <div>
-
-              {/* Eyebrow */}
-              <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-[#E7D8D5] bg-[#F8E8EA] px-4 py-2">
-                <span className="h-2 w-2 rounded-full bg-[#2E7D32]" />
-
-                <span className="text-xs font-semibold tracking-[0.04em] text-[#A6192E]">
-                  Intelligent Payroll Infrastructure
-                </span>
-              </div>
-
-              {/* Main Brand Heading */}
-              <h1 className="text-[48px] font-semibold leading-[1.05] tracking-[-0.04em] text-[#241F20] sm:text-[54px] lg:text-[60px]">
-                Pay<span className="text-[#A6192E]">Guard</span>
-              </h1>
-
-              {/* Tagline */}
-              <p className="mt-5 text-[20px] font-semibold tracking-[-0.015em] text-[#A6192E] sm:text-[22px]">
-                Detect. Explain. Predict. Protect.
-              </p>
-
-              {/* Main Project Description */}
-              <h2 className="mt-6 max-w-[720px] text-[17px] font-semibold leading-7 text-[#241F20]">
-                Immutable Payroll Engine with ML-Based Anomaly Detection &
-                Versioned Statutory Compliance
-              </h2>
-
-              <p className="mt-4 max-w-[690px] text-[16px] leading-7 text-[#6F6565]">
-                A unified platform built around payroll engineering,
-                machine learning, data integrity, and statutory compliance.
-              </p>
-
-              {/* CTA Buttons */}
-              <div className="mt-8 flex flex-wrap items-center gap-4">
-
-                {user ? (
-                  <Link
-                    to="/dashboard"
-                    className="rounded-[10px] bg-[#A6192E] px-7 py-4 text-[15px] font-semibold text-white shadow-[0_10px_22px_rgba(60,25,30,0.12)] transition duration-200 hover:-translate-y-0.5 hover:bg-[#7D1022]"
-                  >
-                    Explore PayGuard
-                    <span className="ml-3">
-                      →
-                    </span>
-                  </Link>
-                ) : (
-                  <Link
-                    to="/register"
-                    className="rounded-[10px] bg-[#A6192E] px-7 py-4 text-[15px] font-semibold text-white shadow-[0_10px_22px_rgba(60,25,30,0.12)] transition duration-200 hover:-translate-y-0.5 hover:bg-[#7D1022]"
-                  >
-                    Explore PayGuard
-                    <span className="ml-3">
-                      →
-                    </span>
-                  </Link>
-                )}
-
-                <Link
-                  to="/login"
-                  className="rounded-[10px] border border-[#E7D8D5] bg-white px-7 py-4 text-[15px] font-semibold text-[#241F20] transition duration-200 hover:border-[#A6192E] hover:bg-[#F8E8EA] hover:text-[#A6192E]"
-                >
-                  Sign In
-                </Link>
-              </div>
-
-              {/* Trust Statement */}
-              <div className="mt-7 flex items-center gap-2 text-sm text-[#6F6565]">
-                <span className="text-base font-bold text-[#2E7D32]">
-                  ✓
-                </span>
-
-                <span>
-                  Built for secure and accountable payroll operations
-                </span>
-              </div>
+              <a href="#lifecycle" className="site-link">How a payroll run closes</a>
             </div>
+          </div>
 
-            {/* =================================================
-                RIGHT PAYROLL CARD
-            ================================================== */}
-            <div className="relative">
+          <div className="hero__proof" id="trace">
+            <SectionMark index="01" label="Trace a result" />
+            <ProoflineDemo />
+          </div>
+        </section>
 
-              {/* Decorative Glow */}
-              <div className="absolute -right-8 -top-10 h-64 w-64 rounded-full bg-[#F8E8EA] opacity-50 blur-3xl" />
+        <section className="band band--ink" id="lifecycle" aria-labelledby="lifecycle-title">
+          <div className="site-container">
+            <header className="site-section-head">
+              <SectionMark index="02" label="Run lifecycle" />
+              <h2 className="site-section-title" id="lifecycle-title">Five states, in order. None skipped.</h2>
+              <p className="site-section-lede">
+                A payroll run cannot jump from calculated to finalized. The state machine is enforced where runs are
+                written, so every finalized result has passed review first.
+              </p>
+            </header>
+            <RunLifecycle />
+          </div>
+        </section>
 
-              {/* Main Card */}
-              <div className="relative overflow-hidden rounded-[22px] border border-[#E7D8D5] bg-white p-7 shadow-[0_22px_55px_rgba(60,25,30,0.08)] sm:p-8">
-
-                {/* Card Header */}
-                <div className="flex items-start justify-between">
-
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#A6192E]">
-                      Payroll Health
-                    </p>
-
-                    <h2 className="mt-2 text-[22px] font-semibold tracking-[-0.025em] text-[#241F20]">
-                      Payroll Overview
-                    </h2>
+        <section className="band" id="capabilities" aria-labelledby="capabilities-title">
+          <div className="site-container">
+            <header className="site-section-head site-section-head--split">
+              <div>
+                <SectionMark index="03" label="Capabilities" />
+                <h2 className="site-section-title" id="capabilities-title">Built around the questions payroll gets asked.</h2>
+              </div>
+              <p className="site-section-lede">
+                Why did my pay change? Which rule applied? Who approved it? Each capability exists to answer one of
+                these from the record, not from memory.
+              </p>
+            </header>
+            <ol className="capabilities">
+              {CAPABILITIES.map((item, index) => (
+                <li key={item.title} className="capability">
+                  <span className="capability__index" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
+                  <div className="capability__head">
+                    <h3 className="capability__title">{item.title}</h3>
+                    <p className="capability__where">{item.where}</p>
                   </div>
+                  <p className="capability__body">{item.body}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
 
-                  {/* API Status */}
-                  <div className="flex items-center gap-2 rounded-full bg-[#F3F8F3] px-3 py-1.5">
-
-                    <span
-                      className={`h-2 w-2 rounded-full ${
-                        apiLoading
-                          ? 'bg-[#B7791F]'
-                          : isAPIOnline
-                          ? 'animate-pulse bg-[#2E7D32]'
-                          : 'bg-[#B7791F]'
-                      }`}
-                    />
-
-                    <span className="text-xs font-semibold text-[#2E7D32]">
-                      {apiLoading
-                        ? 'Checking'
-                        : isAPIOnline
-                        ? 'Live'
-                        : 'Offline'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Payroll Metric */}
-                <div className="mt-7">
-
-                  <p className="text-[42px] font-bold tracking-[-0.04em] text-[#241F20]">
-                    ₹24.8L
-                  </p>
-
-                  <p className="mt-1 text-sm text-[#6F6565]">
-                    Current payroll volume
-                  </p>
-                </div>
-
-                {/* Payroll Chart */}
-                <div className="mt-8">
-
-                  <div className="flex h-[135px] items-end gap-3 border-b border-[#E7D8D5] px-1 pb-2">
-
-                    {[
-                      '42%',
-                      '54%',
-                      '48%',
-                      '68%',
-                      '59%',
-                      '77%',
-                      '88%',
-                    ].map((height, index) => (
-                      <div
-                        key={index}
-                        className="flex-1 rounded-t-[5px] bg-[#A6192E] transition duration-200 hover:bg-[#7D1022]"
-                        style={{ height }}
-                      />
-                    ))}
-
-                  </div>
-                </div>
-
-                {/* Integrity Status */}
-                <div className="mt-6 flex items-center justify-between">
-
-                  <div className="flex items-center gap-3">
-
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#F3F8F3]">
-                      <span className="text-lg font-bold text-[#2E7D32]">
-                        ✓
-                      </span>
+        <section className="band band--paper" id="integrity" aria-labelledby="integrity-title">
+          <div className="site-container integrity">
+            <header className="site-section-head integrity__head">
+              <SectionMark index="04" label="Integrity" />
+              <h2 className="site-section-title" id="integrity-title">What the record can prove, and what it can’t.</h2>
+              <p className="site-section-lede">
+                Integrity claims are only useful when their limits are stated next to them.
+              </p>
+            </header>
+            <div className="integrity__columns">
+              <div>
+                <h3 className="integrity__label">Checks in place</h3>
+                <dl className="ledger">
+                  {CHECKS.map(([term, detail]) => (
+                    <div className="ledger__row" key={term}>
+                      <dt>{term}</dt>
+                      <dd>{detail}</dd>
                     </div>
-
-                    <div>
-                      <p className="text-sm font-semibold text-[#241F20]">
-                        Integrity verified
-                      </p>
-
-                      <p className="mt-0.5 text-xs text-[#6F6565]">
-                        Payroll snapshot secure
-                      </p>
+                  ))}
+                </dl>
+              </div>
+              <div>
+                <h3 className="integrity__label integrity__label--limits">Limits, stated plainly</h3>
+                <dl className="ledger ledger--limits">
+                  {LIMITS.map(([term, detail]) => (
+                    <div className="ledger__row" key={term}>
+                      <dt>{term}</dt>
+                      <dd>{detail}</dd>
                     </div>
-
-                  </div>
-
-                  <span className="text-sm font-semibold text-[#2E7D32]">
-                    +8.4%
-                  </span>
-
-                </div>
+                  ))}
+                </dl>
               </div>
             </div>
           </div>
         </section>
 
-        {/* =======================================================
-            FEATURE STRIP
-        ======================================================== */}
-        <section
-          id="features"
-          className="border-t border-[#E7D8D5] bg-white"
-        >
-          <div className="mx-auto grid max-w-[1450px] grid-cols-1 px-8 py-9 sm:grid-cols-3 lg:px-16">
-
-            {/* Feature 1 */}
-            <div className="border-b border-[#E7D8D5] px-5 py-5 sm:border-b-0 sm:border-r">
-
-              <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#A6192E]">
-                Intelligent
-              </p>
-
-              <h3 className="mt-2 text-lg font-semibold tracking-[-0.015em] text-[#241F20]">
-                ML-Based Anomaly Detection
-              </h3>
-
-              <p className="mt-2 text-sm leading-6 text-[#6F6565]">
-                Identify unusual payroll patterns and explain suspicious
-                salary variations.
-              </p>
-
+        <section className="closing" aria-labelledby="closing-title">
+          <div className="site-container closing__inner">
+            <h2 className="closing__title" id="closing-title">
+              Close next month’s payroll with the evidence attached<span className="hero__point">.</span>
+            </h2>
+            <div className="closing__actions" data-loading={loading ? '' : undefined}>
+              <Link to={primaryAction.to} className="site-btn site-btn--primary site-btn--large">
+                {primaryAction.label}
+                <span aria-hidden="true" className="site-btn__arrow">→</span>
+              </Link>
+              {!user && <Link to="/login" className="site-link">Sign in to an existing workspace</Link>}
             </div>
-
-            {/* Feature 2 */}
-            <div
-              id="security"
-              className="border-b border-[#E7D8D5] px-5 py-5 sm:border-b-0 sm:border-r"
-            >
-
-              <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#A6192E]">
-                Secure
-              </p>
-
-              <h3 className="mt-2 text-lg font-semibold tracking-[-0.015em] text-[#241F20]">
-                Immutable Payroll Integrity
-              </h3>
-
-              <p className="mt-2 text-sm leading-6 text-[#6F6565]">
-                Tamper-evident payroll snapshots and audit trails provide
-                trustworthy data lineage.
-              </p>
-
-            </div>
-
-            {/* Feature 3 */}
-            <div
-              id="compliance"
-              className="px-5 py-5"
-            >
-
-              <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-[#A6192E]">
-                Compliant
-              </p>
-
-              <h3 className="mt-2 text-lg font-semibold tracking-[-0.015em] text-[#241F20]">
-                Versioned Statutory Rules
-              </h3>
-
-              <p className="mt-2 text-sm leading-6 text-[#6F6565]">
-                Effective-dated compliance rules help keep payroll processing
-                transparent and accountable.
-              </p>
-
-            </div>
-
           </div>
         </section>
       </main>
 
-      {/* =========================================================
-          FOOTER
-      ========================================================== */}
-      <footer className="border-t border-[#E7D8D5] bg-[#FFFDF8]">
-
-        <div className="mx-auto flex max-w-[1450px] flex-col items-center justify-between gap-3 px-8 py-6 text-sm text-[#6F6565] sm:flex-row lg:px-16">
-
-          <p>
-            © {new Date().getFullYear()} PayGuard
-          </p>
-
-          <p>
-            Detect. Explain. Predict. Protect.
-          </p>
-
+      <footer className="site-footer">
+        <div className="site-container site-footer__inner">
+          <div className="site-footer__brand">
+            <ProoflineMark size={24} />
+            <span>© {new Date().getFullYear()} PayGuard</span>
+          </div>
+          <ServiceStatus />
         </div>
-
       </footer>
     </div>
   );
