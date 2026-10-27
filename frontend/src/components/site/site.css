@@ -5,29 +5,20 @@
    ========================================================================= */
 
 .pg-site {
-  /* Editorial layer */
-  --pg-porcelain: #f7f3ee;
-  --pg-porcelain-2: #efe8e0;
-  --pg-paper: #fffcf8;
-  --pg-ink: #17110f;
-  --pg-ink-2: #4a3f3b;   /* 9.2:1 on porcelain */
-  --pg-ink-3: #6b5f5a;   /* 5.6:1 on porcelain: smallest text allowed */
-  --pg-rule: #e2d8cf;
-  --pg-rule-strong: #cdbfb4;
-
-  /* Signal layer */
-  --pg-signal: #e8212e;          /* lines, nodes, points. Not body text on light (4.0:1) */
-  --pg-signal-tint: #f3cfcb;     /* decorative only: the untraced part of the line */
-  --pg-signal-muted: #c9716b;    /* untraced node rings: 3.4:1 on paper */
-  --pg-signal-on-ink: #ff5a61;   /* text-safe on ink: 6.1:1 */
-  --pg-crimson: #b0101f;         /* actions and red text on light: 6.5:1 */
-  --pg-crimson-deep: #8a0a17;
-  --pg-ok: #1f6f4a;
-  --pg-wait: #8a5a00;
+  /* Site aliases of the shared tokens in src/styles/tokens.css */
+  --pg-porcelain-2: var(--pg-canvas-2);
+  --pg-paper: var(--pg-surface);
+  --pg-ink-3: var(--pg-ink-2);        /* smallest site text uses secondary ink: 5.2:1 */
+  --pg-rule: var(--pg-line);
+  --pg-rule-strong: var(--pg-line-strong);
+  --pg-signal: var(--pg-scarlet);     /* lines, nodes, points: graphics only (3.5:1) */
+  --pg-signal-tint: var(--pg-crimson-line); /* decorative: the untraced part of the line */
+  --pg-signal-muted: #d9667a;         /* untraced node rings: 3.4:1 on white */
+  --pg-signal-on-ink: var(--pg-scarlet);    /* red text on obsidian: 5.3:1 */
+  --pg-crimson-deep: var(--pg-crimson-strong);
+  --pg-wait: var(--pg-warn);
 
   /* Type */
-  --pg-sans: "Schibsted Grotesk Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --pg-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
   --fs-display: clamp(3.5rem, 1rem + 6.6vw, 6.5rem);
   --fs-h2: clamp(2.125rem, 1.3rem + 3vw, 3.75rem);
   --fs-h3: clamp(1.1875rem, 1.05rem + 0.5vw, 1.4375rem);
@@ -851,7 +842,7 @@ html:has(.pg-site) {
 
 .band--ink {
   border-top: 0;
-  background: var(--pg-ink);
+  background: var(--pg-obsidian);
   color: #f6eee8;
 }
 

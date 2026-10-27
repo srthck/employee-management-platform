@@ -48,13 +48,13 @@ export default function EmployeeProfile() {
   }, [id, version]);
 
   if (loading) {
-    return <div className="panel py-16 text-center text-sm text-[#6F6565]">Loading employee...</div>;
+    return <div className="panel py-16 text-center text-sm text-ink-2">Loading employee...</div>;
   }
 
   if (!employee) {
     return (
       <div className="space-y-6">
-        <Link to="/employees" className="text-sm font-semibold text-[#A6192E] hover:underline">← Employees</Link>
+        <Link to="/employees" className="text-sm font-semibold text-crimson hover:underline">← Employees</Link>
         <div className="alert alert-danger">{error || 'Employee not found.'}</div>
       </div>
     );
@@ -62,7 +62,7 @@ export default function EmployeeProfile() {
 
   return (
     <div className="space-y-8">
-      <Link to="/employees" className="text-sm font-semibold text-[#A6192E] transition hover:underline">
+      <Link to="/employees" className="text-sm font-semibold text-crimson transition hover:underline">
         ← Employees
       </Link>
 

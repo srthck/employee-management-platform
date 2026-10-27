@@ -43,7 +43,7 @@ export default function MyPayslips() {
 
   if (loading) {
     return (
-      <div className="panel py-16 text-center text-sm text-[#6F6565]">
+      <div className="panel py-16 text-center text-sm text-ink-2">
         Loading payslips...
       </div>
     );
@@ -54,7 +54,7 @@ export default function MyPayslips() {
       <div className="space-y-8">
         <Link
           to="/my/payslips"
-          className="inline-flex items-center text-sm font-semibold text-[#A6192E] transition hover:text-[#7D1022]"
+          className="inline-flex items-center text-sm font-semibold text-crimson transition hover:text-crimson-strong"
         >
           ← All payslips
         </Link>
@@ -89,7 +89,7 @@ export default function MyPayslips() {
       <section className="panel">
         {payslips.length === 0 ? (
           <div className="empty-state">
-            <p className="font-semibold text-[#241F20]">
+            <p className="font-semibold text-ink">
               No finalized payslips yet.
             </p>
             <p className="mt-1 text-sm">
@@ -97,7 +97,7 @@ export default function MyPayslips() {
             </p>
           </div>
         ) : (
-          <div className="pg-scrollbar overflow-x-auto">
+          <div tabIndex={0} className="pg-scrollbar overflow-x-auto">
             <table className="data-table">
               <thead>
                 <tr>
@@ -111,12 +111,12 @@ export default function MyPayslips() {
               <tbody>
                 {payslips.map((item) => (
                   <tr key={item.id}>
-                    <td className="font-semibold text-[#241F20]">
+                    <td className="font-semibold text-ink">
                       {periodLabel(item.periodMonth, item.periodYear)}
                     </td>
                     <td className="text-right tabular-nums">{money(item.grossMonthly)}</td>
                     <td className="text-right tabular-nums">{money(item.totalDeductions)}</td>
-                    <td className="text-right font-semibold tabular-nums text-[#241F20]">
+                    <td className="text-right font-semibold tabular-nums text-ink">
                       {money(item.netPayBeforeTDS)}
                     </td>
                     <td className="text-right">

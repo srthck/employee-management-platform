@@ -73,12 +73,12 @@ export default function DocumentsSection({ employeeId, user, onChanged }) {
 
       {documents && documents.length === 0 && (
         <div className="empty-state">
-          <p className="font-semibold text-[#241F20]">No documents recorded.</p>
+          <p className="font-semibold text-ink">No documents recorded.</p>
         </div>
       )}
 
       {documents?.length > 0 && (
-        <div className="pg-scrollbar mt-5 overflow-x-auto">
+        <div tabIndex={0} className="pg-scrollbar mt-5 overflow-x-auto">
           <table className="data-table" aria-label="Documents">
             <thead>
               <tr>
@@ -94,12 +94,12 @@ export default function DocumentsSection({ employeeId, user, onChanged }) {
                 return (
                   <tr key={doc.id}>
                     <td>
-                      <span className="font-semibold text-[#241F20]">{doc.title}</span>
-                      <span className="block text-xs text-[#6F6565]">
+                      <span className="font-semibold text-ink">{doc.title}</span>
+                      <span className="block text-xs text-ink-2">
                         {TYPE_LABELS[doc.documentType]} · recorded by {doc.submittedByEmail}
                       </span>
                       {doc.fileSha256 && (
-                        <span className="block font-mono text-[10px] text-[#8A807C]" title="SHA-256 fingerprint of the file">
+                        <span className="block font-mono text-[10px] text-ink-2" title="SHA-256 fingerprint of the file">
                           {doc.fileSha256.slice(0, 16)}…
                         </span>
                       )}
@@ -107,7 +107,7 @@ export default function DocumentsSection({ employeeId, user, onChanged }) {
                     <td className="text-sm">
                       {doc.issuedOn ? `Issued ${formatDate(doc.issuedOn)}` : 'No issue date'}
                       {doc.expiresOn && (
-                        <span className={`block text-xs ${doc.isExpired ? 'font-semibold text-[#A33D35]' : 'text-[#6F6565]'}`}>
+                        <span className={`block text-xs ${doc.isExpired ? 'font-semibold text-bad' : 'text-ink-2'}`}>
                           {doc.isExpired ? 'Expired' : 'Expires'} {formatDate(doc.expiresOn)}
                         </span>
                       )}
@@ -115,7 +115,7 @@ export default function DocumentsSection({ employeeId, user, onChanged }) {
                     <td>
                       <span className={`status status-${STATUS_TONE[doc.status]}`}>{STATUS_LABEL[doc.status]}</span>
                       {doc.decision && (
-                        <span className="mt-1 block text-xs text-[#6F6565]">
+                        <span className="mt-1 block text-xs text-ink-2">
                           by {doc.decision.byEmail} · {formatDate(doc.decision.at)}
                           {doc.decision.note && ` · ${doc.decision.note}`}
                         </span>
@@ -133,7 +133,7 @@ export default function DocumentsSection({ employeeId, user, onChanged }) {
                         </div>
                       )}
                       {doc.status === 'SUBMITTED' && ownSubmission && (
-                        <span className="text-xs text-[#6F6565]">Another person verifies</span>
+                        <span className="text-xs text-ink-2">Another person verifies</span>
                       )}
                     </td>
                   </tr>
@@ -225,7 +225,7 @@ function DocumentDialog({ employeeId, onClose, onSaved }) {
       <label className="label mt-4 block">
         File fingerprint (optional)
         <input type="file" className="field mt-2" onChange={fingerprint} />
-        <span className="mt-1 block text-xs text-[#6F6565]">
+        <span className="mt-1 block text-xs text-ink-2">
           {fileSha256
             ? `SHA-256 ${fileSha256.slice(0, 24)}… is recorded. The file itself is not uploaded.`
             : 'Only a SHA-256 fingerprint is computed in your browser and recorded; the file is not uploaded.'}

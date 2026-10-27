@@ -43,7 +43,7 @@ export default function RevealDialog({ label, onReveal, onClose }) {
 
         {value === null ? (
           <>
-            <p className="mt-3 text-sm leading-6 text-[#5F5555]">
+            <p className="mt-3 text-sm leading-6 text-ink-2">
               Your name, the time and your reason are written to the audit trail before the value is shown.
             </p>
             <label className="label mt-5 block">
@@ -56,7 +56,7 @@ export default function RevealDialog({ label, onReveal, onClose }) {
                 placeholder="For example: correcting the Form 24Q return for Q4"
               />
             </label>
-            <span className="mt-1 block text-xs text-[#6F6565]">
+            <span className="mt-1 block text-xs text-ink-2">
               {valid ? 'Recorded with the reveal.' : `At least ${REASON_MIN} characters`}
             </span>
             {error && <div className="alert alert-danger mt-4" role="alert">{error}</div>}
@@ -70,12 +70,12 @@ export default function RevealDialog({ label, onReveal, onClose }) {
         ) : (
           <>
             <p
-              className="mt-5 rounded-[8px] border border-[#E7D8D5] bg-[#FFF7F0] px-4 py-3 font-mono text-lg tracking-wider text-[#241F20]"
+              className="mt-5 rounded-[8px] border border-line bg-canvas-2 px-4 py-3 font-mono text-lg tracking-wider text-ink"
               data-testid="revealed-value"
             >
               {value}
             </p>
-            <p className="mt-2 text-xs text-[#6F6565]">
+            <p className="mt-2 text-xs text-ink-2">
               Hidden again automatically in 30 seconds. Do not paste it into email or chat.
             </p>
             <div className="mt-6 flex justify-end">

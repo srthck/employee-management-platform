@@ -1,8 +1,5 @@
 import { useContext } from 'react';
 import { Link } from 'react-router-dom';
-import '@fontsource-variable/schibsted-grotesk/wght.css';
-import '@fontsource/ibm-plex-mono/400.css';
-import '@fontsource/ibm-plex-mono/500.css';
 import '../components/site/site.css';
 import { AuthContext } from '../contexts/AuthContext';
 import SiteNav from '../components/site/SiteNav';

@@ -93,34 +93,34 @@ export default function CompensationSection({ employeeId, user, onChanged }) {
 
       {compensation && !current && (
         <div className="empty-state">
-          <p className="font-semibold text-[#241F20]">No compensation recorded.</p>
-          <p className="mt-1 text-sm text-[#6F6565]">Payroll blocks this employee until pay is recorded.</p>
+          <p className="font-semibold text-ink">No compensation recorded.</p>
+          <p className="mt-1 text-sm text-ink-2">Payroll blocks this employee until pay is recorded.</p>
         </div>
       )}
 
       {current && (
         <>
-          <div className="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mt-6 grid grid-cols-2 gap-x-6 gap-y-5">
             {[
               ['Monthly gross', money(current.totals.monthlyGross), 'Recurring earnings'],
               ['Monthly cost to company', money(current.totals.monthlyCtc), 'Gross + employer contributions'],
               ['Annual cost to company', money(current.totals.annualCtc), 'Including one-time pay'],
               ['Net pay (estimate)', money(current.statutoryEstimate?.netPayBeforeTds), 'Before income tax'],
             ].map(([label, value, note]) => (
-              <div key={label} className="border-l-2 border-[#A6192E] pl-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#6F6565]">{label}</p>
-                <p className="mt-2 text-2xl font-semibold tracking-tight tabular-nums text-[#241F20]">{value}</p>
-                <p className="mt-1 text-xs text-[#6F6565]">{note}</p>
+              <div key={label} className="min-w-0">
+                <p className="text-[12.5px] font-medium text-ink-2">{label}</p>
+                <p className="mt-1.5 break-words text-[19px] font-medium leading-tight tabular-nums text-ink">{value}</p>
+                <p className="mt-1 text-xs text-ink-2">{note}</p>
               </div>
             ))}
           </div>
 
-          <p className="mt-4 text-sm text-[#6F6565]">
+          <p className="mt-4 text-sm text-ink-2">
             Version {current.version} · effective {formatDate(current.effectiveFrom)} · recorded by {current.recordedByEmail || 'system'}
             {current.reason && ` · ${current.reason}`}
           </p>
 
-          <div className="pg-scrollbar mt-5 overflow-x-auto">
+          <div tabIndex={0} className="pg-scrollbar mt-5 overflow-x-auto">
             <table className="data-table" aria-label="Compensation components">
               <thead>
                 <tr>
@@ -134,8 +134,8 @@ export default function CompensationSection({ employeeId, user, onChanged }) {
                 {current.lines.map((line) => (
                   <tr key={line.componentCode}>
                     <td>
-                      <span className="font-semibold text-[#241F20]">{line.name}</span>
-                      <span className="block text-xs text-[#6F6565]">
+                      <span className="font-semibold text-ink">{line.name}</span>
+                      <span className="block text-xs text-ink-2">
                         {[
                           line.treatments.pfWage === 'INCLUDED' && 'PF wage',
                           line.treatments.esiWage === 'INCLUDED' && 'ESI wage',
@@ -147,15 +147,15 @@ export default function CompensationSection({ employeeId, user, onChanged }) {
                     </td>
                     <td>
                       {COMPONENT_TYPE_LABELS[line.type]}
-                      <span className={`mt-1 block text-xs ${line.payrollApplication === 'NOT_APPLIED_YET' ? 'text-[#845B00]' : 'text-[#6F6565]'}`}>
+                      <span className={`mt-1 block text-xs ${line.payrollApplication === 'NOT_APPLIED_YET' ? 'text-warn' : 'text-ink-2'}`}>
                         {PAYROLL_APPLICATION_LABELS[line.payrollApplication]}
                       </span>
                     </td>
                     <td className="text-sm">
                       {line.lineage.explanation}
-                      <span className="block text-xs text-[#6F6565]">{METHOD_LABELS[line.calculationMethod]}</span>
+                      <span className="block text-xs text-ink-2">{METHOD_LABELS[line.calculationMethod]}</span>
                     </td>
-                    <td className="text-right font-semibold tabular-nums text-[#241F20]">{money(line.amountMonthly)}</td>
+                    <td className="text-right font-semibold tabular-nums text-ink">{money(line.amountMonthly)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -163,8 +163,8 @@ export default function CompensationSection({ employeeId, user, onChanged }) {
           </div>
 
           {current.statutoryEstimate && (
-            <div className="mt-5 rounded-[10px] border border-[#E7D8D5] bg-[#FFF7F0] p-4 text-sm text-[#5F5555]">
-              <p className="font-semibold text-[#241F20]">Statutory estimate</p>
+            <div className="mt-5 rounded-[10px] border border-line bg-canvas-2 p-4 text-sm text-ink-2">
+              <p className="font-semibold text-ink">Statutory estimate</p>
               <p className="mt-1">
                 Provident fund {money(current.statutoryEstimate.employeePf)} employee · {money(current.statutoryEstimate.employerPf)} employer
                 (PF wage {money(current.pfWageBase)}) · ESI {money(current.statutoryEstimate.employeeEsi)} employee ·
@@ -194,7 +194,7 @@ export default function CompensationSection({ employeeId, user, onChanged }) {
       {(open.length > 0 || decided.length > 0) && (
         <div className="mt-7">
           <p className="eyebrow">Change workflow</p>
-          <div className="pg-scrollbar mt-3 overflow-x-auto">
+          <div tabIndex={0} className="pg-scrollbar mt-3 overflow-x-auto">
             <table className="data-table" aria-label="Compensation changes">
               <thead>
                 <tr>
@@ -210,13 +210,13 @@ export default function CompensationSection({ employeeId, user, onChanged }) {
                   <tr key={change.id}>
                     <td className="whitespace-nowrap">
                       {formatDate(change.effectiveFrom)}
-                      <span className="block text-xs text-[#6F6565]">by {change.proposedByEmail}</span>
+                      <span className="block text-xs text-ink-2">by {change.proposedByEmail}</span>
                     </td>
                     <td><ChangeStatus status={change.status} /></td>
                     <td className="text-sm">
                       {change.reason}
-                      {change.decisionNote && <span className="block text-xs text-[#6F6565]">Note: {change.decisionNote}</span>}
-                      <button type="button" className="mt-1 text-xs font-semibold text-[#A6192E]" onClick={() => setExpanded(expanded === change.id ? null : change.id)}>
+                      {change.decisionNote && <span className="block text-xs text-ink-2">Note: {change.decisionNote}</span>}
+                      <button type="button" className="mt-1 text-xs font-semibold text-crimson" onClick={() => setExpanded(expanded === change.id ? null : change.id)}>
                         {expanded === change.id ? 'Hide impact' : 'Show impact'}
                       </button>
                       {expanded === change.id && <ImpactSummary impact={change.impactAtApproval || change.impact} compact />}
@@ -257,7 +257,7 @@ export default function CompensationSection({ employeeId, user, onChanged }) {
       )}
 
       {compensation?.history?.length > 1 && (
-        <div className="pg-scrollbar mt-7 overflow-x-auto">
+        <div tabIndex={0} className="pg-scrollbar mt-7 overflow-x-auto">
           <table className="data-table" aria-label="Compensation history">
             <thead>
               <tr>
@@ -275,7 +275,7 @@ export default function CompensationSection({ employeeId, user, onChanged }) {
                   </td>
                   <td className="tabular-nums">{money(version.totals.monthlyGross)}</td>
                   <td className="tabular-nums">{money(version.totals.annualCtc)}</td>
-                  <td className="text-xs text-[#6F6565]">
+                  <td className="text-xs text-ink-2">
                     {version.recordedByEmail || 'system'}
                     <span className="block">{version.source === 'CHANGE_REQUEST' ? 'Approved change' : version.source === 'MIGRATION' ? 'Recorded by migration' : 'Direct revision'}</span>
                   </td>
@@ -333,7 +333,7 @@ function RejectDialog({ change, onClose, onReject }) {
       submitting={saving}
       submitDisabled={note.trim().length < 5}
     >
-      <p className="mt-3 text-sm text-[#6F6565]">Effective {formatDate(change.effectiveFrom)} · {change.reason}</p>
+      <p className="mt-3 text-sm text-ink-2">Effective {formatDate(change.effectiveFrom)} · {change.reason}</p>
       <label className="label mt-5 block">
         Why is it rejected?
         <textarea className="field mt-2 min-h-[80px]" maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} />

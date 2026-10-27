@@ -61,7 +61,7 @@ export default function StatutorySection({ employeeId, user, onChanged }) {
               ];
             })}
           />
-          <p className="mt-3 text-xs text-[#6F6565]">
+          <p className="mt-3 text-xs text-ink-2">
             {profile.version > 0
               ? `Version ${profile.version} · updated ${formatDate(profile.updatedAt)} by ${profile.updatedByEmail || 'unknown'}`
               : 'Nothing recorded yet.'}
@@ -127,7 +127,7 @@ function StatutoryDialog({ employeeId, profile, onClose, onSaved }) {
       submitting={saving}
       wide
     >
-      <p className="mt-3 text-sm leading-6 text-[#6F6565]">
+      <p className="mt-3 text-sm leading-6 text-ink-2">
         Leave a field blank to keep its current value. Values are encrypted before they are stored and are never shown in full again without an audited reveal.
       </p>
       <div className="mt-6 grid gap-4 sm:grid-cols-2">

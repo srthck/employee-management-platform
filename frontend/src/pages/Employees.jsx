@@ -8,6 +8,8 @@ import axiosInstance from '../services/axiosInstance';
 import EmployeeModal from '../components/EmployeeModal';
 import DeleteConfirmModal from '../components/DeleteConfirmModal';
 import { ReadinessBadge, monthLabel } from '../components/employee360/shared';
+import Icon from '../components/ui/Icon';
+import { PageHeader, EmptyState, LoadingState } from '../components/ui/PageParts';
 
 export default function Employees() {
   const { user } = useContext(AuthContext);
@@ -155,160 +157,77 @@ export default function Employees() {
   };
 
   return (
-    <div className="space-y-8">
-
-      {/* ==================== PAGE HEADER ==================== */}
-      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-
-        <div>
-          <p
-            className="eyebrow"
-            style={{ color: '#A6192E' }}
-          >
-            Payroll workforce
-          </p>
-
-          <h1
-            className="page-title"
-            style={{ color: '#241F20' }}
-          >
-            Employees
-          </h1>
-
-          <p
-            className="page-subtitle"
-            style={{ color: '#6F6565' }}
-          >
-            Employee identity and payroll eligibility context.
-          </p>
-        </div>
-
-        {canWrite && (
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => setModal({ employee: null })}
-            style={{
-              backgroundColor: '#A6192E',
-              borderColor: '#A6192E',
-              color: '#FFFFFF',
-            }}
-          >
-            Add employee <span aria-hidden="true">+</span>
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow="Payroll workforce"
+        title="Employees"
+        subtitle="Employee records and whether each one can be calculated in the next payroll."
+        actions={canWrite && (
+          <button type="button" className="btn btn-primary" onClick={() => setModal({ employee: null })}>
+            <Icon name="plus" size={16} /> Add employee
           </button>
         )}
+      />
 
-      </div>
-
-      {/* ==================== DIRECTORY ==================== */}
-      <section
-        className="panel"
-        style={{
-          backgroundColor: '#FFFFFF',
-          borderColor: '#E7D8D5',
-        }}
-      >
-
-        {/* DIRECTORY HEADER */}
-        <div
-          className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-center sm:justify-between"
-          style={{ borderColor: '#E7D8D5' }}
-        >
-
+      <section className="panel !p-0" aria-labelledby="directory-title">
+        <div className="flex flex-col gap-4 px-5 pt-5 sm:px-6 sm:pt-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p
-              className="eyebrow"
-              style={{ color: '#A6192E' }}
-            >
-              Directory
-            </p>
-
-            <h2
-              className="section-title"
-              style={{ color: '#241F20' }}
-            >
-              Payroll employee directory
-            </h2>
-
+            <p className="eyebrow">Directory</p>
+            <h2 className="section-title" id="directory-title">Payroll employee directory</h2>
             {readiness && (
-              <p className="mt-2 text-sm text-[#5F5555]" aria-label="Payroll readiness summary">
-                {monthLabel(readiness.period.periodYear, readiness.period.periodMonth)} payroll:{' '}
-                <span className="font-semibold text-[#26765F]">{readiness.summary.ready} ready</span>
-                {' · '}
-                <span className="font-semibold text-[#845B00]">{readiness.summary.warning} need attention</span>
-                {' · '}
-                <span className="font-semibold text-[#A33D35]">{readiness.summary.blocked} blocked</span>
+              <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-ink-2" aria-label="Payroll readiness summary">
+                <span>{monthLabel(readiness.period.periodYear, readiness.period.periodMonth)} payroll:</span>
+                <span className="inline-flex items-center gap-1 font-semibold text-ok"><Icon name="check-circle" size={14} strokeWidth={2} />{readiness.summary.ready} ready</span>
+                <span className="inline-flex items-center gap-1 font-semibold text-warn"><Icon name="alert-triangle" size={14} strokeWidth={2} />{readiness.summary.warning} need attention</span>
+                <span className="inline-flex items-center gap-1 font-semibold text-bad"><Icon name="x-circle" size={14} strokeWidth={2} />{readiness.summary.blocked} blocked</span>
               </p>
             )}
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <label className="flex items-center gap-2 text-sm text-[#6F6565]">
+            <label className="inline-flex min-h-[40px] items-center gap-2 text-sm text-ink-2">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+                className="h-4 w-4 accent-crimson"
+              />
+              Show archived
+            </label>
             <input
-              type="checkbox"
-              checked={showArchived}
-              onChange={(e) => setShowArchived(e.target.checked)}
-              className="accent-[#A6192E]"
+              type="search"
+              aria-label="Search employees"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name, email, department"
+              className="field sm:w-80"
             />
-            Show archived
-          </label>
-
-          <input
-            aria-label="Search employees"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, email, department"
-            className="field sm:w-80"
-            style={{
-              backgroundColor: '#FFFDF8',
-              borderColor: '#E7D8D5',
-              color: '#241F20',
-            }}
-          />
           </div>
-
         </div>
 
-        {/* ERROR */}
-        {error && (
-          <div
-            className="alert alert-danger mt-5"
-            role="alert"
-          >
-            {error}
-          </div>
-        )}
+        {error && <div className="alert alert-danger mx-5 mt-5 sm:mx-6" role="alert">{error}</div>}
 
-        {/* ==================== TABLE ==================== */}
-        <div className="pg-scrollbar mt-5 overflow-x-auto">
-
+        <div tabIndex={0} className="pg-scrollbar mt-4 overflow-x-auto border-t border-line">
           {loading ? (
-            <div
-              className="py-16 text-center text-sm"
-              style={{ color: '#6F6565' }}
-            >
-              Loading employees...
-            </div>
+            <div className="px-6 py-6"><LoadingState label="Loading employees" /></div>
           ) : employees.length === 0 ? (
-
-            <div className="empty-state">
-
-              <p
-                className="font-semibold"
-                style={{ color: '#241F20' }}
+            search.trim() ? (
+              <EmptyState title={`No employee matches “${search.trim()}”`}>
+                Search looks at names, email addresses and departments{showArchived ? ', including archived records' : ''}.
+              </EmptyState>
+            ) : (
+              <EmptyState
+                kind="blocked"
+                title={showArchived ? 'No employee records, including archived' : 'No employee records yet'}
+                action={canWrite ? (
+                  <button type="button" className="btn btn-primary" onClick={() => setModal({ employee: null })}>
+                    <Icon name="plus" size={16} /> Add the first employee
+                  </button>
+                ) : null}
               >
-                No employees found.
-              </p>
-
-              <p
-                className="mt-1 text-sm"
-                style={{ color: '#6F6565' }}
-              >
-                Try another search or add an employee record.
-              </p>
-
-            </div>
-
+                Payroll needs at least one active employee with a salary version before a run can calculate anyone.
+              </EmptyState>
+            )
           ) : (
 
             <table className="data-table">
@@ -339,14 +258,14 @@ export default function Employees() {
                         <Link
                           to={`/employees/${employee._id}`}
                           className="font-semibold transition hover:underline"
-                          style={{ color: '#A6192E' }}
+                          style={{ color: 'var(--pg-crimson)' }}
                         >
                           {employee.firstName} {employee.lastName}
                         </Link>
 
                         <span
                           className="block text-xs"
-                          style={{ color: '#6F6565' }}
+                          style={{ color: 'var(--pg-ink-2)' }}
                         >
                           {employee.employeeCode || employee.email}
                         </span>
@@ -356,13 +275,13 @@ export default function Employees() {
                       {/* DEPARTMENT */}
                       <td>
 
-                        <span style={{ color: '#241F20' }}>
+                        <span style={{ color: 'var(--pg-ink)' }}>
                           {employee.department || 'Not available'}
                         </span>
 
                         <span
                           className="block text-xs"
-                          style={{ color: '#6F6565' }}
+                          style={{ color: 'var(--pg-ink-2)' }}
                         >
                           {employee.position || 'Not available'}
                         </span>
@@ -374,7 +293,7 @@ export default function Employees() {
 
                         <span
                           className="text-xs"
-                          style={{ color: '#6F6565' }}
+                          style={{ color: 'var(--pg-ink-2)' }}
                         >
                           Not payroll-authoritative
                         </span>
@@ -399,7 +318,7 @@ export default function Employees() {
                             <>
                               <ReadinessBadge state={entry?.state} title={reasons.map((r) => r.message).join('\n')} />
                               {reasons.length > 0 && (
-                                <span className="mt-1 block text-xs text-[#6F6565]">
+                                <span className="mt-1 block text-xs text-ink-2">
                                   {reasons[0].message.split('. ')[0]}
                                   {reasons.length > 1 && ` (+${reasons.length - 1} more)`}
                                 </span>
@@ -407,7 +326,7 @@ export default function Employees() {
                             </>
                           );
                         })() : (
-                          <span className="text-xs text-[#6F6565]">Open the employee for details</span>
+                          <span className="text-xs text-ink-2">Open the employee for details</span>
                         )}
                       </td>
 
@@ -422,9 +341,9 @@ export default function Employees() {
                               className="btn btn-small"
                               onClick={() => restoreEmployee(employee)}
                               style={{
-                                backgroundColor: '#FFFFFF',
-                                borderColor: '#E7D8D5',
-                                color: '#A6192E',
+                                backgroundColor: 'var(--pg-surface)',
+                                borderColor: 'var(--pg-line)',
+                                color: 'var(--pg-crimson)',
                               }}
                             >
                               Restore
@@ -439,9 +358,9 @@ export default function Employees() {
                             className="btn btn-small"
                             onClick={() => setModal({ employee })}
                             style={{
-                              backgroundColor: '#FFFFFF',
-                              borderColor: '#E7D8D5',
-                              color: '#A6192E',
+                              backgroundColor: 'var(--pg-surface)',
+                              borderColor: 'var(--pg-line)',
+                              color: 'var(--pg-crimson)',
                             }}
                           >
                             Edit
@@ -462,14 +381,14 @@ export default function Employees() {
                             }
                             style={{
                               backgroundColor: isActive
-                                ? '#F8E8EA'
-                                : '#F5F1EF',
+                                ? 'var(--pg-crimson-tint)'
+                                : 'var(--pg-canvas-2)',
                               borderColor: isActive
-                                ? '#E7D8D5'
-                                : '#E7D8D5',
+                                ? 'var(--pg-line)'
+                                : 'var(--pg-line)',
                               color: isActive
-                                ? '#A6192E'
-                                : '#9A9090',
+                                ? 'var(--pg-crimson)'
+                                : 'var(--pg-ink-2)',
                               cursor: isActive
                                 ? 'pointer'
                                 : 'not-allowed',
@@ -487,9 +406,9 @@ export default function Employees() {
                             className="btn btn-small"
                             onClick={() => setDeleteTarget(employee)}
                             style={{
-                              backgroundColor: '#FFFFFF',
-                              borderColor: '#E7D8D5',
-                              color: '#9B1C31',
+                              backgroundColor: 'var(--pg-surface)',
+                              borderColor: 'var(--pg-line)',
+                              color: 'var(--pg-bad)',
                             }}
                           >
                             Archive
@@ -554,8 +473,8 @@ export default function Employees() {
           <div
             className="w-full max-w-md rounded-xl border p-6 shadow-xl"
             style={{
-              backgroundColor: '#FFFDF8',
-              borderColor: '#E7D8D5',
+              backgroundColor: 'var(--pg-porcelain)',
+              borderColor: 'var(--pg-line)',
             }}
           >
 
@@ -564,24 +483,23 @@ export default function Employees() {
 
               <p
                 className="eyebrow"
-                style={{ color: '#A6192E' }}
               >
                 Employee access
               </p>
 
               <h2
                 className="text-xl font-semibold"
-                style={{ color: '#241F20' }}
+                style={{ color: 'var(--pg-ink)' }}
               >
                 Create login account
               </h2>
 
               <p
                 className="mt-2 text-sm"
-                style={{ color: '#6F6565' }}
+                style={{ color: 'var(--pg-ink-2)' }}
               >
                 Create login credentials for{' '}
-                <strong style={{ color: '#241F20' }}>
+                <strong style={{ color: 'var(--pg-ink)' }}>
                   {accountTarget.firstName}{' '}
                   {accountTarget.lastName}
                 </strong>.
@@ -593,14 +511,14 @@ export default function Employees() {
             <div
               className="mb-5 rounded-lg border p-4"
               style={{
-                backgroundColor: '#F8E8EA',
-                borderColor: '#E7D8D5',
+                backgroundColor: 'var(--pg-crimson-tint)',
+                borderColor: 'var(--pg-line)',
               }}
             >
 
               <p
                 className="text-sm font-semibold"
-                style={{ color: '#241F20' }}
+                style={{ color: 'var(--pg-ink)' }}
               >
                 {accountTarget.firstName}{' '}
                 {accountTarget.lastName}
@@ -608,14 +526,14 @@ export default function Employees() {
 
               <p
                 className="mt-1 text-xs"
-                style={{ color: '#6F6565' }}
+                style={{ color: 'var(--pg-ink-2)' }}
               >
                 {accountTarget.email}
               </p>
 
               <p
                 className="mt-1 text-xs"
-                style={{ color: '#6F6565' }}
+                style={{ color: 'var(--pg-ink-2)' }}
               >
                 Role: Employee
               </p>
@@ -630,7 +548,7 @@ export default function Employees() {
                 <label
                   htmlFor="employee-account-password"
                   className="mb-2 block text-sm font-medium"
-                  style={{ color: '#241F20' }}
+                  style={{ color: 'var(--pg-ink)' }}
                 >
                   Initial password
                 </label>
@@ -648,9 +566,9 @@ export default function Employees() {
                   className="field w-full"
                   disabled={accountLoading}
                   style={{
-                    backgroundColor: '#FFFFFF',
-                    borderColor: '#E7D8D5',
-                    color: '#241F20',
+                    backgroundColor: 'var(--pg-surface)',
+                    borderColor: 'var(--pg-line)',
+                    color: 'var(--pg-ink)',
                   }}
                 />
 
@@ -662,7 +580,7 @@ export default function Employees() {
                 <label
                   htmlFor="employee-account-confirm-password"
                   className="mb-2 block text-sm font-medium"
-                  style={{ color: '#241F20' }}
+                  style={{ color: 'var(--pg-ink)' }}
                 >
                   Confirm password
                 </label>
@@ -680,9 +598,9 @@ export default function Employees() {
                   className="field w-full"
                   disabled={accountLoading}
                   style={{
-                    backgroundColor: '#FFFFFF',
-                    borderColor: '#E7D8D5',
-                    color: '#241F20',
+                    backgroundColor: 'var(--pg-surface)',
+                    borderColor: 'var(--pg-line)',
+                    color: 'var(--pg-ink)',
                   }}
                 />
 
@@ -694,9 +612,9 @@ export default function Employees() {
                   className="mb-4 rounded-lg border px-4 py-3 text-sm"
                   role="alert"
                   style={{
-                    backgroundColor: '#FBE9EC',
-                    borderColor: '#E7D8D5',
-                    color: '#9B1C31',
+                    backgroundColor: 'var(--pg-crimson-tint)',
+                    borderColor: 'var(--pg-line)',
+                    color: 'var(--pg-bad)',
                   }}
                 >
                   {accountError}
@@ -709,9 +627,9 @@ export default function Employees() {
                   className="mb-4 rounded-lg border px-4 py-3 text-sm"
                   role="status"
                   style={{
-                    backgroundColor: '#EDF7EE',
-                    borderColor: '#CFE5D1',
-                    color: '#2E7D32',
+                    backgroundColor: 'var(--pg-ok-tint)',
+                    borderColor: 'var(--pg-ok-line)',
+                    color: 'var(--pg-ok)',
                   }}
                 >
                   {accountSuccess}
@@ -727,9 +645,9 @@ export default function Employees() {
                   onClick={closeAccountModal}
                   disabled={accountLoading}
                   style={{
-                    backgroundColor: '#FFFFFF',
-                    borderColor: '#E7D8D5',
-                    color: '#6F6565',
+                    backgroundColor: 'var(--pg-surface)',
+                    borderColor: 'var(--pg-line)',
+                    color: 'var(--pg-ink-2)',
                   }}
                 >
                   Cancel
@@ -740,9 +658,9 @@ export default function Employees() {
                   className="btn btn-small"
                   disabled={accountLoading}
                   style={{
-                    backgroundColor: '#A6192E',
-                    borderColor: '#A6192E',
-                    color: '#FFFFFF',
+                    backgroundColor: 'var(--pg-crimson)',
+                    borderColor: 'var(--pg-crimson)',
+                    color: 'var(--pg-surface)',
                     opacity: accountLoading ? 0.7 : 1,
                   }}
                 >

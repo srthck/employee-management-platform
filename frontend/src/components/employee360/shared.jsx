@@ -43,11 +43,11 @@ export function ReadinessBadge({ state, title }) {
 
 export function Rows({ rows }) {
   return (
-    <dl className="mt-5 divide-y divide-[#E7D8D5] text-sm">
+    <dl className="mt-5 divide-y divide-line text-sm">
       {rows.map(([label, value, action]) => (
         <div key={label} className="flex items-center justify-between gap-4 py-3">
-          <dt className="text-[#6F6565]">{label}</dt>
-          <dd className="flex items-center gap-3 text-right font-medium text-[#241F20]">
+          <dt className="text-ink-2">{label}</dt>
+          <dd className="flex items-center gap-3 text-right font-medium text-ink">
             <span>{value || 'Not available'}</span>
             {action}
           </dd>
@@ -58,16 +58,16 @@ export function Rows({ rows }) {
 }
 
 export function FieldError({ message }) {
-  return message ? <span className="mt-1 block text-xs font-medium text-[#9B1C31]">{message}</span> : null;
+  return message ? <span className="mt-1 block text-xs font-medium text-bad">{message}</span> : null;
 }
 
 export function SectionHeader({ eyebrow, title, id, subtitle, children }) {
   return (
-    <div className="flex flex-col justify-between gap-4 border-b border-[#E7D8D5] pb-5 sm:flex-row sm:items-end">
+    <div className="flex flex-col justify-between gap-4 border-b border-line pb-5 sm:flex-row sm:items-end">
       <div>
         <p className="eyebrow">{eyebrow}</p>
         <h2 id={id} className="section-title">{title}</h2>
-        {subtitle && <p className="mt-2 text-sm text-[#6F6565]">{subtitle}</p>}
+        {subtitle && <p className="mt-2 text-sm text-ink-2">{subtitle}</p>}
       </div>
       {children && <div className="flex flex-wrap gap-2">{children}</div>}
     </div>
@@ -93,7 +93,7 @@ export function Dialog({ eyebrow, title, children, onClose, onSubmit, submitLabe
             <p className="eyebrow">{eyebrow}</p>
             <h2 className="section-title">{title}</h2>
           </div>
-          <button type="button" className="icon-button text-[#A6192E]" aria-label="Close dialog" onClick={onClose}>
+          <button type="button" className="icon-button text-crimson" aria-label="Close dialog" onClick={onClose}>
             ×
           </button>
         </div>

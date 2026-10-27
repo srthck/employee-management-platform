@@ -52,7 +52,7 @@ export default function BankSection({ employeeId, user, onChanged }) {
 
       {data && !current && (
         <div className="empty-state">
-          <p className="font-semibold text-[#241F20]">No salary bank account recorded.</p>
+          <p className="font-semibold text-ink">No salary bank account recorded.</p>
           <p className="mt-1 text-sm">Salary cannot be paid by bank transfer until one is added.</p>
         </div>
       )}
@@ -76,7 +76,7 @@ export default function BankSection({ employeeId, user, onChanged }) {
       )}
 
       {data?.history?.length > 1 && (
-        <div className="pg-scrollbar mt-6 overflow-x-auto">
+        <div tabIndex={0} className="pg-scrollbar mt-6 overflow-x-auto">
           <table className="data-table" aria-label="Bank account history">
             <thead>
               <tr>
@@ -90,13 +90,13 @@ export default function BankSection({ employeeId, user, onChanged }) {
                 <tr key={account.id}>
                   <td>
                     {account.version}
-                    <span className="block text-xs text-[#6F6565]">{account.isCurrent ? 'Current' : `Replaced ${formatDate(account.supersededAt)}`}</span>
+                    <span className="block text-xs text-ink-2">{account.isCurrent ? 'Current' : `Replaced ${formatDate(account.supersededAt)}`}</span>
                   </td>
                   <td className="font-mono text-sm">
                     {account.accountNumberMasked} · {account.ifsc}
-                    {account.reason && <span className="block font-sans text-xs text-[#6F6565]">{account.reason}</span>}
+                    {account.reason && <span className="block font-sans text-xs text-ink-2">{account.reason}</span>}
                   </td>
-                  <td className="text-xs text-[#6F6565]">
+                  <td className="text-xs text-ink-2">
                     {account.recordedByEmail}
                     <span className="block">{formatDate(account.recordedAt)}</span>
                   </td>
@@ -187,7 +187,7 @@ function BankAccountDialog({ employeeId, onClose, onSaved }) {
       submitting={saving}
       wide
     >
-      <p className="mt-3 text-sm leading-6 text-[#6F6565]">
+      <p className="mt-3 text-sm leading-6 text-ink-2">
         The previous account is kept in history. Confirm a new account with the employee through a channel other than the one the request came from.
       </p>
       <div className="mt-6 grid gap-4 sm:grid-cols-2">

@@ -1,7 +1,8 @@
 # The Proofline: PayGuard public-site design system
 
-Scope: the public landing page (`/`). The signed-in application is unchanged; all styles are scoped to
-`.pg-site` in `frontend/src/components/site/site.css`.
+Scope: the public site (`/`), sign-in and registration, and the signed-in application. Shared tokens live in
+`frontend/src/styles/tokens.css`; site-only layout is in `frontend/src/components/site/site.css` (scoped to
+`.pg-site`); application components are in `frontend/src/index.css` and `frontend/src/components/ui/`.
 
 ## 1. Thesis
 
@@ -80,21 +81,30 @@ point); table amounts are monospaced so columns align.
 
 ## 6. Colour
 
+One token file, `frontend/src/styles/tokens.css`, serves the public site and the signed-in application.
+Tailwind reads the same values (`tailwind.config.js`), so `text-ink-2` and `var(--pg-ink-2)` are one colour.
+Ratios are measured against porcelain unless noted.
+
 | Token | Value | Use | Contrast |
 |---|---|---|---|
-| `--pg-porcelain` | #F7F3EE | page | — |
-| `--pg-paper` | #FFFCF8 | evidence surfaces | — |
-| `--pg-ink` | #17110F | text, dark band | 16.9:1 on porcelain |
-| `--pg-ink-2` | #4A3F3B | secondary text | 9.2:1 |
-| `--pg-ink-3` | #6B5F5A | smallest text allowed | 5.6:1 (6.0 on paper) |
-| `--pg-signal` | #E8212E | lines, nodes, the red point | 4.05:1, graphics only |
-| `--pg-signal-muted` | #C9716B | untraced node rings | 3.4:1 on paper |
-| `--pg-signal-tint` | #F3CFCB | untraced line (decorative) | — |
-| `--pg-signal-on-ink` | #FF5A61 | red text on ink | 6.1:1 |
-| `--pg-crimson` | #B0101F | primary action, red text on light | 6.5:1; white on it 7.1:1 |
+| `obsidian` | #10090D | sidebar, dark band, auth brand panel | porcelain on it 18.6:1 |
+| `wine` | #650B1B | deep brand surface | white on it 13:1 |
+| `crimson` | #C8102E | primary actions, links, red text | 5.6:1; white on it 5.9:1 |
+| `crimson-strong` | #A50D26 | hover / pressed | — |
+| `scarlet` | #FF2948 | the Proofline: lines, nodes, active-nav marker | 3.5:1, graphics only; 5.3:1 on obsidian |
+| `porcelain` | #FBF8F6 | page | — |
+| `surface` | #FFFFFF | panels | — |
+| `ink` / `ink-2` | #171316 / #71666D | text / secondary text | 17.4:1 / 5.2:1 |
+| `ink-3` | #8E8389 | placeholders and disabled only | — |
+| `line` / `line-strong` | #E8DDE0 / #CDBFC4 | separators / button outlines | decorative |
+| `field` | #9C8F95 | input borders | 3.1:1 on white |
+| `ok` | #167A3E | verified / resolved | 5.4:1 on white |
+| `warn` | #8A5300 | action required | 5.8:1 on its tint |
+| `bad` | #A3132A | failed / error | 6.9:1 on its tint |
+| `defer` | #5E585C | deferred / out of scope | 6.1:1 on its tint |
 
-Red is used for connection and action only, never as decoration on its own. Status is never colour-alone:
-the sample label, stage states and service status all carry text.
+Red is used for connection and action only. Status is never colour-alone: every status carries text and an
+icon (see §11).
 
 ## 7. Space, layout, surfaces
 
@@ -131,3 +141,37 @@ transition is removed and smooth scrolling is disabled; the full trace is visibl
 Every claim names behaviour that exists in the backend. Sample data is labelled in the card header and the
 caption. Net pay is "before TDS" because PayGuard does not calculate TDS. Limits are stated next to the
 integrity checks (tamper-evident, not tamper-proof; trusted chain starting point; no certification claimed).
+
+## 11. The signed-in application
+
+The application shares tokens, type and icon geometry with the site, with different priorities: stability,
+density and speed over motion.
+
+**Status vocabulary** (`components/ui/StatusBadge.jsx`). Each tone has its own colour, icon and words.
+
+| Tone | Means | Never used for |
+|---|---|---|
+| verified | a check that ran and passed (chain verified, rule versions on file) | anything not actually checked |
+| attention | action required (blocked employees, missing salary) | scope limits |
+| failed | failed / error (failed run, broken chain) | warnings |
+| deferred | deliberately out of scope (TDS, attendance): dashed, neutral | success or failure |
+| unknown | not checked, unavailable or forbidden to this role | "verified" |
+
+**Shell** (`components/PayGuardLayout.jsx`). An obsidian rail (248 px, collapsible to 76 px with tooltips,
+remembered per browser) with a 2 px scarlet marker on the active item; below 1024 px the same nav element
+becomes a drawer that takes focus, closes on Escape and cannot be reached while closed. The top bar holds
+the section name, an explained scope note ("TDS and attendance deferred") and an account menu.
+
+**Overview.** Built only from API data, each source loaded independently so a forbidden or failed call
+marks its own check "unavailable" instead of blanking the page. The failed run shows its recorded failure
+reason and preflight blocking errors; zero counts carry a sentence saying why. Control checks derive from
+real sources: payroll readiness (eligibility, salary versions, rule blockers), compliance rule versions,
+audit-chain verification, and the two deferred areas. Chain verification, connectivity, data freshness
+("figures loaded at"), payroll state and rule state are separate statements.
+
+**Figures.** Schibsted Grotesk's tabular figures widen commas and points, so tabular numbers render in
+IBM Plex Mono (`.tabular`, `.tabular-nums`). Clock times stay proportional.
+
+**Layout.** Content max 1400 px; panels 14 px radius, 1 px line border, no decorative shadow; tables scroll
+inside focusable, positioned containers so they never widen the page; panels set `min-width: 0` to shrink
+inside grids.

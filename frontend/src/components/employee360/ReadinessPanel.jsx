@@ -18,7 +18,7 @@ export default function ReadinessPanel({ data }) {
       </div>
 
       {readiness.state === 'READY' ? (
-        <p className="mt-4 text-sm text-[#26765F]">
+        <p className="mt-4 text-sm text-ok">
           Nothing is missing. Payroll can calculate this employee and has what it needs to pay them.
         </p>
       ) : (

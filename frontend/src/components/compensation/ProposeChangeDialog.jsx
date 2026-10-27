@@ -115,7 +115,7 @@ export default function ProposeChangeDialog({
       submitDisabled={reason.trim().length < 5}
       wide
     >
-      <p className="mt-3 text-sm leading-6 text-[#6F6565]">
+      <p className="mt-3 text-sm leading-6 text-ink-2">
         {applyDirectly
           ? 'This company does not require a second approver, so this change applies as soon as you save it.'
           : 'The change is recorded and waits for an approver. Nobody is paid differently until it is approved.'}
@@ -134,7 +134,7 @@ export default function ProposeChangeDialog({
         </label>
       </div>
 
-      <div className="pg-scrollbar mt-6 overflow-x-auto">
+      <div tabIndex={0} className="pg-scrollbar mt-6 overflow-x-auto">
         <table className="data-table" aria-label="Proposed components">
           <thead>
             <tr>
@@ -164,13 +164,13 @@ export default function ProposeChangeDialog({
                       ))}
                   </select>
                   {line.componentCode && !appliesInPayroll(line.componentCode) && (
-                    <span className="mt-1 block text-xs text-[#845B00]">Counted in CTC; payroll does not pay or deduct it yet.</span>
+                    <span className="mt-1 block text-xs text-warn">Counted in CTC; payroll does not pay or deduct it yet.</span>
                   )}
                   <FieldError message={fieldError(line.componentCode)} />
                 </td>
                 <td>
                   {line.fixedFromFormula ? (
-                    <span className="text-xs text-[#6F6565]">Formula (kept as recorded)</span>
+                    <span className="text-xs text-ink-2">Formula (kept as recorded)</span>
                   ) : (
                     <select
                       className="field"
@@ -184,7 +184,7 @@ export default function ProposeChangeDialog({
                 </td>
                 <td>
                   {line.fixedFromFormula ? (
-                    <span className="text-xs text-[#6F6565]">Recalculated from the formula</span>
+                    <span className="text-xs text-ink-2">Recalculated from the formula</span>
                   ) : line.calculationMethod === 'FIXED_AMOUNT' ? (
                     <input
                       type="number" min="0" step="0.01" className="field" aria-label={`Amount for ${line.componentCode || index + 1}`}
@@ -230,7 +230,7 @@ export default function ProposeChangeDialog({
           {previewing ? 'Calculating...' : 'Preview impact'}
         </button>
         {preview && (
-          <span className="text-sm text-[#5F5555]">
+          <span className="text-sm text-ink-2">
             New monthly gross {money(preview.proposed.totals.monthlyGross)} · annual cost to company {money(preview.proposed.totals.annualCtc)}
           </span>
         )}

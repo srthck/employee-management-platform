@@ -49,7 +49,7 @@ export default function Snapshot() {
 
   if (loading) {
     return (
-      <div className="panel py-16 text-center text-sm text-[#6F6565]">
+      <div className="panel py-16 text-center text-sm text-ink-2">
         Loading payslip...
       </div>
     );
@@ -67,7 +67,7 @@ export default function Snapshot() {
     <div className="space-y-8">
       <Link
         to={`/payroll/${payslip.payrollRunId}`}
-        className="inline-flex items-center text-sm font-semibold text-[#A6192E] transition hover:text-[#7D1022]"
+        className="inline-flex items-center text-sm font-semibold text-crimson transition hover:text-crimson-strong"
       >
         ← Payroll run
       </Link>
@@ -103,11 +103,11 @@ export default function Snapshot() {
           <div>
             <p className="eyebrow">Audit / integrity</p>
             <h2 className="section-title">Tamper check</h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-[#6F6565]">
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-ink-2">
               Recomputes the SHA-256 hash of the stored record and compares it
               with the hash written when the payslip was created.
             </p>
-            <p className="mt-2 break-all font-mono text-xs text-[#6F6565]">
+            <p className="mt-2 break-all font-mono text-xs text-ink-2">
               {payslip.integrity.snapshotHash}
             </p>
           </div>

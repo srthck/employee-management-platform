@@ -63,15 +63,15 @@ export function ChangeStatus({ status }) {
 /** before → after with the difference, the way a reviewer reads it. */
 export function ImpactRow({ label, amount, note }) {
   if (!amount) return null;
-  const tone = amount.delta > 0 ? 'text-[#A33D35]' : amount.delta < 0 ? 'text-[#26765F]' : 'text-[#6F6565]';
+  const tone = amount.delta > 0 ? 'text-bad' : amount.delta < 0 ? 'text-ok' : 'text-ink-2';
   return (
     <tr>
       <td>
         {label}
-        {note && <span className="block text-xs text-[#6F6565]">{note}</span>}
+        {note && <span className="block text-xs text-ink-2">{note}</span>}
       </td>
       <td className="text-right tabular-nums">{money(amount.before)}</td>
-      <td className="text-right tabular-nums font-semibold text-[#241F20]">{money(amount.after)}</td>
+      <td className="text-right tabular-nums font-semibold text-ink">{money(amount.after)}</td>
       <td className={`text-right tabular-nums font-semibold ${tone}`}>{signedMoney(amount.delta)}</td>
     </tr>
   );
@@ -82,7 +82,7 @@ export function ImpactSummary({ impact, compact = false }) {
   if (!impact) return null;
   return (
     <div className={compact ? '' : 'mt-5'}>
-      <div className="pg-scrollbar overflow-x-auto">
+      <div tabIndex={0} className="pg-scrollbar overflow-x-auto">
         <table className="data-table" aria-label="Financial impact">
           <thead>
             <tr>
@@ -101,15 +101,15 @@ export function ImpactSummary({ impact, compact = false }) {
           </tbody>
           <tfoot>
             <tr>
-              <td className="font-semibold text-[#241F20]">
+              <td className="font-semibold text-ink">
                 Annual cost to company
                 {impact.annualCtcChangePercent != null && (
-                  <span className="block text-xs text-[#6F6565]">{impact.annualCtcChangePercent}% change</span>
+                  <span className="block text-xs text-ink-2">{impact.annualCtcChangePercent}% change</span>
                 )}
               </td>
               <td className="text-right tabular-nums">{money(impact.annualCtc.before)}</td>
-              <td className="text-right font-semibold tabular-nums text-[#241F20]">{money(impact.annualCtc.after)}</td>
-              <td className={`text-right font-semibold tabular-nums ${impact.annualCtc.delta > 0 ? 'text-[#A33D35]' : 'text-[#26765F]'}`}>
+              <td className="text-right font-semibold tabular-nums text-ink">{money(impact.annualCtc.after)}</td>
+              <td className={`text-right font-semibold tabular-nums ${impact.annualCtc.delta > 0 ? 'text-bad' : 'text-ok'}`}>
                 {signedMoney(impact.annualCtc.delta)}
               </td>
             </tr>
@@ -118,7 +118,7 @@ export function ImpactSummary({ impact, compact = false }) {
       </div>
 
       {impact.affectedPeriod && (
-        <p className="mt-3 text-sm text-[#5F5555]">
+        <p className="mt-3 text-sm text-ink-2">
           First affects payroll for {String(impact.affectedPeriod.periodMonth).padStart(2, '0')}/{impact.affectedPeriod.periodYear}
           {impact.affectedPeriod.alreadyFinalized
             ? ' — that period is already finalized, so the difference has to be paid as arrears.'

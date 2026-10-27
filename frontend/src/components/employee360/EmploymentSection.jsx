@@ -86,7 +86,7 @@ export default function EmploymentSection({ employeeId, user, onChanged }) {
       )}
 
       {data?.history?.length > 0 && (
-        <div className="pg-scrollbar mt-6 overflow-x-auto">
+        <div tabIndex={0} className="pg-scrollbar mt-6 overflow-x-auto">
           <table className="data-table" aria-label="Employment timeline">
             <thead>
               <tr>
@@ -101,14 +101,14 @@ export default function EmploymentSection({ employeeId, user, onChanged }) {
                 <tr key={version.id}>
                   <td className="whitespace-nowrap">
                     {formatDate(version.effectiveFrom)}
-                    <span className="block text-xs text-[#6F6565]">
+                    <span className="block text-xs text-ink-2">
                       {version.effectiveTo ? `until ${formatDate(version.effectiveTo)}` : 'Current'}
                     </span>
                   </td>
                   <td>
-                    <span className="font-semibold text-[#241F20]">{CHANGE_LABELS[version.changeType]}</span>
+                    <span className="font-semibold text-ink">{CHANGE_LABELS[version.changeType]}</span>
                     {version.reason && version.reason !== CHANGE_LABELS[version.changeType] && (
-                      <span className="block text-xs text-[#6F6565]">{version.reason}</span>
+                      <span className="block text-xs text-ink-2">{version.reason}</span>
                     )}
                   </td>
                   <td className="text-sm">
@@ -121,7 +121,7 @@ export default function EmploymentSection({ employeeId, user, onChanged }) {
                       version.exit && `last working day ${formatDate(version.exit.lastWorkingDay)}`,
                     ].filter(Boolean).join(' · ')}
                   </td>
-                  <td className="text-xs text-[#6F6565]">
+                  <td className="text-xs text-ink-2">
                     {version.recordedByEmail || 'System'}
                     <span className="block">{formatDate(version.recordedAt)}</span>
                   </td>
@@ -216,7 +216,7 @@ function EmploymentChangeDialog({ employeeId, onClose, onSaved }) {
       submitting={saving}
       wide
     >
-      <p className="mt-3 text-sm leading-6 text-[#6F6565]">
+      <p className="mt-3 text-sm leading-6 text-ink-2">
         The current version closes the day before this change takes effect. Finalized payslips keep the details frozen when they were calculated.
       </p>
 
@@ -304,7 +304,7 @@ function EmploymentChangeDialog({ employeeId, onClose, onSaved }) {
       </div>
 
       {type === 'EXIT' && (
-        <p className="mt-4 text-sm text-[#845B00]">
+        <p className="mt-4 text-sm text-warn">
           Payroll keeps paying through the last working day and excludes the employee from periods that start after it.
         </p>
       )}

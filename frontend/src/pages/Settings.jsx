@@ -103,7 +103,7 @@ export default function Settings() {
       <section className="panel max-w-2xl">
         <p className="eyebrow">Profile</p>
         <h2 className="section-title">Signed-in user</h2>
-        <dl className="mt-6 divide-y divide-[#E7D8D5] text-sm">
+        <dl className="mt-6 divide-y divide-line text-sm">
           {[
             ['Name', user?.name],
             ['Email', user?.email],
@@ -111,8 +111,8 @@ export default function Settings() {
             ['Company', company?.name || '—'],
           ].map(([label, value]) => (
             <div key={label} className="flex justify-between gap-4 py-3">
-              <dt className="text-[#6F6565]">{label}</dt>
-              <dd className="font-semibold text-[#241F20]">{value}</dd>
+              <dt className="text-ink-2">{label}</dt>
+              <dd className="font-semibold text-ink">{value}</dd>
             </div>
           ))}
         </dl>
@@ -142,21 +142,21 @@ export default function Settings() {
                   <label
                     key={mode.value}
                     className={`flex cursor-pointer gap-3 rounded-[10px] border p-4 text-sm ${
-                      form.approvalMode === mode.value ? 'border-[#A6192E] bg-[#FFF7F0]' : 'border-[#E7D8D5]'
+                      form.approvalMode === mode.value ? 'border-crimson bg-canvas-2' : 'border-line'
                     }`}
                   >
                     <input
                       type="radio"
                       name="approvalMode"
-                      className="mt-1 accent-[#A6192E]"
+                      className="mt-1 accent-crimson"
                       value={mode.value}
                       checked={form.approvalMode === mode.value}
                       disabled={!canManageCompany}
                       onChange={() => setForm({ ...form, approvalMode: mode.value })}
                     />
                     <span>
-                      <span className="block font-semibold text-[#241F20]">{mode.label}</span>
-                      <span className="text-[#6F6565]">{mode.note}</span>
+                      <span className="block font-semibold text-ink">{mode.label}</span>
+                      <span className="text-ink-2">{mode.note}</span>
                     </span>
                   </label>
                 ))}
@@ -170,21 +170,21 @@ export default function Settings() {
                   <label
                     key={mode.value}
                     className={`flex cursor-pointer gap-3 rounded-[10px] border p-4 text-sm ${
-                      form.compensationApprovalMode === mode.value ? 'border-[#A6192E] bg-[#FFF7F0]' : 'border-[#E7D8D5]'
+                      form.compensationApprovalMode === mode.value ? 'border-crimson bg-canvas-2' : 'border-line'
                     }`}
                   >
                     <input
                       type="radio"
                       name="compensationApprovalMode"
-                      className="mt-1 accent-[#A6192E]"
+                      className="mt-1 accent-crimson"
                       value={mode.value}
                       checked={form.compensationApprovalMode === mode.value}
                       disabled={!canManageCompany}
                       onChange={() => setForm({ ...form, compensationApprovalMode: mode.value })}
                     />
                     <span>
-                      <span className="block font-semibold text-[#241F20]">{mode.label}</span>
-                      <span className="text-[#6F6565]">{mode.note}</span>
+                      <span className="block font-semibold text-ink">{mode.label}</span>
+                      <span className="text-ink-2">{mode.note}</span>
                     </span>
                   </label>
                 ))}
@@ -205,17 +205,17 @@ export default function Settings() {
                 />
               </label>
 
-              <label className="flex items-start gap-3 pt-6 text-sm text-[#241F20]">
+              <label className="flex items-start gap-3 pt-6 text-sm text-ink">
                 <input
                   type="checkbox"
-                  className="mt-1 accent-[#A6192E]"
+                  className="mt-1 accent-crimson"
                   checked={form.blockFinalizationOnUnexplainedVariance}
                   disabled={!canManageCompany}
                   onChange={(e) => setForm({ ...form, blockFinalizationOnUnexplainedVariance: e.target.checked })}
                 />
                 <span>
                   Block finalization on unexplained pay changes
-                  <span className="block text-xs text-[#6F6565]">
+                  <span className="block text-xs text-ink-2">
                     Approvers with override permission can proceed with a recorded reason.
                   </span>
                 </span>
@@ -238,12 +238,12 @@ export default function Settings() {
         <section className="panel">
           <p className="eyebrow">Access</p>
           <h2 className="section-title">Team</h2>
-          <p className="mt-2 max-w-3xl text-sm text-[#6F6565]">
+          <p className="mt-2 max-w-3xl text-sm text-ink-2">
             Roles separate duties: payroll administrators prepare runs, approvers finalize them,
             auditors can only read. Changing a role or deactivating someone signs them out immediately.
           </p>
 
-          <div className="pg-scrollbar mt-6 overflow-x-auto">
+          <div tabIndex={0} className="pg-scrollbar mt-6 overflow-x-auto">
             <table className="data-table">
               <thead>
                 <tr>
@@ -260,9 +260,9 @@ export default function Settings() {
                   return (
                     <tr key={member.id}>
                       <td>
-                        <span className="font-semibold text-[#241F20]">{member.name}</span>
+                        <span className="font-semibold text-ink">{member.name}</span>
                         {member.isOwner && <span className="status status-info ml-2">Owner</span>}
-                        <span className="block text-xs text-[#6F6565]">{member.email}</span>
+                        <span className="block text-xs text-ink-2">{member.email}</span>
                       </td>
                       <td>
                         <select
@@ -282,12 +282,12 @@ export default function Settings() {
                           {member.isActive ? 'Active' : 'Deactivated'}
                         </span>
                       </td>
-                      <td className="text-xs text-[#6F6565]">
+                      <td className="text-xs text-ink-2">
                         {member.lastLoginAt ? new Date(member.lastLoginAt).toLocaleString('en-IN') : 'Never'}
                       </td>
                       <td className="text-right">
                         {isSelf ? (
-                          <span className="text-xs text-[#6F6565]">You</span>
+                          <span className="text-xs text-ink-2">You</span>
                         ) : (
                           <button
                             type="button"
@@ -310,8 +310,8 @@ export default function Settings() {
             </table>
           </div>
 
-          <form onSubmit={addUser} className="mt-8 rounded-[10px] border border-[#E7D8D5] p-5">
-            <p className="font-semibold text-[#241F20]">Add a team member</p>
+          <form onSubmit={addUser} className="mt-8 rounded-[10px] border border-line p-5">
+            <p className="font-semibold text-ink">Add a team member</p>
             <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <label className="label block">
                 Name
@@ -342,7 +342,7 @@ export default function Settings() {
                 />
               </label>
             </div>
-            <p className="mt-3 text-xs text-[#6F6565]">
+            <p className="mt-3 text-xs text-ink-2">
               8+ characters with upper and lower case letters and a digit. Share it securely; the person should change it after signing in.
             </p>
             <div className="mt-4 flex justify-end">

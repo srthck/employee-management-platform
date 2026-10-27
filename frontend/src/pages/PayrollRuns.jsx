@@ -61,15 +61,15 @@ export default function PayrollRuns() {
       {/* PAGE HEADER */}
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <p className="eyebrow text-[#A6192E]">
+          <p className="eyebrow">
             Payroll operations
           </p>
 
-          <h1 className="page-title text-[#241F20]">
+          <h1 className="page-title text-ink">
             Payroll Runs
           </h1>
 
-          <p className="page-subtitle text-[#6F6565]">
+          <p className="page-subtitle text-ink-2">
             Create, preflight, process, and finalize calendar-month payroll.
           </p>
         </div>
@@ -95,19 +95,19 @@ export default function PayrollRuns() {
 
       {/* PAYROLL RUNS TABLE */}
       <section className="panel">
-        <div className="pg-scrollbar overflow-x-auto">
+        <div tabIndex={0} className="pg-scrollbar overflow-x-auto">
 
           {loading ? (
-            <div className="py-16 text-center text-sm text-[#6F6565]">
+            <div className="py-16 text-center text-sm text-ink-2">
               Loading payroll runs...
             </div>
           ) : runs.length === 0 ? (
             <div className="empty-state">
-              <p className="font-semibold text-[#241F20]">
+              <p className="font-semibold text-ink">
                 No payroll runs yet.
               </p>
 
-              <p className="mt-1 text-sm text-[#6F6565]">
+              <p className="mt-1 text-sm text-ink-2">
                 Create the first run for a calendar month.
               </p>
             </div>
@@ -131,14 +131,14 @@ export default function PayrollRuns() {
 
                     {/* PERIOD */}
                     <td>
-                      <span className="font-semibold text-[#241F20]">
+                      <span className="font-semibold text-ink">
                         {monthName(
                           run.periodMonth,
                           run.periodYear
                         )}
                       </span>
 
-                      <span className="block text-xs font-normal text-[#6F6565]">
+                      <span className="block text-xs font-normal text-ink-2">
                         {run.periodStart
                           ? new Date(
                               run.periodStart
@@ -154,14 +154,14 @@ export default function PayrollRuns() {
 
                     {/* EMPLOYEES */}
                     <td>
-                      <span className="text-[#241F20]">
+                      <span className="text-ink">
                         {run.employeeCount ?? 'Not available'}
                       </span>
                     </td>
 
                     {/* PROCESSED */}
                     <td>
-                      <span className="text-[#241F20]">
+                      <span className="text-ink">
                         {run.processedEmployeeCount ?? 0}
                         {' / '}
                         {run.employeeCount ?? 0}
@@ -170,14 +170,14 @@ export default function PayrollRuns() {
 
                     {/* SNAPSHOTS */}
                     <td>
-                      <span className="text-[#241F20]">
+                      <span className="text-ink">
                         {run.durableResultCount ?? 'Not available'}
                       </span>
                     </td>
 
                     {/* CREATED */}
                     <td>
-                      <span className="text-xs text-[#6F6565]">
+                      <span className="text-xs text-ink-2">
                         {run.createdAt
                           ? new Date(
                               run.createdAt
@@ -215,18 +215,18 @@ export default function PayrollRuns() {
             {/* DIALOG HEADER */}
             <div className="flex items-start justify-between">
               <div>
-                <p className="eyebrow text-[#A6192E]">
+                <p className="eyebrow">
                   New operation
                 </p>
 
-                <h2 className="section-title text-[#241F20]">
+                <h2 className="section-title text-ink">
                   Create payroll run
                 </h2>
               </div>
 
               <button
                 type="button"
-                className="icon-button text-[#A6192E]"
+                className="icon-button text-crimson"
                 aria-label="Close dialog"
                 onClick={() => setShowCreate(false)}
               >
@@ -235,7 +235,7 @@ export default function PayrollRuns() {
             </div>
 
             {/* DESCRIPTION */}
-            <p className="mt-3 text-sm text-[#6F6565]">
+            <p className="mt-3 text-sm text-ink-2">
               Single-tenant company context is derived by the server
               from your authenticated account.
             </p>
@@ -243,11 +243,11 @@ export default function PayrollRuns() {
             {/* MONTH / YEAR */}
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
 
-              <label className="label text-[#241F20]">
+              <label className="label text-ink">
                 Payroll month
 
                 <select
-                  className="field mt-2 border-[#E7D8D5] bg-[#FFFDF8] text-[#241F20]"
+                  className="field mt-2 border-line bg-porcelain text-ink"
                   value={month}
                   onChange={(e) => setMonth(e.target.value)}
                 >
@@ -271,11 +271,11 @@ export default function PayrollRuns() {
                 </select>
               </label>
 
-              <label className="label text-[#241F20]">
+              <label className="label text-ink">
                 Payroll year
 
                 <input
-                  className="field mt-2 border-[#E7D8D5] bg-[#FFFDF8] text-[#241F20]"
+                  className="field mt-2 border-line bg-porcelain text-ink"
                   type="number"
                   min="2000"
                   max="2100"

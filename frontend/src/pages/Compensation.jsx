@@ -76,17 +76,17 @@ export default function Compensation() {
   const changeRow = (change) => (
     <tr key={change.id}>
       <td>
-        <Link to={`/employees/${change.employeeId}`} className="font-semibold text-[#A6192E] hover:underline">
+        <Link to={`/employees/${change.employeeId}`} className="font-semibold text-crimson hover:underline">
           {nameOf(change.employeeId)}
         </Link>
-        <span className="block text-xs text-[#6F6565]">proposed by {change.proposedByEmail}</span>
+        <span className="block text-xs text-ink-2">proposed by {change.proposedByEmail}</span>
       </td>
       <td className="whitespace-nowrap">{formatDate(change.effectiveFrom)}</td>
       <td><ChangeStatus status={change.status} /></td>
       <td className="text-sm">
         {change.reason}
-        {change.decisionNote && <span className="block text-xs text-[#6F6565]">Note: {change.decisionNote}</span>}
-        <button type="button" className="mt-1 text-xs font-semibold text-[#A6192E]" onClick={() => setExpanded(expanded === change.id ? null : change.id)}>
+        {change.decisionNote && <span className="block text-xs text-ink-2">Note: {change.decisionNote}</span>}
+        <button type="button" className="mt-1 text-xs font-semibold text-crimson" onClick={() => setExpanded(expanded === change.id ? null : change.id)}>
           {expanded === change.id ? 'Hide impact' : 'Show impact'}
         </button>
         {expanded === change.id && <ImpactSummary impact={change.impactAtApproval || change.impact} compact />}
@@ -94,7 +94,7 @@ export default function Compensation() {
       <td className="text-right tabular-nums">
         {money((change.impactAtApproval || change.impact)?.annualCtc?.after)}
         {(change.impactAtApproval || change.impact)?.annualCtc?.delta != null && (
-          <span className="block text-xs text-[#6F6565]">
+          <span className="block text-xs text-ink-2">
             {(change.impactAtApproval || change.impact).annualCtc.delta > 0 ? '+' : ''}
             {money((change.impactAtApproval || change.impact).annualCtc.delta)} a year
           </span>
@@ -123,7 +123,7 @@ export default function Compensation() {
   );
 
   const table = (rows, label) => (
-    <div className="pg-scrollbar mt-5 overflow-x-auto">
+    <div tabIndex={0} className="pg-scrollbar mt-5 overflow-x-auto">
       <table className="data-table" aria-label={label}>
         <thead>
           <tr>
@@ -143,9 +143,9 @@ export default function Compensation() {
   return (
     <div className="space-y-8">
       <div>
-        <p className="eyebrow text-[#A6192E]">Compensation control plane</p>
-        <h1 className="page-title text-[#241F20]">Compensation</h1>
-        <p className="page-subtitle text-[#6F6565]">
+        <p className="eyebrow">Compensation control plane</p>
+        <h1 className="page-title text-ink">Compensation</h1>
+        <p className="page-subtitle text-ink-2">
           Pay changes and the components they are built from. Every change carries its cost, its approver and its effective date.
         </p>
       </div>
@@ -162,7 +162,7 @@ export default function Compensation() {
         />
         {waiting.length === 0 ? (
           <div className="empty-state">
-            <p className="font-semibold text-[#241F20]">Nothing is waiting for a decision.</p>
+            <p className="font-semibold text-ink">Nothing is waiting for a decision.</p>
           </div>
         ) : table(waiting, 'Changes waiting for approval')}
       </section>
@@ -200,7 +200,7 @@ export default function Compensation() {
           )}
         </SectionHeader>
 
-        <div className="pg-scrollbar mt-5 overflow-x-auto">
+        <div tabIndex={0} className="pg-scrollbar mt-5 overflow-x-auto">
           <table className="data-table" aria-label="Pay components">
             <thead>
               <tr>
@@ -216,22 +216,22 @@ export default function Compensation() {
               {components.map((component) => (
                 <tr key={component.code}>
                   <td>
-                    <span className="font-semibold text-[#241F20]">{component.name}</span>
-                    <span className="block font-mono text-xs text-[#6F6565]">{component.code} · v{component.version}</span>
+                    <span className="font-semibold text-ink">{component.name}</span>
+                    <span className="block font-mono text-xs text-ink-2">{component.code} · v{component.version}</span>
                   </td>
                   <td>{COMPONENT_TYPE_LABELS[component.type]}</td>
                   <td className="text-sm">
                     {METHOD_LABELS[component.calculationMethod]}
                     {component.defaultBasis?.percentage != null && ` · ${component.defaultBasis.percentage}%`}
                   </td>
-                  <td className="text-xs text-[#6F6565]">
+                  <td className="text-xs text-ink-2">
                     {[
                       component.treatments.pfWage === 'INCLUDED' && 'PF wage',
                       component.treatments.esiWage === 'INCLUDED' && 'ESI wage',
                       component.treatments.ctc === 'INCLUDED' ? 'in CTC' : 'outside CTC',
                     ].filter(Boolean).join(' · ')}
                   </td>
-                  <td className={`text-xs ${component.payrollApplication === 'NOT_APPLIED_YET' ? 'text-[#845B00]' : 'text-[#6F6565]'}`}>
+                  <td className={`text-xs ${component.payrollApplication === 'NOT_APPLIED_YET' ? 'text-warn' : 'text-ink-2'}`}>
                     {PAYROLL_APPLICATION_LABELS[component.payrollApplication]}
                   </td>
                   <td className="text-right">
@@ -240,7 +240,7 @@ export default function Compensation() {
                         Archive
                       </button>
                     )}
-                    {component.statutory && <span className="text-xs text-[#6F6565]">System-managed</span>}
+                    {component.statutory && <span className="text-xs text-ink-2">System-managed</span>}
                   </td>
                 </tr>
               ))}
@@ -315,7 +315,7 @@ function AddComponentDialog({ onClose, onSaved }) {
 
   return (
     <Dialog eyebrow="Catalogue" title="Add a pay component" onClose={onClose} onSubmit={submit} submitLabel="Add component" submitting={saving} wide>
-      <p className="mt-3 text-sm leading-6 text-[#6F6565]">
+      <p className="mt-3 text-sm leading-6 text-ink-2">
         A component describes what it is and how payroll concepts treat it. Statutory amounts are never defined here.
       </p>
       <div className="mt-6 grid gap-4 sm:grid-cols-2">
@@ -370,7 +370,7 @@ function RejectDialog({ change, employeeName, onClose, onReject }) {
       submitting={saving}
       submitDisabled={note.trim().length < 5}
     >
-      <p className="mt-3 text-sm text-[#6F6565]">Effective {formatDate(change.effectiveFrom)} · {change.reason}</p>
+      <p className="mt-3 text-sm text-ink-2">Effective {formatDate(change.effectiveFrom)} · {change.reason}</p>
       <label className="label mt-5 block">
         Why is it rejected?
         <textarea className="field mt-2 min-h-[80px]" maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} />

@@ -60,14 +60,14 @@ const signedMoney = (value) => `${value > 0 ? '+' : ''}${money(value)}`;
 
 function Metric({ label, value, note }) {
   return (
-    <div className="border-l-2 border-[#A6192E] pl-4">
-      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#6F6565]">
+    <div className="min-w-0">
+      <p className="text-[12.5px] font-medium text-ink-2">
         {label}
       </p>
-      <p className="mt-2 text-2xl font-semibold tracking-tight tabular-nums text-[#241F20]">
+      <p className="mt-1.5 break-words text-[19px] font-medium leading-tight tabular-nums text-ink">
         {value}
       </p>
-      {note && <p className="mt-1 text-xs text-[#6F6565]">{note}</p>}
+      {note && <p className="mt-1 text-xs text-ink-2">{note}</p>}
     </div>
   );
 }
@@ -102,10 +102,10 @@ function ChangeBreakdown({ components }) {
     <ul className="mt-2 space-y-1 text-xs">
       {components.map((component) => (
         <li key={component.component} className="flex flex-wrap gap-x-2">
-          <span className="font-medium text-[#241F20]">
+          <span className="font-medium text-ink">
             {COMPONENT_LABELS[component.component] || component.component} {signedMoney(component.delta)}
           </span>
-          <span className={component.explained ? 'text-[#26765F]' : 'font-semibold text-[#A33D35]'}>
+          <span className={component.explained ? 'text-ok' : 'font-semibold text-bad'}>
             {component.explained
               ? `explained by ${component.explainedBy.map((cause) => CAUSE_LABELS[cause] || cause).join(', ')}`
               : 'no cause found in payroll inputs'}
@@ -246,7 +246,7 @@ export default function PayrollRunDetail() {
 
   if (loading) {
     return (
-      <div className="panel py-16 text-center text-sm text-[#6F6565]">
+      <div className="panel py-16 text-center text-sm text-ink-2">
         Loading payroll run...
       </div>
     );
@@ -257,7 +257,7 @@ export default function PayrollRunDetail() {
       <div className="space-y-6">
         <Link
           to="/payroll"
-          className="text-sm font-semibold text-[#A6192E] transition hover:text-[#7D1022]"
+          className="text-sm font-semibold text-crimson transition hover:text-crimson-strong"
         >
           ← Back to payroll runs
         </Link>
@@ -283,7 +283,7 @@ export default function PayrollRunDetail() {
         <div>
           <Link
             to="/payroll"
-            className="text-sm font-semibold text-[#A6192E] transition hover:text-[#7D1022]"
+            className="text-sm font-semibold text-crimson transition hover:text-crimson-strong"
           >
             ← Back to payroll runs
           </Link>
@@ -314,7 +314,7 @@ export default function PayrollRunDetail() {
 
       {/* Workflow */}
       <section className="panel">
-        <div className="flex flex-col gap-4 border-b border-[#E7D8D5] pb-5 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-4 border-b border-line pb-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="eyebrow">Workflow</p>
             <h2 className="section-title">Next step</h2>
@@ -369,7 +369,7 @@ export default function PayrollRunDetail() {
         </div>
 
         {run.status === 'READY_FOR_FINALIZATION' && !canFinalize && (
-          <p className="mt-4 text-sm text-[#6F6565]">
+          <p className="mt-4 text-sm text-ink-2">
             Calculated and awaiting an approver with finalization permission.
           </p>
         )}
@@ -394,15 +394,15 @@ export default function PayrollRunDetail() {
         )}
 
         {run.status === 'PROCESSING' && (
-          <p className="mt-4 text-sm text-[#6F6565]">
+          <p className="mt-4 text-sm text-ink-2">
             Calculation in progress. Runs without progress for 30 minutes are
             marked failed automatically.
           </p>
         )}
 
         {controls && (
-          <div className="mt-6 rounded-[10px] border border-[#E7D8D5] bg-[#FFF7F0] p-4 text-sm text-[#5F5555]">
-            <p className="font-semibold text-[#241F20]">Approval record</p>
+          <div className="mt-6 rounded-[10px] border border-line bg-canvas-2 p-4 text-sm text-ink-2">
+            <p className="font-semibold text-ink">Approval record</p>
             <p className="mt-1">
               {controls.approvalMode === 'maker_checker'
                 ? 'Maker-checker: calculated and finalized by different people.'
@@ -410,7 +410,7 @@ export default function PayrollRunDetail() {
               {controls.variance?.counts && ` Variance at finalization: ${controls.variance.counts.unexplained} unexplained, ${controls.variance.counts.expected} expected.`}
             </p>
             {controls.override && (
-              <p className="mt-2 text-[#A33D35]">
+              <p className="mt-2 text-bad">
                 <span className="font-semibold">Override recorded</span> by {controls.override.byEmail || 'approver'}:{' '}
                 “{controls.override.reason}”
               </p>
@@ -436,13 +436,13 @@ export default function PayrollRunDetail() {
             ))}
           </div>
 
-          <p className="mt-5 text-sm text-[#6F6565]">
+          <p className="mt-5 text-sm text-ink-2">
             {preflight.eligibleEmployees.length} eligible ·{' '}
             {preflight.blockedEmployees.length} blocked
           </p>
 
           {preflight.blockedEmployees.length > 0 && (
-            <div className="pg-scrollbar mt-4 overflow-x-auto">
+            <div tabIndex={0} className="pg-scrollbar mt-4 overflow-x-auto">
               <table className="data-table">
                 <thead>
                   <tr>
@@ -456,7 +456,7 @@ export default function PayrollRunDetail() {
                       <td>
                         <Link
                           to={`/employees/${blocked.employeeId}`}
-                          className="font-semibold text-[#A6192E] hover:underline"
+                          className="font-semibold text-crimson hover:underline"
                         >
                           {blocked.name}
                         </Link>
@@ -480,12 +480,12 @@ export default function PayrollRunDetail() {
       {/* Payroll register */}
       {register && (
         <section className="panel">
-          <div className="flex flex-col justify-between gap-2 border-b border-[#E7D8D5] pb-5 sm:flex-row sm:items-end">
+          <div className="flex flex-col justify-between gap-2 border-b border-line pb-5 sm:flex-row sm:items-end">
             <div>
               <p className="eyebrow">Payroll register</p>
               <h2 className="section-title">Company totals</h2>
             </div>
-            <span className="text-xs text-[#6F6565]">
+            <span className="text-xs text-ink-2">
               {register.source === 'STAGING'
                 ? 'From calculated results awaiting finalization'
                 : 'From finalized payslips'}
@@ -498,7 +498,7 @@ export default function PayrollRunDetail() {
             <Metric label="Cost to company" value={money(register.totals.costToCompany)} note="Gross + employer contributions" />
           </div>
 
-          <div className="pg-scrollbar mt-7 overflow-x-auto">
+          <div tabIndex={0} className="pg-scrollbar mt-7 overflow-x-auto">
             <table className="data-table">
               <thead>
                 <tr>
@@ -513,7 +513,7 @@ export default function PayrollRunDetail() {
                   <td className="text-right tabular-nums">{money(register.totals.statutory.epfEmployee)}</td>
                   <td className="text-right tabular-nums">
                     {money(register.totals.statutory.epfEmployer)}
-                    <span className="block text-xs text-[#6F6565]">
+                    <span className="block text-xs text-ink-2">
                       incl. pension {money(register.totals.statutory.epsWithinEmployer)}
                     </span>
                   </td>
@@ -526,14 +526,14 @@ export default function PayrollRunDetail() {
                 <tr>
                   <td>Professional tax</td>
                   <td className="text-right tabular-nums">{money(register.totals.statutory.professionalTax)}</td>
-                  <td className="text-right text-[#6F6565]">—</td>
+                  <td className="text-right text-ink-2">—</td>
                 </tr>
                 <tr>
-                  <td className="font-semibold text-[#241F20]">Total</td>
-                  <td className="text-right font-semibold tabular-nums text-[#241F20]">
+                  <td className="font-semibold text-ink">Total</td>
+                  <td className="text-right font-semibold tabular-nums text-ink">
                     {money(register.totals.employeeDeductions)}
                   </td>
-                  <td className="text-right font-semibold tabular-nums text-[#241F20]">
+                  <td className="text-right font-semibold tabular-nums text-ink">
                     {money(register.totals.employerContributions)}
                   </td>
                 </tr>
@@ -546,11 +546,11 @@ export default function PayrollRunDetail() {
       {/* Variance report */}
       {variance && (
         <section className="panel">
-          <div className="flex flex-col justify-between gap-3 border-b border-[#E7D8D5] pb-5 sm:flex-row sm:items-end">
+          <div className="flex flex-col justify-between gap-3 border-b border-line pb-5 sm:flex-row sm:items-end">
             <div>
               <p className="eyebrow">Exceptions review</p>
               <h2 className="section-title">Variance report</h2>
-              <p className="mt-2 text-sm text-[#6F6565]">
+              <p className="mt-2 text-sm text-ink-2">
                 {variance.baseline
                   ? `Compared with ${monthName(variance.baseline.periodMonth, variance.baseline.periodYear)} · material at ${variance.thresholdPercent}%`
                   : variance.note}
@@ -564,7 +564,7 @@ export default function PayrollRunDetail() {
           </div>
 
           {variance.totals.change && (
-            <p className="mt-5 text-sm text-[#5F5555]">
+            <p className="mt-5 text-sm text-ink-2">
               Headcount {variance.totals.change.headcount >= 0 ? '+' : ''}{variance.totals.change.headcount} ·
               gross {variance.totals.change.grossPercent ?? 0}% ·
               net {variance.totals.change.netPercent ?? 0}% ·
@@ -574,11 +574,11 @@ export default function PayrollRunDetail() {
 
           {variance.flags.length === 0 ? (
             <div className="empty-state">
-              <p className="font-semibold text-[#241F20]">No pay changes to review.</p>
+              <p className="font-semibold text-ink">No pay changes to review.</p>
               <p className="mt-1 text-sm">Every employee is paid exactly as in the previous period.</p>
             </div>
           ) : (
-            <div className="pg-scrollbar mt-5 overflow-x-auto">
+            <div tabIndex={0} className="pg-scrollbar mt-5 overflow-x-auto">
               <table className="data-table">
                 <thead>
                   <tr>
@@ -600,10 +600,10 @@ export default function PayrollRunDetail() {
                           </span>
                         </div>
                       </td>
-                      <td className="font-medium text-[#241F20]">
+                      <td className="font-medium text-ink">
                         {flag.employeeName}
                         {flag.blocking && (
-                          <span className="block text-xs font-semibold text-[#A33D35]">Blocks finalization</span>
+                          <span className="block text-xs font-semibold text-bad">Blocks finalization</span>
                         )}
                       </td>
                       <td>
@@ -625,7 +625,7 @@ export default function PayrollRunDetail() {
           <p className="eyebrow">Locked records</p>
           <h2 className="section-title">Payslips</h2>
 
-          <div className="pg-scrollbar mt-5 overflow-x-auto">
+          <div tabIndex={0} className="pg-scrollbar mt-5 overflow-x-auto">
             <table className="data-table">
               <thead>
                 <tr>
@@ -640,16 +640,16 @@ export default function PayrollRunDetail() {
                 {snapshots.map((snapshot) => (
                   <tr key={snapshot._id}>
                     <td>
-                      <span className="font-semibold text-[#241F20]">
+                      <span className="font-semibold text-ink">
                         {snapshot.employeeSnapshot.fullName}
                       </span>
-                      <span className="block text-xs text-[#6F6565]">
+                      <span className="block text-xs text-ink-2">
                         {snapshot.employeeSnapshot.department}
                       </span>
                     </td>
                     <td className="text-right tabular-nums">{money(snapshot.payrollInputs.grossMonthly)}</td>
                     <td className="text-right tabular-nums">{money(snapshot.payrollResults.totalEmployeeDeductions)}</td>
-                    <td className="text-right font-semibold tabular-nums text-[#241F20]">
+                    <td className="text-right font-semibold tabular-nums text-ink">
                       {money(snapshot.payrollResults.netPayBeforeTDS)}
                     </td>
                     <td className="text-right">
@@ -678,17 +678,17 @@ export default function PayrollRunDetail() {
             <h2 id="finalize-title" className="section-title">
               Finalize {monthName(run.periodMonth, run.periodYear)}?
             </h2>
-            <p className="mt-3 text-sm leading-6 text-[#5F5555]">
+            <p className="mt-3 text-sm leading-6 text-ink-2">
               Payslips for {run.successfulEmployeeCount} employee(s) are written,
               verified and permanently locked. Later corrections must be paid
               as arrears in a future run.
             </p>
 
             {reviewNeeded && (
-              <label className="mt-5 flex items-start gap-3 rounded-[8px] border border-[#EFD8A4] bg-[#FFF8E8] p-3 text-sm text-[#845B00]">
+              <label className="mt-5 flex items-start gap-3 rounded-[8px] border border-warn-line bg-warn-tint p-3 text-sm text-warn">
                 <input
                   type="checkbox"
-                  className="mt-1 accent-[#A6192E]"
+                  className="mt-1 accent-crimson"
                   checked={reviewed}
                   onChange={(event) => setReviewed(event.target.checked)}
                 />
@@ -697,7 +697,7 @@ export default function PayrollRunDetail() {
             )}
 
             {readiness?.requiresOverride && (
-              <label className="mt-5 block text-sm text-[#A33D35]">
+              <label className="mt-5 block text-sm text-bad">
                 <span className="font-semibold">
                   Override reason for {readiness.blockingFlags.length} unexplained change(s)
                 </span>
@@ -708,7 +708,7 @@ export default function PayrollRunDetail() {
                   placeholder="Why these results are correct, and the evidence (e.g. approval ticket)"
                   maxLength={1000}
                 />
-                <span className="mt-1 block text-xs text-[#6F6565]">
+                <span className="mt-1 block text-xs text-ink-2">
                   Recorded permanently with the run and in the audit trail
                   {overrideValid ? '.' : ` · at least ${OVERRIDE_REASON_MIN} characters`}
                 </span>

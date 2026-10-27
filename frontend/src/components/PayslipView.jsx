@@ -21,14 +21,14 @@ const formatDate = (value) =>
 
 function Metric({ label, value, note }) {
   return (
-    <div className="border-l-2 border-[#A6192E] pl-4">
-      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[#6F6565]">
+    <div className="min-w-0">
+      <p className="text-[12.5px] font-medium text-ink-2">
         {label}
       </p>
-      <p className="mt-2 text-2xl font-semibold tracking-tight tabular-nums text-[#241F20]">
+      <p className="mt-1.5 break-words text-[19px] font-medium leading-tight tabular-nums text-ink">
         {value}
       </p>
-      {note && <p className="mt-1 text-xs text-[#6F6565]">{note}</p>}
+      {note && <p className="mt-1 text-xs text-ink-2">{note}</p>}
     </div>
   );
 }
@@ -40,34 +40,34 @@ function LineSection({ eyebrow, title, lines, total, totalLabel }) {
       <h2 className="section-title">{title}</h2>
 
       {lines.length === 0 ? (
-        <p className="mt-5 text-sm text-[#6F6565]">None for this period.</p>
+        <p className="mt-5 text-sm text-ink-2">None for this period.</p>
       ) : (
-        <ul className="mt-5 divide-y divide-[#E7D8D5]">
+        <ul className="mt-5 divide-y divide-line">
           {lines.map((line) => (
             <li key={line.code} className="py-3">
               <div className="flex justify-between gap-4 text-sm">
                 <span
                   className={
                     line.includedInEmployerTotal
-                      ? 'pl-4 text-[#6F6565]'
-                      : 'font-medium text-[#241F20]'
+                      ? 'pl-4 text-ink-2'
+                      : 'font-medium text-ink'
                   }
                 >
                   {line.label}
                 </span>
-                <span className="font-semibold tabular-nums text-[#241F20]">
+                <span className="font-semibold tabular-nums text-ink">
                   {money(line.amount)}
                 </span>
               </div>
 
               {line.formula && (
-                <p className="mt-1 break-words font-mono text-xs leading-5 text-[#6F6565]">
+                <p className="mt-1 break-words font-mono text-xs leading-5 text-ink-2">
                   {line.formula}
                 </p>
               )}
 
               {line.source && (
-                <p className="mt-1 text-[11px] leading-4 text-[#8A7D77]">
+                <p className="mt-1 text-[11px] leading-4 text-ink-2">
                   Rule {line.source.ruleType} · {line.source.jurisdiction} · effective{' '}
                   {formatDate(line.source.effectiveFrom)}
                   {line.source.reference ? ` · ${line.source.reference}` : ''}
@@ -75,7 +75,7 @@ function LineSection({ eyebrow, title, lines, total, totalLabel }) {
               )}
 
               {line.rateDerivedFromAmounts && (
-                <p className="mt-1 text-[11px] text-[#9A6700]">
+                <p className="mt-1 text-[11px] text-warn">
                   Rate derived from stored amounts: this record predates frozen rule parameters.
                 </p>
               )}
@@ -84,7 +84,7 @@ function LineSection({ eyebrow, title, lines, total, totalLabel }) {
         </ul>
       )}
 
-      <div className="mt-4 flex justify-between gap-4 border-t border-[#E7D8D5] pt-4 text-sm font-semibold text-[#241F20]">
+      <div className="mt-4 flex justify-between gap-4 border-t border-line pt-4 text-sm font-semibold text-ink">
         <span>{totalLabel}</span>
         <span className="tabular-nums">{money(total)}</span>
       </div>
@@ -111,11 +111,11 @@ export default function PayslipView({ payslip }) {
   return (
     <div className="space-y-6">
       <section className="panel">
-        <div className="flex flex-col justify-between gap-4 border-b border-[#E7D8D5] pb-5 sm:flex-row sm:items-start">
+        <div className="flex flex-col justify-between gap-4 border-b border-line pb-5 sm:flex-row sm:items-start">
           <div>
             <p className="eyebrow">Payslip · {period.label}</p>
             <h2 className="section-title">{employee.name}</h2>
-            <p className="mt-1 text-sm text-[#6F6565]">
+            <p className="mt-1 text-sm text-ink-2">
               {[employee.position, employee.department, employee.workState && `Work state ${employee.workState}`]
                 .filter(Boolean)
                 .join(' · ')}
@@ -139,7 +139,7 @@ export default function PayslipView({ payslip }) {
           <Metric label="Cost to company" value={money(totals.costToCompany)} note="Gross + employer contributions" />
         </div>
 
-        <p className="mt-5 break-words font-mono text-xs text-[#6F6565]">
+        <p className="mt-5 break-words font-mono text-xs text-ink-2">
           Net pay: {totals.netPayFormula}
         </p>
       </section>
@@ -176,7 +176,7 @@ export default function PayslipView({ payslip }) {
           {notes.length > 0 && (
             <div>
               <p className="eyebrow">Notes</p>
-              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[#5F5555]">
+              <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-ink-2">
                 {notes.map((note) => (
                   <li key={note}>{note}</li>
                 ))}

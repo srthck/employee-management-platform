@@ -43,11 +43,11 @@ function Field({
     <div>
       <label
         htmlFor={id}
-        className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-[#6B625E]"
+        className="label mb-1.5 block"
       >
         {label}
         {required && (
-          <span className="ml-1 text-[#C62828]">*</span>
+          <span className="ml-1 text-crimson">*</span>
         )}
       </label>
 
@@ -59,17 +59,17 @@ function Field({
         value={form[name]}
         onChange={handleChange}
         placeholder={placeholder}
-        className={`w-full rounded-[9px] border bg-white px-3.5 py-2.5 text-sm text-[#1F2937] placeholder-[#AAA09B] outline-none transition-all duration-200
-          focus:border-[#C62828] focus:ring-2 focus:ring-[#C62828]/10
+        className={`w-full rounded-[9px] border bg-white px-3.5 py-2.5 text-sm text-ink placeholder-ink-3 outline-none transition-all duration-200
+          focus:border-crimson focus:ring-2 focus:ring-crimson/10
           ${
             errors[name]
-              ? 'border-[#C62828] bg-[#FFF8F7]'
-              : 'border-[#DDD2CE] hover:border-[#C8B9B4]'
+              ? 'border-crimson bg-porcelain'
+              : 'border-line hover:border-line-strong'
           }`}
       />
 
       {errors[name] && (
-        <p className="mt-1.5 text-xs font-medium text-[#B91C1C]">
+        <p className="mt-1.5 text-xs font-medium text-bad">
           {errors[name]}
         </p>
       )}
@@ -247,6 +247,12 @@ export default function EmployeeModal({
     }
   };
 
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
   const handleBackdropClick = (e) => {
     if (e.target === e.currentTarget) {
       onClose();
@@ -255,16 +261,22 @@ export default function EmployeeModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#3A211F]/35 p-4 backdrop-blur-[3px]"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/35 p-4 backdrop-blur-[3px]"
       onClick={handleBackdropClick}
     >
-      <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[16px] border border-[#E6D9D4] bg-[#FFFDF8] shadow-[0_24px_70px_rgba(78,37,31,0.18)]">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="employee-modal-title"
+        className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[16px] border border-line bg-porcelain"
+        style={{ boxShadow: 'var(--pg-shadow-overlay)' }}
+      >
 
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#EDE2DD] bg-white px-6 py-5">
+        <div className="flex items-center justify-between border-b border-line bg-white px-6 py-5">
           <div className="flex items-center gap-3">
 
-            <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-[#C62828] shadow-[0_6px_16px_rgba(198,40,40,0.18)]">
+            <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-obsidian">
               <svg
                 className="h-4.5 w-4.5 text-white"
                 fill="none"
@@ -290,11 +302,11 @@ export default function EmployeeModal({
             </div>
 
             <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#C62828]">
-                PayGuard
+              <p className="eyebrow">
+                Employee record
               </p>
 
-              <h2 className="mt-0.5 text-lg font-semibold tracking-tight text-[#1F2937]">
+              <h2 id="employee-modal-title" className="mt-0.5 text-lg font-semibold tracking-tight text-ink">
                 {isEdit ? 'Edit Employee' : 'Add New Employee'}
               </h2>
             </div>
@@ -304,7 +316,7 @@ export default function EmployeeModal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded-[8px] p-2 text-[#827873] transition-colors hover:bg-[#FDECEC] hover:text-[#C62828]"
+            className="rounded-[8px] p-2 text-ink-2 transition-colors hover:bg-crimson-tint hover:text-crimson"
           >
             <svg
               className="h-5 w-5"
@@ -331,7 +343,7 @@ export default function EmployeeModal({
 
           {/* API Error */}
           {apiError && (
-            <div className="flex items-start gap-2.5 rounded-[10px] border border-[#EDC4C0] bg-[#FFF4F3] px-4 py-3 text-sm text-[#A33D35]">
+            <div className="flex items-start gap-2.5 rounded-[10px] border border-bad-line bg-bad-tint px-4 py-3 text-sm text-bad">
               <svg
                 className="mt-0.5 h-4 w-4 flex-shrink-0"
                 fill="currentColor"
@@ -349,16 +361,15 @@ export default function EmployeeModal({
           )}
 
           {/* Personal Information */}
-          <section className="rounded-[12px] border border-[#EDE2DD] bg-white p-5">
+          <section className="rounded-[12px] border border-line bg-white p-5">
             <div className="mb-4 flex items-center gap-2">
-              <span className="h-5 w-1 rounded-full bg-[#C62828]" />
 
               <div>
-                <p className="text-sm font-semibold text-[#1F2937]">
+                <p className="text-sm font-semibold text-ink">
                   Personal Information
                 </p>
 
-                <p className="mt-0.5 text-xs text-[#827873]">
+                <p className="mt-0.5 text-xs text-ink-2">
                   Basic employee contact details
                 </p>
               </div>
@@ -414,16 +425,15 @@ export default function EmployeeModal({
           </section>
 
           {/* Employment Information */}
-          <section className="rounded-[12px] border border-[#EDE2DD] bg-white p-5">
+          <section className="rounded-[12px] border border-line bg-white p-5">
             <div className="mb-4 flex items-center gap-2">
-              <span className="h-5 w-1 rounded-full bg-[#C62828]" />
 
               <div>
-                <p className="text-sm font-semibold text-[#1F2937]">
+                <p className="text-sm font-semibold text-ink">
                   Employment Information
                 </p>
 
-                <p className="mt-0.5 text-xs text-[#827873]">
+                <p className="mt-0.5 text-xs text-ink-2">
                   Role, department and employment details
                 </p>
               </div>
@@ -435,10 +445,10 @@ export default function EmployeeModal({
               <div>
                 <label
                   htmlFor="emp-dept"
-                  className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-[#6B625E]"
+                  className="label mb-1.5 block"
                 >
                   Department
-                  <span className="ml-1 text-[#C62828]">*</span>
+                  <span className="ml-1 text-crimson">*</span>
                 </label>
 
                 <select
@@ -446,12 +456,12 @@ export default function EmployeeModal({
                   name="department"
                   value={form.department}
                   onChange={handleChange}
-                  className={`w-full rounded-[9px] border bg-white px-3.5 py-2.5 text-sm text-[#1F2937] outline-none transition-all
-                    focus:border-[#C62828] focus:ring-2 focus:ring-[#C62828]/10
+                  className={`w-full rounded-[9px] border bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all
+                    focus:border-crimson focus:ring-2 focus:ring-crimson/10
                     ${
                       errors.department
-                        ? 'border-[#C62828] bg-[#FFF8F7]'
-                        : 'border-[#DDD2CE] hover:border-[#C8B9B4]'
+                        ? 'border-crimson bg-porcelain'
+                        : 'border-line hover:border-line-strong'
                     }`}
                 >
                   <option value="">
@@ -469,7 +479,7 @@ export default function EmployeeModal({
                 </select>
 
                 {errors.department && (
-                  <p className="mt-1.5 text-xs font-medium text-[#B91C1C]">
+                  <p className="mt-1.5 text-xs font-medium text-bad">
                     {errors.department}
                   </p>
                 )}
@@ -490,14 +500,14 @@ export default function EmployeeModal({
               <div>
                 <label
                   htmlFor="emp-salary"
-                  className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-[#6B625E]"
+                  className="label mb-1.5 block"
                 >
                   Salary
-                  <span className="ml-1 text-[#C62828]">*</span>
+                  <span className="ml-1 text-crimson">*</span>
                 </label>
 
                 <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-[#8A7D77]">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm font-semibold text-ink-2">
                     ₹
                   </span>
 
@@ -512,25 +522,25 @@ export default function EmployeeModal({
                     readOnly={isEdit}
                     aria-readonly={isEdit}
                     placeholder="60000"
-                    className={`w-full rounded-[9px] border bg-white py-2.5 pl-8 pr-3 text-sm text-[#1F2937] placeholder-[#AAA09B] outline-none transition-all
-                      focus:border-[#C62828] focus:ring-2 focus:ring-[#C62828]/10
+                    className={`w-full rounded-[9px] border bg-white py-2.5 pl-8 pr-3 text-sm text-ink placeholder-ink-3 outline-none transition-all
+                      focus:border-crimson focus:ring-2 focus:ring-crimson/10
                       ${
                         errors.salary
-                          ? 'border-[#C62828] bg-[#FFF8F7]'
-                          : 'border-[#DDD2CE] hover:border-[#C8B9B4]'
+                          ? 'border-crimson bg-porcelain'
+                          : 'border-line hover:border-line-strong'
                       }
-                      ${isEdit ? 'bg-[#F8F3EF] text-[#746B67]' : ''}`}
+                      ${isEdit ? 'bg-porcelain text-ink-2' : ''}`}
                   />
                 </div>
 
                 {isEdit && (
-                  <p className="mt-1.5 text-[11px] text-[#8A7D77]">
+                  <p className="mt-1.5 text-[11px] text-ink-2">
                     Salary is managed through the versioned salary structure.
                   </p>
                 )}
 
                 {errors.salary && (
-                  <p className="mt-1.5 text-xs font-medium text-[#B91C1C]">
+                  <p className="mt-1.5 text-xs font-medium text-bad">
                     {errors.salary}
                   </p>
                 )}
@@ -551,7 +561,7 @@ export default function EmployeeModal({
               <div>
                 <label
                   htmlFor="emp-status"
-                  className="mb-1.5 block text-xs font-semibold uppercase tracking-[0.08em] text-[#6B625E]"
+                  className="label mb-1.5 block"
                 >
                   Status
                 </label>
@@ -561,7 +571,7 @@ export default function EmployeeModal({
                   name="status"
                   value={form.status}
                   onChange={handleChange}
-                  className="w-full rounded-[9px] border border-[#DDD2CE] bg-white px-3.5 py-2.5 text-sm text-[#1F2937] outline-none transition-all hover:border-[#C8B9B4] focus:border-[#C62828] focus:ring-2 focus:ring-[#C62828]/10"
+                  className="w-full rounded-[9px] border border-line bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all hover:border-line-strong focus:border-crimson focus:ring-2 focus:ring-crimson/10"
                 >
                   <option value="active">
                     Active
@@ -580,13 +590,13 @@ export default function EmployeeModal({
           </section>
 
           {/* Notes */}
-          <section className="rounded-[12px] border border-[#EDE2DD] bg-white p-5">
+          <section className="rounded-[12px] border border-line bg-white p-5">
             <div className="mb-4">
-              <p className="text-sm font-semibold text-[#1F2937]">
+              <p className="text-sm font-semibold text-ink">
                 Notes
               </p>
 
-              <p className="mt-0.5 text-xs text-[#827873]">
+              <p className="mt-0.5 text-xs text-ink-2">
                 Optional information about this employee
               </p>
             </div>
@@ -599,21 +609,21 @@ export default function EmployeeModal({
               rows={3}
               maxLength={500}
               placeholder="Any additional information…"
-              className="w-full resize-none rounded-[9px] border border-[#DDD2CE] bg-white px-3.5 py-2.5 text-sm text-[#1F2937] placeholder-[#AAA09B] outline-none transition-all hover:border-[#C8B9B4] focus:border-[#C62828] focus:ring-2 focus:ring-[#C62828]/10"
+              className="w-full resize-none rounded-[9px] border border-line bg-white px-3.5 py-2.5 text-sm text-ink placeholder-ink-3 outline-none transition-all hover:border-line-strong focus:border-crimson focus:ring-2 focus:ring-crimson/10"
             />
 
-            <p className="mt-1.5 text-right text-[11px] text-[#968A85]">
+            <p className="mt-1.5 text-right text-[11px] text-ink-2">
               {form.notes.length}/500
             </p>
           </section>
 
           {/* Footer */}
-          <div className="flex items-center justify-end gap-3 border-t border-[#EDE2DD] pt-5">
+          <div className="flex items-center justify-end gap-3 border-t border-line pt-5">
 
             <button
               type="button"
               onClick={onClose}
-              className="rounded-[9px] border border-[#DDD2CE] bg-white px-4 py-2.5 text-sm font-semibold text-[#625954] transition-all hover:border-[#C8B9B4] hover:bg-[#FFF8F3]"
+              className="rounded-[9px] border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink-2 transition-all hover:border-line-strong hover:bg-porcelain"
             >
               Cancel
             </button>
@@ -621,7 +631,7 @@ export default function EmployeeModal({
             <button
               type="submit"
               disabled={isLoading}
-              className="flex items-center gap-2 rounded-[9px] bg-[#C62828] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(198,40,40,0.18)] transition-all hover:-translate-y-0.5 hover:bg-[#8E1B1B] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+              className="flex items-center gap-2 rounded-[9px] bg-crimson px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(198,40,40,0.18)] transition-all hover:-translate-y-0.5 hover:bg-crimson-strong disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
             >
               {isLoading ? (
                 <>
