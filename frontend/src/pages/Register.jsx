@@ -1,6 +1,7 @@
 import { useState, useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../contexts/AuthContext';
+import { requestErrorMessage } from '../services/requestErrors';
 
 /**
  * Register Page
@@ -129,18 +130,17 @@ export default function Register() {
       // Handle structured validation errors from backend
       if (err.response?.data?.errors?.length) {
         const fieldErrors = {};
+        const otherMessages = [];
 
         err.response.data.errors.forEach(({ field, message }) => {
-          fieldErrors[field] = message;
+          if (field && field in form && !fieldErrors[field]) fieldErrors[field] = message;
+          else otherMessages.push(message);
         });
 
         setErrors(fieldErrors);
+        if (otherMessages.length) setApiError(otherMessages.join(' '));
       } else {
-        const message =
-          err.response?.data?.message ||
-          'Registration failed. Please try again.';
-
-        setApiError(message);
+        setApiError(requestErrorMessage(err, 'Registration failed. Please try again.'));
       }
     } finally {
       setIsLoading(false);

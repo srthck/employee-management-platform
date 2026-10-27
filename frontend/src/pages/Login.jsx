@@ -1,6 +1,7 @@
 import { useState, useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../contexts/AuthContext';
+import { requestErrorMessage } from '../services/requestErrors';
 
 /**
  * Login Page
@@ -90,11 +91,7 @@ export default function Login() {
         result?.data?.user?.role === 'employee' ? '/my/payslips' : '/dashboard'
       );
     } catch (err) {
-      const message =
-        err.response?.data?.message ||
-        'Login failed. Please try again.';
-
-      setApiError(message);
+      setApiError(requestErrorMessage(err, 'Login failed. Please try again.'));
     } finally {
       setIsLoading(false);
     }
