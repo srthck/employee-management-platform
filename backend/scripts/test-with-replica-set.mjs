@@ -54,6 +54,9 @@ const databaseUri = (name) => {
 
 const env = {
   ...process.env,
+  // Pinned: some suites set no NODE_ENV and would otherwise inherit whatever an untracked backend/.env says (dotenv never
+  // overrides a variable that is already set), so a clean checkout ran them under a different audit-chain policy.
+  NODE_ENV: 'test',
   REQUIRE_TRANSACTIONS: 'true',
   PHASE10_MONGO_URI: databaseUri('payguard_phase10_test'),
   AUDIT_TEST_MONGO_URI: databaseUri('payguard_phase11b_audit_test'),
