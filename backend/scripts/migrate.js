@@ -23,7 +23,9 @@
  *   7. compensation      record a new component version wherever Wave 3.5
  *                        changed what payroll does with it (recurring
  *                        voluntary deductions and employer contributions)
- *   8. everything else   build any missing schema indexes
+ *   8. idempotency       drop the old TTL index that expired every record (its
+ *                        replacement expires only COMPLETED ones)
+ *   9. everything else   build any missing schema indexes
  *
  * Audit records are never rewritten. Events recorded before companyId existed
  * stay unscoped (and keep verifying); they are not visible through the
@@ -37,7 +39,7 @@ import config from '../src/config/environment.js';
 import Admin from '../src/models/Admin.js';
 import AuditLog from '../src/models/AuditLog.js';
 import Company from '../src/models/Company.js';
-import IdempotencyRecord from '../src/models/IdempotencyRecord.js';
+import IdempotencyRecord, { LEGACY_IDEMPOTENCY_TTL_INDEX } from '../src/models/IdempotencyRecord.js';
 import ComplianceRuleVersion from '../src/models/ComplianceRuleVersion.js';
 import Employee from '../src/models/Employee.js';
 import EmployeeAccount from '../src/models/EmployeeAccount.js';
@@ -256,6 +258,10 @@ async function main() {
   }
   await backfillCompensation({ dryRun, log, problems });
   await refreshPayrollApplication({ dryRun, log });
+  // The earlier TTL index expired EVERY idempotency record, including the ones that stop a retry from re-running work whose
+  // outcome is unknown or that already committed. Its replacement (built below) expires only COMPLETED records. Dropping an
+  // index removes no document.
+  await dropIndexIfPresent(IdempotencyRecord, LEGACY_IDEMPOTENCY_TTL_INDEX);
   for (const model of [
     Admin, AuditLog, Company, ComplianceRuleVersion, EmployeeAccount, IdempotencyRecord, PayrollSnapshot, PayrollStagingResult,
     EmployeeStatutoryProfile, EmployeeBankAccount, EmployeeDocument,

@@ -198,6 +198,7 @@ Provenance: the F-05 conversions, the recovery inspection and the lease model we
 | P3-7 | A commit the server applied but did not confirm is recognised from the marker; one it never applied returns `COMMIT_OUTCOME_UNKNOWN` and is not re-run; a definite (transient) commit refusal is retried, not reported as unknown | `DIRECTLY_TESTED` with **real** `failCommand` faults on a single-node replica set | `commitResolvingOutcome`, bounded majority-read polling | `test_commit_ambiguity.js` |
 | P3-8 | Snapshot recovery apply always refuses | `SOURCE_ENFORCED`, `DIRECTLY_TESTED` | `applySnapshotRecovery` throws 503 | `test_snapshot_recovery.js` |
 | P3-9 | Recovery inspection treats any finalization evidence as `FINALIZED` and a broken chain as ineligible; leases are fenced by token **and** fence value, and an expired lease cannot be renewed | `DIRECTLY_TESTED` | inspection, `SnapshotRecoveryLease` | `test_snapshot_recovery.js` |
+| P3-10 | "Never re-run" does not lapse with time: only `COMPLETED` idempotency records expire; `UNKNOWN_COMMIT` and committed `IN_PROGRESS` records are kept, and the migration removes the earlier TTL index that expired every record after 24 h (found 2026-11-09; until then the guarantee held for one day only) | `DB_ENFORCED` (partial TTL index), `DIRECTLY_TESTED` against the real TTL monitor; on an existing database `CONFIG_DEPENDENT` on running `npm run migrate` | `idempotency_ttl_completed`; `migrate.js` step 8 | `test_commit_ambiguity.js` retention group; 2/2 mutants killed (`phase-ops/mutation_retention.json`) |
 
 ### Suite runs on the Phase 3 source
 
@@ -221,7 +222,7 @@ Run 1 is kept, not discarded: `mutation_run1.json`, `mutation_run2.json`.
 
 1. **Single-node replica set only.** Failover, stepdown, multi-node majority and partitions are `UNVERIFIED`.
 2. Requests **without** an `Idempotency-Key` have no operation record: they still get `COMMIT_OUTCOME_UNKNOWN`, but nothing durable settles it.
-3. `UNKNOWN_COMMIT` and `PRIOR_ATTEMPT_COMMITTED` are resolved by a person; there is no reconciliation procedure or tool.
+3. `UNKNOWN_COMMIT` and `PRIOR_ATTEMPT_COMMITTED` are resolved by a person following [RUNBOOK-UNCONFIRMED-OPERATIONS.md](RUNBOOK-UNCONFIRMED-OPERATIONS.md); there is no tool, and the records are never edited by hand.
 4. The idempotency fallback without transactions (development/test only) does not give the evidence guarantee.
 5. The lock period (five minutes) must exceed the server's `transactionLifetimeLimitSeconds` for a takeover after a timed-out `UNKNOWN_COMMIT` write to be safe.
 6. F-02 (the purge's unfenced run read) remains **CONTAINED** only because no purge exists. Before any apply, the gates in `SNAPSHOT-RECOVERY.md` and a new review are required.

@@ -18,7 +18,8 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn, execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import express from 'express';
 import mongoose from 'mongoose';
 
@@ -85,6 +86,7 @@ describe('unconfirmed commits against a real server', { skip: MONGOD ? false : '
       '--logpath', path.join(dbPath, 'mongod.log'),
       '--setParameter', 'enableTestCommands=1',
       '--setParameter', `transactionLifetimeLimitSeconds=${TRANSACTION_LIFETIME_SECONDS}`,
+      '--setParameter', 'ttlMonitorSleepSecs=1', // the real TTL monitor, every second, for the retention tests
     ], { stdio: 'ignore' });
 
     const direct = `mongodb://127.0.0.1:${port}/?directConnection=true`;
@@ -216,5 +218,69 @@ describe('unconfirmed commits against a real server', { skip: MONGOD ? false : '
     await sleep((TRANSACTION_LIFETIME_SECONDS + 3) * 1000);
     const update = await IdempotencyRecord.updateOne({ userId: USER, key }, { $set: { lockExpiresAt: new Date(0) } }, { maxTimeMS: 2000 });
     assert.equal(update.matchedCount, 1);
+  });
+
+  describe('retention: only settled records expire (the REAL TTL monitor, running every second)', () => {
+    const DAY = 24 * 3600 * 1000;
+    // The fingerprint the middleware computes for the request send() makes, so a retry is recognised as the same request.
+    const SEND_FINGERPRINT = crypto.createHash('sha256').update(JSON.stringify({ method: 'POST', url: '/op', body: {} })).digest('hex');
+    const row = (status, extra = {}) => ({
+      operationId: crypto.randomUUID(), key: newKey(), userId: USER, companyId: null, method: 'POST', path: '/op',
+      requestHash: SEND_FINGERPRINT, status, lockExpiresAt: new Date(Date.now() - DAY), lockToken: null, committedTransactions: 0, commits: [],
+      responseStatus: null, responseBody: null, createdAt: new Date(Date.now() - 30 * DAY), ...extra,
+    });
+    const waitFor = async (predicate, ms = 20_000) => {
+      const end = Date.now() + ms;
+      while (Date.now() < end) { if (await predicate()) return true; await sleep(250); }
+      return false;
+    };
+
+    test('a month-old COMPLETED record expires; month-old UNKNOWN_COMMIT and committed IN_PROGRESS records are kept, so their keys can never run again', async () => {
+      const completed = row('COMPLETED', { responseStatus: 201, responseBody: '{}' });
+      const unknown = row('UNKNOWN_COMMIT', { responseStatus: 503 });
+      const committed = row('IN_PROGRESS', { committedTransactions: 1, commits: [{ marker: 'm', label: 'x', at: new Date() }] });
+      await IdempotencyRecord.collection.insertMany([completed, unknown, committed]);
+
+      assert.ok(await waitFor(async () => !(await IdempotencyRecord.exists({ key: completed.key }))), 'the settled record expired');
+      await sleep(3000); // several more monitor passes
+      assert.ok(await IdempotencyRecord.exists({ key: unknown.key }), 'UNKNOWN_COMMIT is kept');
+      assert.ok(await IdempotencyRecord.exists({ key: committed.key }), 'an attempt that committed work is kept');
+
+      // And the kept records still do their job: a retry with the same key is refused, not run.
+      handler = commitOnce;
+      for (const [k, code] of [[unknown.key, 'IDEMPOTENCY_OUTCOME_UNKNOWN'], [committed.key, 'IDEMPOTENCY_PRIOR_ATTEMPT_COMMITTED']]) {
+        const retry = await send(k);
+        assert.equal(retry.status, 409, await retry.clone().text());
+        assert.equal((await retry.json()).code, code);
+      }
+      assert.equal(await scratch().countDocuments({}), 0, 'nothing ran');
+    });
+
+    test('the migration replaces the old TTL index that expired every record; the dry run changes nothing and no document is removed', async () => {
+      const name = 'idempotency_ttl';
+      await IdempotencyRecord.collection.dropIndex('idempotency_ttl_completed');
+      await IdempotencyRecord.collection.createIndex({ createdAt: 1 }, { name, expireAfterSeconds: 10 * 365 * 24 * 3600 }); // long enough that nothing expires during the test
+      await IdempotencyRecord.collection.insertMany([row('UNKNOWN_COMMIT', { createdAt: new Date() }), row('COMPLETED', { createdAt: new Date() })]);
+      const before = await IdempotencyRecord.countDocuments({});
+      const indexNames = async () => (await IdempotencyRecord.collection.indexes()).map((index) => index.name).sort();
+      const migrate = (args) => spawnSync(process.execPath, ['scripts/migrate.js', ...args], {
+        cwd: path.dirname(fileURLToPath(import.meta.url)),
+        encoding: 'utf8', timeout: 120_000, env: { ...process.env, MONGO_URI: process.env.MONGO_URI },
+      });
+
+      const dry = migrate(['--dry-run']);
+      assert.equal(dry.status, 0, dry.stdout + dry.stderr);
+      assert.match(dry.stdout, /idempotencyrecords: drop index idempotency_ttl\b/);
+      assert.ok((await indexNames()).includes(name), 'the dry run dropped nothing');
+
+      const real = migrate([]);
+      assert.equal(real.status, 0, real.stdout + real.stderr);
+      const indexes = await IdempotencyRecord.collection.indexes();
+      assert.ok(!indexes.some((index) => index.name === name), 'the old index is gone');
+      const replacement = indexes.find((index) => index.name === 'idempotency_ttl_completed');
+      assert.ok(replacement, 'the replacement exists');
+      assert.deepEqual(replacement.partialFilterExpression, { status: 'COMPLETED' });
+      assert.equal(await IdempotencyRecord.countDocuments({}), before, 'no document was removed by the migration');
+    });
   });
 });

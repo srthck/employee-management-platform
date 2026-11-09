@@ -19,8 +19,8 @@ import config from '../config/environment.js';
  * process died before responding. A request that crashes with nothing committed
  * leaves IN_PROGRESS until lockExpiresAt; after that a retry may take over,
  * which replaces lockToken and so fences the earlier attempt. An attempt that
- * committed anything is never taken over. Records expire after
- * IDEMPOTENCY_TTL_HOURS.
+ * committed anything is never taken over. COMPLETED records expire after
+ * IDEMPOTENCY_TTL_HOURS; the others are kept (see the TTL index below).
  */
 
 const idempotencyRecordSchema = new mongoose.Schema(
@@ -55,9 +55,19 @@ idempotencyRecordSchema.index(
   { operationId: 1 },
   { unique: true, name: 'unique_idempotency_operation', partialFilterExpression: { operationId: { $type: 'string' } } }
 );
+// Only COMPLETED records expire. A record whose outcome is unknown, or whose attempt committed work, is what stops a retry
+// with the same key from running the operation again: if it expired, the key would be free and the work could apply twice.
+// Such records hold no response body. Databases built with the earlier 'idempotency_ttl' index (which expired every record)
+// need `npm run migrate`, which drops it.
+export const IDEMPOTENCY_TTL_INDEX = 'idempotency_ttl_completed';
+export const LEGACY_IDEMPOTENCY_TTL_INDEX = 'idempotency_ttl';
 idempotencyRecordSchema.index(
   { createdAt: 1 },
-  { expireAfterSeconds: config.idempotencyTtlHours * 3600, name: 'idempotency_ttl' }
+  {
+    expireAfterSeconds: config.idempotencyTtlHours * 3600,
+    name: IDEMPOTENCY_TTL_INDEX,
+    partialFilterExpression: { status: 'COMPLETED' },
+  }
 );
 
 export default mongoose.model('IdempotencyRecord', idempotencyRecordSchema);

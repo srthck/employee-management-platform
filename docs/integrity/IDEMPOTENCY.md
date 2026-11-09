@@ -60,4 +60,7 @@ A request can commit several transactions and then fail. The first commit makes 
 - The middleware stores the outcome when the handler calls `res.json`. A handler that responds some other way, or a process that dies, leaves the record to lock expiry (five minutes) and then to the rules above.
 - Writes outside `runInTransaction` are not covered by the marker. In the fallback where a test or development deployment has transactions disabled, the record is updated separately and the evidence guarantee does not hold; production requires transactions.
 - The fingerprint covers the URL and body. It does not cover the headers or the identity of the tenant beyond the user.
-- No retention or clean-up of these records is defined here.
+
+## Retention
+
+`COMPLETED` records expire `IDEMPOTENCY_TTL_HOURS` (default 24) after they were created, through the partial TTL index `idempotency_ttl_completed`. Every other record is kept: `UNKNOWN_COMMIT`, an `IN_PROGRESS` attempt that committed work, and an abandoned attempt that committed nothing. If the first two expired, their key would be free again and a retry could run the operation a second time; they hold no response body. Before this rule, the index `idempotency_ttl` expired **every** record after 24 hours, which limited "never re-run" to one day. `npm run migrate` drops that index on an existing database (`migrate:dry-run` shows it first); dropping it removes no record. Tested against the real TTL monitor of a disposable server (`test_commit_ambiguity.js`). Operators: [RUNBOOK-UNCONFIRMED-OPERATIONS.md](RUNBOOK-UNCONFIRMED-OPERATIONS.md).
