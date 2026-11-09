@@ -518,6 +518,8 @@ describe('D — transaction rollback and commit-outcome injection', () => {
     object[name] = replacement(original);
     try { return await body(); } finally { object[name] = original; }
   };
+  // `body` is a FUNCTION: the transaction must start only after the before-state is read. Passing an already-running promise
+  // let an early rejection go unhandled while that read was in progress (an intermittent failure, found 2026-11-09).
   const unchangedAfter = async (body, matcher = /injected/) => {
     const before = await state();
     await assert.rejects(body, matcher);
@@ -527,21 +529,21 @@ describe('D — transaction rollback and commit-outcome injection', () => {
 
   test('failure BEFORE the head update (SIMULATED: an exception injected at the head update call)', async () => {
     await patched(heads(), 'updateOne', () => async () => { throw new Error('injected before head update'); },
-      () => unchangedAfter(runInTransaction(businessAndAudit(1), { label: 'd1' })));
+      () => unchangedAfter(() => runInTransaction(businessAndAudit(1), { label: 'd1' })));
   });
 
   test('failure AFTER the head update but BEFORE the audit insertion (SIMULATED: an exception injected at the insert)', async () => {
     await patched(AuditLog.prototype, 'save', () => async function injected() { throw new Error('injected at insertion'); },
-      () => unchangedAfter(runInTransaction(businessAndAudit(1), { label: 'd2' })));
+      () => unchangedAfter(() => runInTransaction(businessAndAudit(1), { label: 'd2' })));
   });
 
   test('failure AFTER the audit write but before commit (the callback throws; real abort, real rollback)', async () => {
-    await unchangedAfter(runInTransaction(async (session) => { await businessAndAudit(1)(session); throw new Error('injected after the audit write'); }, { label: 'd3' }));
+    await unchangedAfter(() => runInTransaction(async (session) => { await businessAndAudit(1)(session); throw new Error('injected after the audit write'); }, { label: 'd3' }));
   });
 
   test('failure at the 2nd and then at the 3rd event of a three-event transaction: everything, including the earlier events and the head advance, is rolled back', async () => {
     for (const failAt of [2, 3]) {
-      await unchangedAfter(runInTransaction(async (session) => {
+      await unchangedAfter(() => runInTransaction(async (session) => {
         await scratch().insertOne({ marker: 'business' }, { session });
         for (let k = 1; k <= 3; k += 1) {
           if (k === failAt) throw new Error(`injected at event ${k}`);
