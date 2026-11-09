@@ -593,10 +593,10 @@ describe('D — transaction rollback and commit-outcome injection', () => {
     await assertSound('after ambiguous commit', { expectedRecords: 2 });
   });
 
-  test('commit outcome unknown on EVERY send (SIMULATED): the caller gets the raw error, which does NOT claim the transaction rolled back, and the database shows it committed exactly once (clients must not assume failure; operation ids arrive in Phase 3)', async () => {
+  test('commit outcome unknown on EVERY send (SIMULATED): the caller gets 503 COMMIT_OUTCOME_UNKNOWN, which does NOT claim the transaction rolled back, and the database shows it committed exactly once', async () => {
     let executions = 0;
     await withAmbiguousCommit(99)(async () => {
-      await assert.rejects(runInTransaction(async (session) => { executions += 1; await businessAndAudit(1)(session); }, { label: 'd7' }), (e) => /commit reply was lost/.test(e.message) && !/nothing was written/i.test(e.message) && e.code !== 'AUDIT_CHAIN_CONTENTION');
+      await assert.rejects(runInTransaction(async (session) => { executions += 1; await businessAndAudit(1)(session); }, { label: 'd7' }), (e) => e.code === 'COMMIT_OUTCOME_UNKNOWN' && e.statusCode === 503 && e.retryable === false && /commit reply was lost/.test(e.cause?.message) && !/nothing was written/i.test(e.message));
     });
     assert.equal(executions, 1);
     assert.equal(await scratch().countDocuments({ marker: 'business' }), 1, 'it did commit');
@@ -666,7 +666,7 @@ describe('D — transaction rollback and commit-outcome injection', () => {
     await assertSound('after the retried commit', { expectedRecords: 2 });
   });
 
-  test('commit outcome unknown and the commit NEVER reached the server (SIMULATED): nothing is committed; the caller gets the raw unknown-result error, which claims neither a commit nor a rollback', async () => {
+  test('commit outcome unknown and the commit NEVER reached the server (SIMULATED): nothing is committed; the caller gets COMMIT_OUTCOME_UNKNOWN, which claims neither a commit nor a rollback', async () => {
     const before = await state();
     const originalStart = mongoose.startSession.bind(mongoose);
     let sends = 0;
@@ -676,7 +676,7 @@ describe('D — transaction rollback and commit-outcome injection', () => {
       return session;
     };
     try {
-      await assert.rejects(runInTransaction(businessAndAudit(1), { label: 'd12' }), (e) => /commit message was lost/.test(e.message) && !/nothing was written/i.test(e.message) && e.code !== 'AUDIT_CHAIN_CONTENTION');
+      await assert.rejects(runInTransaction(businessAndAudit(1), { label: 'd12' }), (e) => e.code === 'COMMIT_OUTCOME_UNKNOWN' && /commit message was lost/.test(e.cause?.message) && !/nothing was written/i.test(e.message));
     } finally {
       mongoose.startSession = originalStart;
     }
@@ -834,7 +834,7 @@ describe('E — session semantics and a census of every audit writer', () => {
     'scripts/migrate.js': [0, 0],
     'src/app.js': [0, 0],
     'src/controllers/auditController.js': [0, 0],
-    'src/controllers/authController.js': [1, 3],
+    'src/controllers/authController.js': [4, 0],
     'src/controllers/employeeAccountController.js': [2, 0],
     'src/controllers/employeeController.js': [4, 0],
     'src/models/AuditChainHead.js': [0, 0],
@@ -851,7 +851,7 @@ describe('E — session semantics and a census of every audit writer', () => {
     'src/services/employeeScope.js': [0, 1],
     'src/services/employmentService.js': [1, 0],
     'src/services/payrollFinalizationService.js': [0, 0],
-    'src/services/payrollRunService.js': [4, 4],
+    'src/services/payrollRunService.js': [8, 0],
     'src/services/payrollSnapshotService.js': [4, 0],
     'src/services/statutoryProfileService.js': [1, 1],
     'src/utils/auditErrors.js': [0, 0],
@@ -919,8 +919,8 @@ describe('E — session semantics and a census of every audit writer', () => {
       if (AUDIT_TOUCHING_FILES[rel] && (AUDIT_TOUCHING_FILES[rel][0] !== logs || AUDIT_TOUCHING_FILES[rel][1] !== standalone)) problems.push(`${rel}: ${logs} log / ${standalone} logStandalone calls, inventory says ${AUDIT_TOUCHING_FILES[rel].join(' / ')}`);
     }
     assert.deepEqual(problems, []);
-    assert.equal(logTotal, 28, 'auditService.log call sites');
-    assert.equal(standaloneTotal, 10, 'exactly the ten reviewed audit-only call sites use logStandalone');
+    assert.equal(logTotal, 35, 'auditService.log call sites');
+    assert.equal(standaloneTotal, 3, 'exactly the three reviewed audit-only call sites use logStandalone');
   });
 
   test('CENSUS 4 — only the reviewed files name the audit models or collections, and the trusted writers keep exactly their reviewed number of write-capable operations', () => {
@@ -1285,6 +1285,30 @@ describe('F2 — cutover on an empty or absent chain, more refusals, real-server
       assert.equal(await headDoc(), null);
       await applyHeadInitialization({ expectedDigest: acknowledged.digest, operator: 'tester', acceptUnobservableIndexBuilds: true, ...quiet });
       assert.equal((await headDoc()).sequence, 3);
+    } finally {
+      auditService.indexBuildState = original;
+    }
+  });
+
+  test('a plan reviewed by a user who can SEE index builds cannot be applied on an acknowledgement nobody reviewed: the two plans differ only in that acknowledgement, and their digests differ (SIMULATED $currentOp answers)', async () => {
+    await makePreProtocolChain(3);
+    const original = auditService.indexBuildState;
+    try {
+      auditService.indexBuildState = async () => ({ state: 'NONE', detail: null });
+      const observed = await planHeadInitialization(quiet);
+      assert.equal(observed.ok, true, JSON.stringify(observed.findings));
+
+      auditService.indexBuildState = async () => ({ state: 'UNAVAILABLE', detail: 'not authorized on admin to execute command' });
+      const acknowledged = await planHeadInitialization({ ...quiet, acceptUnobservableIndexBuilds: true });
+      assert.equal(acknowledged.ok, true, JSON.stringify(acknowledged.findings));
+      assert.deepEqual(acknowledged.actions, observed.actions, 'the plans otherwise agree');
+      assert.notEqual(acknowledged.digest, observed.digest);
+
+      await assert.rejects(
+        applyHeadInitialization({ expectedDigest: observed.digest, operator: 'tester', acceptUnobservableIndexBuilds: true, ...quiet }),
+        (e) => e.code === 'DIGEST_MISMATCH',
+      );
+      assert.equal(await headDoc(), null);
     } finally {
       auditService.indexBuildState = original;
     }
@@ -1745,6 +1769,8 @@ describe('G3 — the mode policy, readiness that fails closed, the bootstrap on 
       for (const strictFlag of [...FORCING, ...UNKNOWN]) assert.equal(resolveAuditChainPolicy({ environmentClass, strictFlag }).strict, true, `${environmentClass} ${strictFlag}`);
     }
     assert.ok(resolveAuditChainPolicy({ environmentClass: 'test', strictFlag: 'maybe' }).notes.some((note) => /not understood/.test(note)), 'a flag it does not understand says so');
+    const requested = resolveAuditChainPolicy({ environmentClass: 'test', strictFlag: 'true' }).notes;
+    assert.ok(requested.some((note) => /requests the strict/.test(note)) && !requested.some((note) => /not understood/.test(note)), 'a flag it understands is reported as a request, not as an error');
     assert.ok(resolveAuditChainPolicy({ environmentClass: 'production' }).notes.some((note) => /not "development" or "test"/.test(note)));
     assert.throws(() => { resolveAuditChainPolicy({}).notes.push('x'); }, TypeError, 'the policy is immutable');
   });

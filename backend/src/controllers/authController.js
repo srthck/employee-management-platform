@@ -6,9 +6,9 @@ import Employee from '../models/Employee.js';
 import config from '../config/environment.js';
 import Company from '../models/Company.js';
 import auditService from '../services/auditService.js';
+import { runInTransaction } from '../utils/transaction.js';
 import compensationComponentService from '../services/compensationComponentService.js';
 import { formatUserResponse } from '../utils/formatUser.js';
-import { runInTransaction } from '../utils/transaction.js';
 import { permissionsForRole } from '../utils/permissions.js';
 
 /**
@@ -76,29 +76,32 @@ const invalidCredentials = (res) =>
   res.status(401).json({ success: false, message: INVALID_CREDENTIALS });
 
 async function registerFailedAttempt(Model, doc, entityType) {
-  const updated = await Model.findOneAndUpdate(
-    { _id: doc._id },
-    { $inc: { failedLoginAttempts: 1 } },
-    { new: true }
-  ).select('+failedLoginAttempts');
-
-  if (updated && updated.failedLoginAttempts >= config.loginMaxAttempts) {
-    const lockUntil = new Date(Date.now() + config.loginLockMs);
-    await Model.updateOne(
+  await runInTransaction(async (session) => {
+    const updated = await Model.findOneAndUpdate(
       { _id: doc._id },
-      { $set: { lockUntil, failedLoginAttempts: 0 } }
-    );
-    await auditService.logStandalone({
-      action: 'AUTH_ACCOUNT_LOCKED',
-      actorId: doc._id,
-      actorEmail: doc.email,
-      actorRole: doc.role,
-      entityType,
-      entityId: doc._id,
-      companyId: doc.companyId || (entityType === 'ADMIN' ? doc._id : null),
-      meta: { lockUntil: lockUntil.toISOString(), threshold: config.loginMaxAttempts },
-    });
-  }
+      { $inc: { failedLoginAttempts: 1 } },
+      { new: true, session }
+    ).select('+failedLoginAttempts');
+
+    if (updated && updated.failedLoginAttempts >= config.loginMaxAttempts) {
+      const lockUntil = new Date(Date.now() + config.loginLockMs);
+      await Model.updateOne(
+        { _id: doc._id },
+        { $set: { lockUntil, failedLoginAttempts: 0 } },
+        { session }
+      );
+      await auditService.log({
+        action: 'AUTH_ACCOUNT_LOCKED',
+        actorId: doc._id,
+        actorEmail: doc.email,
+        actorRole: doc.role,
+        entityType,
+        entityId: doc._id,
+        companyId: doc.companyId || (entityType === 'ADMIN' ? doc._id : null),
+        meta: { lockUntil: lockUntil.toISOString(), threshold: config.loginMaxAttempts },
+      }, session);
+    }
+  }, { label: 'auth.account-lockout' });
 }
 
 /**
@@ -241,26 +244,28 @@ export const login = async (req, res) => {
     }
   }
 
-  await Model.updateOne(
-    { _id: principal._id },
-    { $set: { failedLoginAttempts: 0, lockUntil: null, lastLoginAt: new Date() } }
-  );
-
   const displayName = employee ? `${employee.firstName} ${employee.lastName}` : principal.name;
   const companyId = admin
     ? String(admin.companyId || admin._id)
     : String(account.companyId || employee.createdBy);
 
-  await auditService.logStandalone({
-    action: 'AUTH_LOGIN_SUCCEEDED',
-    actorId: principal._id,
-    actorEmail: principal.email,
-    actorRole: principal.role,
-    entityType,
-    entityId: principal._id,
-    companyId,
-    meta: {},
-  });
+  await runInTransaction(async (session) => {
+    await Model.updateOne(
+      { _id: principal._id },
+      { $set: { failedLoginAttempts: 0, lockUntil: null, lastLoginAt: new Date() } },
+      { session }
+    );
+    await auditService.log({
+      action: 'AUTH_LOGIN_SUCCEEDED',
+      actorId: principal._id,
+      actorEmail: principal.email,
+      actorRole: principal.role,
+      entityType,
+      entityId: principal._id,
+      companyId,
+      meta: {},
+    }, session);
+  }, { label: 'auth.login-success' });
 
   setAuthCookie(res, generateToken({
     id: principal._id.toString(),
@@ -318,17 +323,18 @@ export const logout = async (req, res) => {
  */
 export const logoutAll = async (req, res) => {
   const Model = req.user.role === 'employee' ? EmployeeAccount : Admin;
-  await Model.updateOne({ _id: req.user.id }, { $inc: { tokenVersion: 1 } });
-
-  await auditService.logStandalone({
-    action: 'AUTH_SESSIONS_REVOKED',
-    actorId: req.user.id,
-    actorEmail: req.user.email,
-    actorRole: req.user.role,
-    entityType: req.user.role === 'employee' ? 'EMPLOYEE_ACCOUNT' : 'ADMIN',
-    entityId: req.user.id,
-    meta: {},
-  });
+  await runInTransaction(async (session) => {
+    await Model.updateOne({ _id: req.user.id }, { $inc: { tokenVersion: 1 } }, { session });
+    await auditService.log({
+      action: 'AUTH_SESSIONS_REVOKED',
+      actorId: req.user.id,
+      actorEmail: req.user.email,
+      actorRole: req.user.role,
+      entityType: req.user.role === 'employee' ? 'EMPLOYEE_ACCOUNT' : 'ADMIN',
+      entityId: req.user.id,
+      meta: {},
+    }, session);
+  }, { label: 'auth.logout-all' });
 
   clearAuthCookie(res);
   return res.status(200).json({

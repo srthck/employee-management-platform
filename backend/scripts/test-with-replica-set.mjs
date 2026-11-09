@@ -39,6 +39,8 @@ const TEST_FILES = [
   'test_integrity_phase0.js',
   'test_integrity_model.js',
   'test_audit_chain_head.js',
+  'test_atomicity.js',
+  'test_commit_ambiguity.js',
 ];
 
 const base = new URL(process.argv[2] || process.env.REPLICA_SET_URI || 'mongodb://127.0.0.1:27018/?replicaSet=rs0');

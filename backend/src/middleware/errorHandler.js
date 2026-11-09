@@ -95,6 +95,7 @@ const errorHandler = (err, req, res, next) => {
     // Field-level validation errors raised by services.
     ...(!errors && !unexpected && Array.isArray(err.errors) && { errors: err.errors }),
     ...(err.hashFailures && { hashFailures: err.hashFailures }),
+    ...(typeof err.operationId === 'string' && { operationId: err.operationId }),
     requestId: req.requestId,
     ...(config.isDevelopment && statusCode >= 500 && { stack: err.stack }),
   });

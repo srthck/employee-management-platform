@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import mongoose from 'mongoose';
 import config from '../config/environment.js';
 import logger from './logger.js';
+import { currentOperation } from './operationContext.js';
 import { auditChainContentionError, backoffDelayMs, isAuditChainConflict, sleep } from './auditErrors.js';
 
 /**
@@ -18,6 +19,8 @@ import { auditChainContentionError, backoffDelayMs, isAuditChainConflict, sleep 
  *     retrying on TransientTransactionError (write conflicts, audit chain
  *     collisions) with jittered exponential back-off until `maxAttempts` or the
  *     `maxWaitMs` deadline, and retrying the commit on UnknownTransactionCommitResult.
+ *     A commit that stays unconfirmed is never reported as a failure that wrote nothing: durable evidence on the
+ *     request's idempotency record settles it as committed, otherwise the caller gets 503 COMMIT_OUTCOME_UNKNOWN.
  *     Several writers racing for the audit chain's next position is normal under
  *     load; back-off lets them take turns instead of failing together. When the
  *     budget is spent on audit-chain collisions the outcome is the explicit,
@@ -156,6 +159,37 @@ export function resetTransactionCapabilityCache() {
   warnedAboutFallback = false;
 }
 
+const commitOutcomeUnknownError = (label, cause, operationId) => Object.assign(
+  new Error('The database did not confirm whether this change was saved. It may have been: check the current state before trying again.'),
+  { statusCode: 503, code: 'COMMIT_OUTCOME_UNKNOWN', retryable: false, label, operationId: operationId || undefined, cause },
+);
+
+/**
+ * A transaction started inside another one's callback commits on its own. Inside a keyed operation that commit would be
+ * invisible to the operation record (only the outermost transaction writes it), so a failure after it could free the key and
+ * a retry could apply it twice. No production path does this; refusing it keeps the at-most-once guarantee true.
+ */
+const nestedOperationTransactionError = (label, operationId) => Object.assign(
+  new Error('A transaction cannot be started inside another transaction during this request. Nothing from it was written.'),
+  { statusCode: 500, code: 'IDEMPOTENCY_NESTED_TRANSACTION', label, operationId: operationId || undefined },
+);
+
+/** Commit, settling an unconfirmed outcome from the operation's durable record when there is one. */
+async function commitResolvingOutcome(session, label, operation, marker) {
+  try {
+    await commitWithRetry(session);
+  } catch (err) {
+    if (!hasLabel(err, 'UnknownTransactionCommitResult')) throw err;
+    if (marker && await operation.isCommitted(marker)) {
+      logger.warn('Unconfirmed commit settled as committed from the operation record', { label, operationId: operation.operationId });
+      return;
+    }
+    operation?.noteOutcomeUnknown();
+    logger.error('Commit outcome unknown', { label, operationId: operation?.operationId, error: err.message });
+    throw commitOutcomeUnknownError(label, err, operation?.operationId);
+  }
+}
+
 async function commitWithRetry(session) {
   for (let attempt = 1; ; attempt += 1) {
     try {
@@ -193,6 +227,9 @@ export async function runInTransaction(work, options = {}) {
 }
 
 async function runAttempts(work, { label = 'transaction', maxAttempts = DEFAULT_MAX_ATTEMPTS, maxWaitMs = DEFAULT_MAX_WAIT_MS } = {}, holdsLane = false, nested = false) {
+  // Only the outermost transaction writes the operation record, so a nested one inside a keyed operation is refused.
+  if (nested && currentOperation()) throw nestedOperationTransactionError(label, currentOperation().operationId);
+  const operation = nested ? undefined : currentOperation();
   if (!(await supportsTransactions())) {
     if (config.requireTransactions) {
       throw Object.assign(
@@ -207,7 +244,9 @@ async function runAttempts(work, { label = 'transaction', maxAttempts = DEFAULT_
       warnedAboutFallback = true;
       logger.warn('MongoDB transactions unavailable; running without atomicity (development only)', { label });
     }
-    return transactionContext.run({ session: null, lane: holdsLane, nested }, () => work(null));
+    const result = await transactionContext.run({ session: null, lane: holdsLane, nested }, () => work(null));
+    if (operation) { await operation.recordInTransaction(null, label); operation.noteCommitted(); }
+    return result;
   }
 
   const startedAt = Date.now();
@@ -219,7 +258,9 @@ async function runAttempts(work, { label = 'transaction', maxAttempts = DEFAULT_
         writeConcern: { w: 'majority' },
       });
       const result = await transactionContext.run({ session, lane: holdsLane, nested }, () => work(session));
-      await commitWithRetry(session);
+      const marker = operation ? await operation.recordInTransaction(session, label) : null;
+      await commitResolvingOutcome(session, label, operation, marker);
+      operation?.noteCommitted();
       return result;
     } catch (err) {
       if (session.inTransaction()) {

@@ -549,30 +549,32 @@ const payrollRunService = {
 
     const canProcess = blockingErrors.length === 0;
 
-    await payrollRunRepository.updatePreflightResult(runId, {
-      canProcess,
-      eligibleEmployeeCount: eligible.length,
-      blockedEmployeeCount:  blocked.length,
-      blockingErrors,
-      warnings,
-      resolvedAt: new Date(),
-    });
-
-    await auditService.logStandalone({
-      action:     'PAYROLL_PREFLIGHT_COMPLETED',
-      actorId:    actor.id,
-      actorEmail: actor.email,
-      actorRole:  actor.role,
-      entityType: 'PAYROLL_RUN',
-      entityId:   run._id,
-      companyId,
-      meta: {
+    await runInTransaction(async (session) => {
+      await payrollRunRepository.updatePreflightResult(runId, {
         canProcess,
         eligibleEmployeeCount: eligible.length,
         blockedEmployeeCount:  blocked.length,
         blockingErrors,
-      },
-    });
+        warnings,
+        resolvedAt: new Date(),
+      }, session);
+
+      await auditService.log({
+        action:     'PAYROLL_PREFLIGHT_COMPLETED',
+        actorId:    actor.id,
+        actorEmail: actor.email,
+        actorRole:  actor.role,
+        entityType: 'PAYROLL_RUN',
+        entityId:   run._id,
+        companyId,
+        meta: {
+          canProcess,
+          eligibleEmployeeCount: eligible.length,
+          blockedEmployeeCount:  blocked.length,
+          blockingErrors,
+        },
+      }, session);
+    }, { label: 'payroll.preflight' });
 
     return {
       runId: run._id,
@@ -638,13 +640,33 @@ const payrollRunService = {
     const additionalFields = { startedAt: new Date() };
     if (idempotencyKey) additionalFields.idempotencyKey = idempotencyKey;
 
-    const claimed = await payrollRunRepository.transitionStateAtomically(
-      runId,
-      run.status,
-      PAYROLL_STATUS.PROCESSING,
-      additionalFields,
-      { actorId: actor.id, actorEmail: actor.email, reason: 'Processing started' }
-    );
+    const claimed = await runInTransaction(async (session) => {
+      const transitioned = await payrollRunRepository.transitionStateAtomically(
+        runId,
+        run.status,
+        PAYROLL_STATUS.PROCESSING,
+        additionalFields,
+        { actorId: actor.id, actorEmail: actor.email, reason: 'Processing started' },
+        session
+      );
+      if (!transitioned) return null;
+
+      const versioned = await payrollRunRepository.incrementProcessingVersion(runId, session);
+      await payrollRunRepository.deleteStagingResults(runId, versioned.processingVersion - 1, session);
+      await auditService.log({
+        action:         'PAYROLL_PROCESSING_STARTED',
+        actorId:        actor.id,
+        actorEmail:     actor.email,
+        actorRole:      actor.role,
+        entityType:     'PAYROLL_RUN',
+        entityId:       run._id,
+        companyId,
+        previousStatus: run.status,
+        newStatus:      PAYROLL_STATUS.PROCESSING,
+        meta: { periodMonth: run.periodMonth, periodYear: run.periodYear, processingVersion: versioned.processingVersion },
+      }, session);
+      return { transitioned, versioned };
+    }, { label: 'payroll.processing-start' });
 
     if (!claimed) {
       const current = await payrollRunRepository.findById(runId);
@@ -652,24 +674,10 @@ const payrollRunService = {
     }
 
     // Increment processing version (new attempt = new version)
-    const withVersion = await payrollRunRepository.incrementProcessingVersion(runId);
+    const withVersion = claimed.versioned;
     const currentVersion = withVersion.processingVersion;
 
     // C7: Delete stale staging results from any prior failed attempt
-    await payrollRunRepository.deleteStagingResults(runId, currentVersion - 1);
-
-    await auditService.logStandalone({
-      action:         'PAYROLL_PROCESSING_STARTED',
-      actorId:        actor.id,
-      actorEmail:     actor.email,
-      actorRole:      actor.role,
-      entityType:     'PAYROLL_RUN',
-      entityId:       run._id,
-      companyId,
-      previousStatus: run.status,
-      newStatus:      PAYROLL_STATUS.PROCESSING,
-      meta:           { periodMonth: run.periodMonth, periodYear: run.periodYear, processingVersion: currentVersion },
-    });
 
     // ── Resolve employees ─────────────────────────────────────────────────
     let eligible, blocked, epfRule, esiRule;
@@ -1227,27 +1235,33 @@ const payrollRunService = {
         `AUTO_RECOVERED: no processing heartbeat since ${new Date(lastActivity).toISOString()}. ` +
         'Retry processing to recalculate every employee.';
 
-      const failed = await payrollRunRepository.markStuckRunFailed(
-        run._id,
-        cutoff,
-        failureReason,
-        { actorId: SYSTEM_ACTOR.id, actorEmail: SYSTEM_ACTOR.email, reason: 'Automatic stuck-run recovery' }
-      );
+      const failed = await runInTransaction(async (session) => {
+        const transitioned = await payrollRunRepository.markStuckRunFailed(
+          run._id,
+          cutoff,
+          failureReason,
+          { actorId: SYSTEM_ACTOR.id, actorEmail: SYSTEM_ACTOR.email, reason: 'Automatic stuck-run recovery' },
+          session
+        );
+        if (!transitioned) return null;
+
+        await auditService.log({
+          action:         'PAYROLL_PROCESSING_FAILED',
+          actorId:         SYSTEM_ACTOR.id,
+          actorEmail:      SYSTEM_ACTOR.email,
+          actorRole:       SYSTEM_ACTOR.role,
+          entityType:      'PAYROLL_RUN',
+          entityId:        run._id,
+          companyId:       run.companyId,
+          previousStatus:  PAYROLL_STATUS.PROCESSING,
+          newStatus:       PAYROLL_STATUS.FAILED,
+          meta:            { reason: 'Automatic stuck-run recovery', lastActivityAt: lastActivity, thresholdMs },
+        }, session);
+        return transitioned;
+      }, { label: 'payroll.auto-recover' });
       if (!failed) continue;
 
       recovered += 1;
-      await auditService.logStandalone({
-        action:         'PAYROLL_PROCESSING_FAILED',
-        actorId:        SYSTEM_ACTOR.id,
-        actorEmail:     SYSTEM_ACTOR.email,
-        actorRole:      SYSTEM_ACTOR.role,
-        entityType:     'PAYROLL_RUN',
-        entityId:       run._id,
-        companyId:      run.companyId,
-        previousStatus: PAYROLL_STATUS.PROCESSING,
-        newStatus:      PAYROLL_STATUS.FAILED,
-        meta:           { reason: 'Automatic stuck-run recovery', lastActivityAt: lastActivity, thresholdMs },
-      });
     }
 
     return recovered;
@@ -1258,28 +1272,31 @@ const payrollRunService = {
   // ───────────────────────────────────────────────────────────────────────────
 
   async _failRun(runId, reason, actor, companyId = null) {
-    const failed = await payrollRunRepository.markFailed(
-      runId,
-      reason,
-      { actorId: actor.id, actorEmail: actor.email, reason }
-    );
+    return runInTransaction(async (session) => {
+      const failed = await payrollRunRepository.markFailed(
+        runId,
+        reason,
+        { actorId: actor.id, actorEmail: actor.email, reason },
+        session
+      );
 
-    if (failed) {
-      await auditService.logStandalone({
-        action:         'PAYROLL_PROCESSING_FAILED',
-        actorId:        actor.id,
-        actorEmail:     actor.email,
-        actorRole:      actor.role || 'system',
-        entityType:     'PAYROLL_RUN',
-        entityId:       runId,
-        companyId:      companyId || failed.companyId,
-        previousStatus: PAYROLL_STATUS.PROCESSING,
-        newStatus:      PAYROLL_STATUS.FAILED,
-        meta:           { failureReason: reason },
-      });
-    }
+      if (failed) {
+        await auditService.log({
+          action:         'PAYROLL_PROCESSING_FAILED',
+          actorId:        actor.id,
+          actorEmail:     actor.email,
+          actorRole:      actor.role || 'system',
+          entityType:     'PAYROLL_RUN',
+          entityId:       runId,
+          companyId:      companyId || failed.companyId,
+          previousStatus: PAYROLL_STATUS.PROCESSING,
+          newStatus:      PAYROLL_STATUS.FAILED,
+          meta:           { failureReason: reason },
+        }, session);
+      }
 
-    return failed;
+      return failed;
+    }, { label: 'payroll.fail-run' });
   },
 };
 
