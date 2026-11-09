@@ -30,8 +30,11 @@ const RULES = [
     jurisdiction: 'IN',
     effectiveFrom: new Date('2014-09-01T00:00:00Z'),
     description:
-      'EPF & MP Act 1952: 12% employee and 12% employer on PF wages capped at ₹15,000/month; ' +
-      'EPS 8.33% within the employer share (wage ceiling w.e.f. 01-09-2014). Contributions rounded to the nearest rupee.',
+      'EPF values carried from the pre-Code regime: 12% employee and 12% employer (the rate in para 18(2) of the ' +
+      'Employees’ Provident Funds Scheme, 2026) on PF wages capped at ₹15,000/month. The notified Chapter III ' +
+      'wage ceiling is ₹25,000 from 17-09-2026 (S.O. 5109(E)); whether it governs this cap is undecided, so periods ' +
+      'from that date need review. EPS 8.33% within the employer share, ceiling ₹15,000. Rounded to paise, then to the ' +
+      'nearest rupee; para 18(5) requires the nearest rupee, and the paise step is undecided.',
     epfParams: {
       employeeContributionRate: 0.12,
       employerContributionRate: 0.12,
@@ -47,9 +50,10 @@ const RULES = [
     jurisdiction: 'IN',
     effectiveFrom: new Date('2019-07-01T00:00:00Z'),
     description:
-      'ESI Act 1948: 0.75% employee and 3.25% employer (w.e.f. 01-07-2019), gross wage ceiling ₹21,000/month; ' +
-      'contributions rounded up to the next rupee. Contribution-period continuity and the ₹25,000 ceiling for ' +
-      'persons with disability are not modelled.',
+      'Legacy ESI values: 0.75% employee and 3.25% employer (these rates match Rule 19 of the Social Security ' +
+      '(Central) Rules); coverage while gross wages are at most ₹21,000/month (pre-Code ceiling; its status under ' +
+      'the Code on Social Security, 2020 is undecided). Rounding is a PayGuard setting (to paise, then up to a whole ' +
+      'rupee), which can differ by ₹1 from a literal reading of Rule 19. Contribution-period continuity is not modelled.',
     esiParams: {
       employeeContributionRate: 0.0075,
       employerContributionRate: 0.0325,
@@ -62,9 +66,9 @@ const RULES = [
     jurisdiction: 'MH',
     effectiveFrom: new Date('2000-01-01T00:00:00Z'),
     description:
-      'Maharashtra professional tax baseline slabs: up to ₹7,500 nil; ₹7,501–₹10,000 ₹175; above ₹10,000 ₹200 ' +
-      '(₹300 in February). The exemption for women earning up to ₹25,000/month is not modelled. ' +
-      'effectiveFrom is a baseline placeholder: confirm dates against the state notification.',
+      'Configured Maharashtra professional tax slabs, not verified against the State instrument: up to ₹7,500 nil; ' +
+      '₹7,501–₹10,000 ₹175; above ₹10,000 ₹200 (₹300 in February). Gender-specific thresholds are not modelled. ' +
+      'effectiveFrom is a placeholder: confirm dates against the State notification.',
     ptSlabs: [
       { upTo: 7500, monthlyTax: 0 },
       { upTo: 10000, monthlyTax: 175 },
