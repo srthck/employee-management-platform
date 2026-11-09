@@ -11,10 +11,12 @@ import { auditChainModel } from './auditChain.mjs';
 import { businessAuditModel } from './businessAudit.mjs';
 import { recoveryModel } from './recovery.mjs';
 import { legacyBackfillModel, evidenceBoundaryModel } from './historyAndEvidence.mjs';
+import { operationRecordModel } from './operationRecord.mjs';
 
 const A = (params) => () => auditChainModel(params);
 const B = (params) => () => businessAuditModel(params);
 const C = (params) => () => recoveryModel(params);
+const F = (params) => () => operationRecordModel(params);
 
 const FORK = ['OneSuccessorPerPredecessor', 'SuccessNeverReportedForForkedPosition', 'UniqueSequence'];
 
@@ -59,6 +61,17 @@ export const SCENARIOS = [
   { id: 'E1', area: 'Evidence', role: 'current', title: 'before-image: fsync(file) only, then the database transaction (04c872b)', params: 'power loss at most once, at any time', build: () => evidenceBoundaryModel({ dirFsync: false }), expect: ['EvidenceDurableBeforeDelete'], trace: true },
   { id: 'E3', area: 'Evidence', role: 'boundary', title: 'non-transactional fallback (REQUIRE_TRANSACTIONS=false on a standalone server): delete and audit event are separate writes, directory fsync present', params: 'power loss at most once, at any time', build: () => evidenceBoundaryModel({ dirFsync: true, atomicCommit: false }), expect: ['NoDeleteWithoutAudit'], trace: true },
   { id: 'E2', area: 'Evidence', role: 'proposed', title: 'before-image: fsync(file) and fsync(directory) before the database transaction', params: 'power loss at most once, at any time', build: () => evidenceBoundaryModel({ dirFsync: true }), expect: [] },
+
+  // ── F. the operation-record protocol as implemented in Phase 3 (added 2026-11-09) ──
+  { id: 'F1', area: 'Operation record', role: 'current', title: 'the implemented protocol: token fencing, takeover only with nothing committed, COMPLETED-only TTL, UNKNOWN kept, nested transactions refused', params: '1 key, ≤2 attempts; lost acks, lagging evidence reads, crashes, lock expiry, TTL', build: F({}), expect: [] },
+  { id: 'F2', area: 'Operation record', role: 'current', title: 'as F1 with three attempts', params: '1 key, ≤3 attempts', build: F({ attempts: 3 }), expect: [] },
+  { id: 'F3', area: 'Operation record', role: 'sensitivity', title: 'the in-transaction record update does not check the lock token', params: 'as F1', build: F({ fence: false }), expect: ['NoDuplicateLogicalOperation'], trace: true },
+  { id: 'F4', area: 'Operation record', role: 'sensitivity', title: 'an expired lock can be taken over although the attempt committed work', params: 'as F1', build: F({ takeoverCheck: false }), expect: ['NoDuplicateLogicalOperation'] },
+  { id: 'F5', area: 'Operation record', role: 'sensitivity', title: 'every record expires (the TTL index before 2026-11-09)', params: 'as F1', build: F({ ttlSettledOnly: false }), expect: ['NoDuplicateLogicalOperation'], trace: true },
+  { id: 'F6', area: 'Operation record', role: 'sensitivity', title: 'an unconfirmed commit releases the key as if nothing happened', params: 'as F1', build: F({ unknownKept: false }), expect: ['NoDuplicateLogicalOperation'] },
+  { id: 'F7', area: 'Operation record', role: 'sensitivity', title: 'a nested transaction may commit on its own, unrecorded', params: 'as F1', build: F({ nestedRefused: false }), expect: ['NoDuplicateLogicalOperation'] },
+  { id: 'F9', area: 'Operation record', role: 'sensitivity', title: 'an unconfirmed commit is reported as a success without evidence', params: 'as F1', build: F({ trustUnconfirmed: true }), expect: ['SuccessOnlyIfApplied'] },
+  { id: 'F8', area: 'Operation record', role: 'boundary', title: 'a request stays in flight longer than the TTL (24 h)', params: 'as F1, TTL may fire mid-flight', build: F({ ttlWhileInFlight: true }), expect: ['NoDuplicateLogicalOperation'] },
 ];
 
 /** The invariants named by the integrity program, and the model that checks each. */
