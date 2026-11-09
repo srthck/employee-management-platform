@@ -35,6 +35,7 @@ const TEST_FILES = [
   'test_phase1d_provenance.js',
   'test_phase1d_applicability.js',
   'test_phase1d_isolation.js',
+  'test_phase1d_hostile.js',
   'test_audit_hardening.js',
   'test_integrity_phase0.js',
   'test_integrity_model.js',
