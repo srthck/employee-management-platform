@@ -851,6 +851,7 @@ describe('E — session semantics and a census of every audit writer', () => {
     'src/services/employeeScope.js': [0, 1],
     'src/services/employmentService.js': [1, 0],
     'src/services/payrollFinalizationService.js': [0, 0],
+    'src/services/payrollSnapshotRecoveryService.js': [0, 0],
     'src/services/payrollRunService.js': [8, 0],
     'src/services/payrollSnapshotService.js': [4, 0],
     'src/services/statutoryProfileService.js': [1, 1],
@@ -866,6 +867,7 @@ describe('E — session semantics and a census of every audit writer', () => {
     'src/services/auditChainSpec.js': 'the specification (pure functions and constants)',
     'src/utils/auditErrors.js': 'error vocabulary (names only)',
     'scripts/lib/snapshotReconciliation.mjs': 'read-only reconciliation (Phase 0 removed its write capability)',
+    'src/services/payrollSnapshotRecoveryService.js': 'read-only inspection of finalization evidence; apply is disabled',
     'scripts/migrate.js': 'explicit operator migration: builds the schema-declared indexes (additive); never drops or repairs the audit indexes',
   };
   const WRITE_API = /\b(insertOne|insertMany|bulkWrite|updateOne|updateMany|replaceOne|deleteOne|deleteMany|findOneAndUpdate|findOneAndReplace|findOneAndDelete|createIndex|createIndexes|dropIndex|dropIndexes|createCollection|collMod|drop)\b|\.(create|save)\(|new AuditLog\(/g;

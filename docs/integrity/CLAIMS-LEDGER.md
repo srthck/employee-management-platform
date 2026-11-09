@@ -38,9 +38,9 @@ Program evidence for the remediation phases lives outside the repository at `pay
 |---|---|---|---|
 | F-01 | Guard compares key+unique only; 10 s blind cache; fork committed and success reported when both guards absent/ineffective (MEDIUM, HIGH under C1) | **ADDRESSED in Phase 2 for writers that follow the head protocol** (the guard and its cache are gone; the head document, not the indexes, arbitrates). **OPEN for writers outside the protocol** (a head-unaware writer that fakes `headVersion` while the unique indexes are ineffective forks the chain and is found only by `verifyAuditChain`; pinned by a test). Production activation needs the cutover | 2 |
 | F-02 | Purge transaction reads the run but never writes it: `FAILED→PROCESSING` retry slips through (MEDIUM) | **CONTAINED** (the purge no longer exists) — not fixed | 4 |
-| F-03 | `ORPHAN_PENDING` ignores finalization history; a flipped, previously finalized snapshot is purgeable (MEDIUM) | **CONTAINED** (no apply) — classification still informational only | 4 |
-| F-04 | Ambiguous commit surfaces as raw HTTP 500, no "outcome unknown" marker (MEDIUM) | **OPEN** | 3 |
-| F-05 | "Nothing was written; retry" wording wrong for post-commit plain audit callers; business state can commit without its event at 4 payroll + 3 auth sites (MEDIUM) | **OPEN** | 3 |
+| F-03 | `ORPHAN_PENDING` ignores finalization history; a flipped, previously finalized snapshot is purgeable (MEDIUM) | **CONTAINED** (no apply exists). The new read-only inspection (`payrollSnapshotRecoveryService`) classifies a snapshot with finalization audit evidence as `FINALIZED` whatever its status says (`DIRECTLY_TESTED`, P3-9); nothing can act on the classification | 4 |
+| F-04 | Ambiguous commit surfaces as raw HTTP 500, no "outcome unknown" marker (MEDIUM) | **ADDRESSED in Phase 3**: an unconfirmed commit is settled from durable evidence written in the same transaction, or returns 503 `COMMIT_OUTCOME_UNKNOWN` with the `operationId`; a retry is never re-executed (P3-4 to P3-7). Real faults on a single-node replica set only | 3 |
+| F-05 | "Nothing was written; retry" wording wrong for post-commit plain audit callers; business state can commit without its event at 4 payroll + 3 auth sites (MEDIUM) | **ADDRESSED in Phase 3**: the seven sites write the business change and the event in one transaction (P3-1, P3-2) | 3 |
 | F-06 | Guard invisible to readiness; failed build uncached and run in requests (MEDIUM) | **RESOLVED in Phase 2**: no index creation or repair on the request path; `/api/ready`, `--status` and startup report the exact specification, the validator, the head and a running index build (best effort, needs `$currentOp`); the readiness computation is single-flight, bounded and cached. Residual: Mongoose `autoIndex` still builds the schema indexes at application start (documented, additive) | 2 |
 | F-07 | `backfillLegacyChain` ran at every startup, re-sealed chained history, not crash-safe (MEDIUM) | **RESOLVED** (Phase 0) — startup never writes; explicit, preflighted, digest-bound command | 0 |
 | F-08 | Transaction opt-out honoured for any `NODE_ENV` ≠ `production`; destructive tool inherited the fallback (MEDIUM) | **RESOLVED** (Phase 0) — two-boundary policy; destructive tools need real transactions | 0 |
@@ -140,6 +140,8 @@ Everything in this section is model evidence: class `SIMULATED` (bounded explora
 ## Phase 2 claims — the transactional audit-chain head
 
 > **Verification status: INCOMPLETE.** At the owner's instruction the remaining checks were skipped and the work was committed. What was and was not done on the final source: (a) the full backend suite was **not** run on this source, and not twice; (b) the head test file passed 117/117 in its last complete execution, the hardening (35), Phase 0 (26), `test_phase11b_audit_chain` (1) and `test_phase12` (27) files passed after the review fixes, and the database-free suites (the model explorer and the Phase 1D scaffold suites, 78 + 69 + 116 + 25 + 42 + 29 + 25, and rounding, 24) passed; (c) the mutation suite was **not completed** (see below); (d) the remediation was not independently re-reviewed. The Phase 1D scaffold hash was re-checked and is unchanged. Nothing in this section should be read as "Phase 2 verified".
+>
+> **Later evidence (2026-10-25, recorded 2026-11-09; the note above is left as written).** The full backend suite was afterwards run twice on a clean working tree at `aba9bc1`: 1,173/1,173 both times (`payguard-evidence/final-2026-10-25/suite_run1.log`, `suite_run2.log`, headers record the commit and the tree id). The Phase 2 mutation run and the independent re-review were still not completed.
 
 Specification: `docs/integrity/AUDIT-CHAIN-HEAD.md` (sections 1-12). Commit: see Git history (`Enforce transactional audit-chain head integrity`). Tests: `backend/test_audit_chain_head.js` (118 tests; the last complete execution had 117, all passing, before a positive-control test, a mixed-hosts case and a stronger message assertion were added, each of which was run on its own only), `backend/test_audit_hardening.js` (35), `backend/test_integrity_phase0.js` (26); full backend suite: **NOT RUN on the final candidate** (see the verification status below). Evidence outside the repository: `payguard-evidence/phase2-2026-10-19/` (raw review findings, benchmark results with provenance, probes, mutation results, logs). An independent four-lens read-only review of the uncommitted change produced 50 findings; each was checked and dispositioned (specification section 12). **The remediation was not independently re-reviewed.**
 
@@ -176,6 +178,49 @@ Earlier, on the pre-remediation tests, a complete run of 50 mutants killed 45 an
 8. **Development databases need the cutover.** A database that already has audit records and no head makes every audited action fail with `AUDIT_CHAIN_NOT_INITIALIZED` (503) until `scripts/audit-chain-head.mjs` has been run on it; the relaxed mode never invents a head over a non-empty chain.
 9. Everything outside the Phase 2 claims keeps its earlier status. **The system-level audit-integrity gate remains closed**; production statutory-wage calculation and recovery `--apply` remain **NO-GO**.
 
-## Next phase
+## Phase 3 claims — atomic audit events, idempotency, unconfirmed commits
 
-Phase 3 (atomic audit events, idempotency, `COMMIT_OUTCOME_UNKNOWN`) — entry criteria: Phase 2 committed and cut over on every environment that will run it; the seven F-05 call sites identified in the specification (section 6) converted so that the event is in the business transaction or an outbox record is; operation ids checked in the same transaction as the work; an explicit client-visible outcome for an unknown commit (tests with a real `failCommand` failpoint, not only a simulation); a decision by the owners on the transaction lane (section 10 of the specification) before more traffic depends on it. Phase 4 follows; recovery apply stays disabled until all twelve Phase 4 release gates pass independently.
+Specification: [`IDEMPOTENCY.md`](IDEMPOTENCY.md), [`AMBIGUOUS-COMMIT-RECOVERY.md`](AMBIGUOUS-COMMIT-RECOVERY.md), [`TRANSACTIONAL-ATOMICITY.md`](TRANSACTIONAL-ATOMICITY.md), [`SNAPSHOT-RECOVERY.md`](SNAPSHOT-RECOVERY.md). Tests: `backend/test_atomicity.js` (23), `backend/test_commit_ambiguity.js` (5, against a disposable `mongod` with test commands enabled), `backend/test_snapshot_recovery.js` (15). Evidence: `payguard-evidence/master-2026-10-27/phase-atomicity/`.
+
+Provenance: the F-05 conversions, the recovery inspection and the lease model were written in an earlier unattended session (2026-11-01) and reviewed here. That session's idempotency design was **replaced**, not extended: it wrote no evidence inside the business transaction, had no fencing, burned the key on every 5xx, surfaced the raw driver error and declared a non-partial unique `operationId`. A copy of it is kept in the evidence directory.
+
+| # | Claim | Class | Mechanism | Evidence |
+|---|---|---|---|---|
+| P3-1 | At the seven F-05 sites (lockout, sign-in, logout-all, preflight, processing start, stuck-run recovery, fail-run), the business change and its audit event commit together or not at all | `DIRECTLY_TESTED` (a real audit outage, made by removing the head; one event SIMULATED, as named in its test) | one `runInTransaction` callback, `auditService.log(params, session)` | group A |
+| P3-2 | No cookie or other external effect happens inside those transactions | `SOURCE_ENFORCED` | cookies are set after the commit | review |
+| P3-3 | Every audit writer passes the literal `session` to `log`; 35 `log` and 3 `logStandalone` sites, each file's count pinned | `SOURCE_ENFORCED`, `DIRECTLY_TESTED` | census 3 | `test_audit_chain_head.js` |
+| P3-4 | Each committed transaction of a keyed request leaves a marker in the operation record, written in the same transaction | `DB_ENFORCED` (the transaction), `DIRECTLY_TESTED` | `recordInTransaction` | group B |
+| P3-5 | A request whose lock was taken over cannot commit, including while its replacement is still `IN_PROGRESS` | `DB_ENFORCED` (the conditional update matches nothing and aborts the transaction), `DIRECTLY_TESTED` | `lockToken` fence | group B, both FENCING tests |
+| P3-5a | A transaction nested inside another during a keyed request is refused (`IDEMPOTENCY_NESTED_TRANSACTION`); a full-suite trace found no production path that nests | `SOURCE_ENFORCED`, `DIRECTLY_TESTED`; the trace is coverage evidence, not proof | refusal in `runAttempts` | group B; `phase-atomicity/nested_trace.jsonl` |
+| P3-6 | An attempt that committed work is never re-run, whether it failed, crashed or lost its reply | `DIRECTLY_TESTED` | takeover and release require `committedTransactions = 0` | group B |
+| P3-7 | A commit the server applied but did not confirm is recognised from the marker; one it never applied returns `COMMIT_OUTCOME_UNKNOWN` and is not re-run; a definite (transient) commit refusal is retried, not reported as unknown | `DIRECTLY_TESTED` with **real** `failCommand` faults on a single-node replica set | `commitResolvingOutcome`, bounded majority-read polling | `test_commit_ambiguity.js` |
+| P3-8 | Snapshot recovery apply always refuses | `SOURCE_ENFORCED`, `DIRECTLY_TESTED` | `applySnapshotRecovery` throws 503 | `test_snapshot_recovery.js` |
+| P3-9 | Recovery inspection treats any finalization evidence as `FINALIZED` and a broken chain as ineligible; leases are fenced by token **and** fence value, and an expired lease cannot be renewed | `DIRECTLY_TESTED` | inspection, `SnapshotRecoveryLease` | `test_snapshot_recovery.js` |
+
+### Suite runs on the Phase 3 source
+
+| Run | Date (UTC) | Result |
+|---|---|---|
+| a1 | 2026-11-06 | **Interrupted** (the host stopped). Before it stopped: census 3 failed on stale totals (fixed in the test) and the multi-process "queue OFF" test failed once with its detail lost. That test then passed 11/11 idle and 5/5 with every core saturated; **cause unknown, recorded as an open intermittent** |
+| a2 | 2026-11-09 | **1,233/1,233**, 0 skipped, exit 0, on the source before the mutation fixes (manifest in `suite_a2_header.txt`). Superseded by a3/a4 |
+| trace | 2026-11-09 | 1,233/1,233 with a temporary nesting trace in `transaction.js` (removed; restored file verified by hash) |
+| a3, a4 | 2026-11-09 | **1,240/1,240 twice**, 0 skipped, exit 0, on the final source; the two manifests are identical (`suite_a3_header.txt`, `suite_a4_header.txt`). The golden snapshot hash `ca97dc1e…2868` is asserted by three suite files and was recomputed independently |
+
+### Mutation result
+
+43 hand-written defects against `transaction.js` (7), `idempotencyService.js` (7), `idempotency.js` (10), the seven F-05 sites (one per site: the business write moved outside the transaction) and the recovery foundation (12). Harness: `phase-atomicity/mutation_atomicity.mjs` (the Phase 2 runner, line-ending aware, one exact match required); every file restored and re-verified by hash after each mutant.
+
+- **Run 1** (source before the fixes): 32 killed, 11 survived. Survivors that were real test gaps: O01 (no test of a stale attempt committing while its replacement is still `IN_PROGRESS`: the fencing claim was half-tested), T02 (a nested transaction's commit is invisible to the operation record, so a retry could apply it twice: **a code defect, fixed by refusing nesting during a keyed request**), T03 (a definite transient commit failure must be retried), O05, I09, R03, R04, R08. Tests were added for each.
+- **Run 2** (final source): **40 killed, 3 survived**, 0 inconclusive, 0 pattern-not-found. The three were annotated before the run: O04 (a non-majority evidence read: equivalent on a single-node replica set; it matters on a multi-node set, which is untested), I07 (the key release's durable re-check: defence in depth behind the process counter), R12 (tenant mismatch: the query is already tenant-scoped).
+
+Run 1 is kept, not discarded: `mutation_run1.json`, `mutation_run2.json`.
+
+### Phase 3 limits
+
+1. **Single-node replica set only.** Failover, stepdown, multi-node majority and partitions are `UNVERIFIED`.
+2. Requests **without** an `Idempotency-Key` have no operation record: they still get `COMMIT_OUTCOME_UNKNOWN`, but nothing durable settles it.
+3. `UNKNOWN_COMMIT` and `PRIOR_ATTEMPT_COMMITTED` are resolved by a person; there is no reconciliation procedure or tool.
+4. The idempotency fallback without transactions (development/test only) does not give the evidence guarantee.
+5. The lock period (five minutes) must exceed the server's `transactionLifetimeLimitSeconds` for a takeover after a timed-out `UNKNOWN_COMMIT` write to be safe.
+6. F-02 (the purge's unfenced run read) remains **CONTAINED** only because no purge exists. Before any apply, the gates in `SNAPSHOT-RECOVERY.md` and a new review are required.
+7. Not independently reviewed. **The system-level gates stay closed**; production statutory-wage calculation and recovery apply remain **NO-GO**.
