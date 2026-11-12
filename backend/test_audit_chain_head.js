@@ -2123,6 +2123,27 @@ describe('I — head verification and the specification evaluators, one disagree
     await expectHead(() => heads().updateOne({ _id: 'global' }, { $set: { sequence: 5 } }), 'HEAD_AHEAD_OF_CHAIN', { restoredIsConsistent: false }); // the records are gone, so the original head is itself ahead of an empty chain
   });
 
+  test('F-09: removing the newest records AFTER the cutover while the head is left alone is detected by verifyHead (the check readiness relies on)', async () => {
+    assert.equal((await auditService.verifyHead()).ok, true);
+    await AuditLog.collection.deleteOne({ sequenceNumber: 3 }); // the newest record disappears; the head still says 3
+    const removedOne = await auditService.verifyHead();
+    assert.equal(removedOne.ok, false);
+    assert.equal(removedOne.code, 'HEAD_SEQUENCE_MISMATCH', removedOne.reason);
+    await AuditLog.collection.deleteMany({}); // every record gone
+    const removedAll = await auditService.verifyHead();
+    assert.equal(removedAll.ok, false);
+    assert.equal(removedAll.code, 'HEAD_AHEAD_OF_CHAIN', removedAll.reason);
+  });
+
+  test('F-09 LIMITATION, documented not hidden: removing the newest records AND rewriting the head to match them is NOT detected by anything in the system; only an external checkpoint could catch it', async () => {
+    const all = await records();
+    const kept = all[1]; // keep records 1..2, drop 3, and make the head describe record 2
+    await AuditLog.collection.deleteOne({ sequenceNumber: 3 });
+    await heads().updateOne({ _id: 'global' }, { $set: { sequence: kept.sequenceNumber, hash: kept.hash, version: kept.headVersion } });
+    assert.equal((await auditService.verifyHead()).ok, true, 'the head check cannot see it');
+    assert.equal((await auditService.verifyAuditChain()).valid, true, 'nor can the chain walk: what remains is a valid chain');
+  });
+
   test('after a cutover with no new record, the head must still be at version 1 with the baseline at the tail; anything else is reported', async () => {
     await heads().deleteMany({});
     await AuditLog.collection.updateMany({}, { $unset: { headVersion: 1 } });
