@@ -136,7 +136,7 @@ function persistOutcome(req, key, lockToken, operation, status, body) {
   const attempt = { userId: req.user.id, key, lockToken };
   if (status < 500) {
     return IdempotencyRecord.updateOne(attempt, {
-      $set: { status: 'COMPLETED', responseStatus: status, responseBody: JSON.stringify(body) },
+      $set: { status: 'COMPLETED', responseStatus: status, responseBody: JSON.stringify(body), completedAt: new Date() },
     });
   }
   if (operation.outcomeUnknown) {

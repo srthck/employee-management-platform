@@ -60,7 +60,7 @@ function createClient() {
       method,
       headers: {
         'content-type': 'application/json',
-        ...(cookie && { cookie }),
+        ...(method !== 'GET' && { 'Idempotency-Key': `test-${globalThis.crypto.randomUUID()}` }), ...(cookie && { cookie }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -401,6 +401,32 @@ describe('Phase 12 — hardened payroll platform', () => {
     const snapshots = await adminA.get(`/payroll-runs/${state.febRun}/snapshots`);
     state.e1Snapshot = snapshots.body.data.snapshots.find((s) => String(s.employeeSnapshot.employeeId) === state.e1)._id;
     state.e2Snapshot = snapshots.body.data.snapshots.find((s) => String(s.employeeSnapshot.employeeId) === state.e2)._id;
+  });
+
+  test('F-C01: repeating finished financial operations with a FRESH key (what a client sees after its key expired) has no second effect: business guards hold on their own', async () => {
+    // Every request below carries a new Idempotency-Key (the test client sends one per request), so the idempotency record
+    // of the original operation plays no part: only the business-level guard can stop a second effect.
+    const periodRuns = () => PayrollRun.countDocuments({ companyId: state.companyA, periodMonth: 2, periodYear: 2026 });
+    const finalizedSnapshots = () => PayrollSnapshot.countDocuments({ payrollRunId: state.febRun, snapshotStatus: 'FINALIZED' });
+    const runsBefore = await periodRuns();
+    const snapshotsBefore = await finalizedSnapshots();
+    const clientError = (res) => res.status >= 400 && res.status < 500;
+
+    const recreate = await adminA.post('/payroll-runs', { periodMonth: 2, periodYear: 2026 });
+    assert.ok(clientError(recreate), `a second run for the period: ${recreate.status} ${JSON.stringify(recreate.body)}`);
+    assert.equal(await periodRuns(), runsBefore, 'one run per period');
+
+    for (const action of ['process', 'finalize', 'cancel']) {
+      const again = await adminA.post(`/payroll-runs/${state.febRun}/${action}`);
+      assert.ok(clientError(again), `${action} of a FINALIZED run: ${again.status} ${JSON.stringify(again.body)}`);
+    }
+    assert.equal((await PayrollRun.findById(state.febRun).lean()).status, 'FINALIZED');
+    assert.equal(await finalizedSnapshots(), snapshotsBefore, 'no snapshot added or changed');
+
+    const versionsBefore = await SalaryStructure.countDocuments({ employeeId: state.e1 });
+    const revision = await adminA.post(`/employees/${state.e1}/salary`, salaryPayload('2026-01-01', { basic: 12000, hra: 4000, specialAllowance: 4000 }));
+    assert.ok(clientError(revision), `the same salary revision again: ${revision.status} ${JSON.stringify(revision.body)}`);
+    assert.equal(await SalaryStructure.countDocuments({ employeeId: state.e1 }), versionsBefore, 'no second salary version');
   });
 
   test('explained payslip: formulas, rule sources, self-checks and integrity', async () => {

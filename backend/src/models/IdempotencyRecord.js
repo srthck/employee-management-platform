@@ -19,8 +19,9 @@ import config from '../config/environment.js';
  * process died before responding. A request that crashes with nothing committed
  * leaves IN_PROGRESS until lockExpiresAt; after that a retry may take over,
  * which replaces lockToken and so fences the earlier attempt. An attempt that
- * committed anything is never taken over. COMPLETED records expire after
- * IDEMPOTENCY_TTL_HOURS; the others are kept (see the TTL index below).
+ * committed anything is never taken over. COMPLETED records expire
+ * IDEMPOTENCY_TTL_HOURS after they completed; the others are kept (see the TTL
+ * index below).
  */
 
 const idempotencyRecordSchema = new mongoose.Schema(
@@ -45,6 +46,8 @@ const idempotencyRecordSchema = new mongoose.Schema(
     // Stored as a JSON string: response bodies are opaque to the database.
     responseBody: { type: String, default: null },
     createdAt: { type: Date, default: () => new Date() },
+    // Set when the record becomes COMPLETED; retention counts from here, not from createdAt (see below).
+    completedAt: { type: Date, default: null },
   },
   { versionKey: false }
 );
@@ -55,14 +58,17 @@ idempotencyRecordSchema.index(
   { operationId: 1 },
   { unique: true, name: 'unique_idempotency_operation', partialFilterExpression: { operationId: { $type: 'string' } } }
 );
-// Only COMPLETED records expire. A record whose outcome is unknown, or whose attempt committed work, is what stops a retry
-// with the same key from running the operation again: if it expired, the key would be free and the work could apply twice.
-// Such records hold no response body. Databases built with the earlier 'idempotency_ttl' index (which expired every record)
-// need `npm run migrate`, which drops it.
-export const IDEMPOTENCY_TTL_INDEX = 'idempotency_ttl_completed';
-export const LEGACY_IDEMPOTENCY_TTL_INDEX = 'idempotency_ttl';
+// Only COMPLETED records expire, IDEMPOTENCY_TTL_HOURS after they COMPLETED. A record whose outcome is unknown, or whose
+// attempt committed work, is what stops a retry with the same key from running the operation again: if it expired, the key
+// would be free and the work could apply twice. Such records hold no response body. Retention counts from completedAt, not
+// createdAt: an abandoned attempt (nothing committed) is kept, and a retry may take it over days later; counting from
+// createdAt would let that record expire moments after it completed, and a lost-response retry would then run again.
+// Earlier indexes ('idempotency_ttl': every record, from createdAt; 'idempotency_ttl_completed': COMPLETED, from createdAt)
+// are dropped by `npm run migrate`, which also sets completedAt on COMPLETED records written before the field existed.
+export const IDEMPOTENCY_TTL_INDEX = 'idempotency_ttl_completed_at';
+export const LEGACY_IDEMPOTENCY_TTL_INDEXES = Object.freeze(['idempotency_ttl', 'idempotency_ttl_completed']);
 idempotencyRecordSchema.index(
-  { createdAt: 1 },
+  { completedAt: 1 },
   {
     expireAfterSeconds: config.idempotencyTtlHours * 3600,
     name: IDEMPOTENCY_TTL_INDEX,

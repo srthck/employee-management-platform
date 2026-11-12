@@ -69,7 +69,7 @@ runScopedRouter.post(
   '/finalize-run',
   requirePermission(P.PAYROLL_FINALIZE),
   payrollActionRateLimiter,
-  idempotent(),
+  idempotent({ required: true }),
   validateRunId,
   finalizeRun
 );

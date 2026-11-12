@@ -44,13 +44,14 @@ Then look at the business state the request would have changed (the run, the emp
 
 - **Applied:** tell the user it worked. Nothing to repeat.
 - **Not applied:** the user repeats the action with a **new** request (the application generates a new key). Do not edit or delete the old record: it is the evidence, and the key stays blocked by design.
+- **Never** retry blindly: not with the same key (it is refused, by design), and not with a new key until step 2 has established that the original was **not** applied. A new key bypasses the operation record; only the business guards would then stand between a retry and a second effect.
 - **Partly applied:** correct the business state through the normal application functions, so that each correction is audited.
 
 Never change `status`, `committedTransactions` or `commits` by hand, and never delete these records to "unblock" a key. There is no supported tool to do either.
 
 ## Retention
 
-`COMPLETED` records expire after `IDEMPOTENCY_TTL_HOURS` (default 24). Records that are `UNKNOWN_COMMIT`, or `IN_PROGRESS` with committed work, do **not** expire: deleting them would let a retry with the same key run the operation again. They hold no response body. Databases created before this rule have an old TTL index that expired every record; `npm run migrate` replaces it (`npm run migrate:dry-run` first).
+`COMPLETED` records expire `IDEMPOTENCY_TTL_HOURS` (default 24) after they completed. Records that are `UNKNOWN_COMMIT`, or `IN_PROGRESS` with committed work, do **not** expire: deleting them would let a retry with the same key run the operation again. They hold no response body. Databases created before this rule carry older TTL indexes; follow "Deploying the retention change" in [IDEMPOTENCY.md](IDEMPOTENCY.md) (new code everywhere first, then `npm run migrate:dry-run`, then `npm run migrate`).
 
 ## Escalate when
 

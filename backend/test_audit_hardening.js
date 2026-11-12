@@ -93,7 +93,7 @@ function createClient() {
   const request = async (method, path, body, headers = {}) => {
     const response = await fetch(`${baseUrl}${path}`, {
       method,
-      headers: { 'content-type': 'application/json', ...(cookie && { cookie }), ...headers },
+      headers: { 'content-type': 'application/json', ...(method !== 'GET' && { 'Idempotency-Key': `test-${globalThis.crypto.randomUUID()}` }), ...(cookie && { cookie }), ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const setCookie = response.headers.get('set-cookie');

@@ -259,6 +259,9 @@ describe('B. one logical operation applies at most once', () => {
     ops.post('/op', idempotent(), async (req, res, next) => {
       try { await handler(req, res); } catch (err) { next(err); }
     });
+    ops.post('/strict-op', idempotent({ required: true }), async (req, res, next) => {
+      try { await handler(req, res); } catch (err) { next(err); }
+    });
     ops.use(errorHandler);
     opsServer = ops.listen(0);
     await new Promise((resolve) => opsServer.once('listening', resolve));
@@ -437,6 +440,21 @@ describe('B. one logical operation applies at most once', () => {
     const row = await record(k);
     assert.equal(row.status, 'COMPLETED');
     assert.equal(row.committedTransactions, 1);
+  });
+
+  test('a route that REQUIRES a key refuses a request without one (428) before anything runs, and with a key behaves like any keyed route', async () => {
+    handler = commitOnce;
+    const strict = (headers = {}) => fetch(`${opsUrl}/strict-op`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: '{}' });
+    const refused = await strict();
+    assert.equal(refused.status, 428);
+    assert.equal((await refused.json()).code, 'IDEMPOTENCY_KEY_REQUIRED');
+    assert.equal(await scratchCount(), 0, 'the handler did not run');
+    assert.equal(await IdempotencyRecord.countDocuments({}), 0, 'no record was created');
+    const k = key();
+    assert.equal((await strict({ 'Idempotency-Key': k })).status, 201);
+    const replay = await strict({ 'Idempotency-Key': k });
+    assert.equal(replay.headers.get('idempotent-replayed'), 'true');
+    assert.equal(await scratchCount(), 1, 'applied exactly once');
   });
 
   test('the same key with a different request is refused and does not run the handler', async () => {

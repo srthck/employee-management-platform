@@ -23,8 +23,9 @@
  *   7. compensation      record a new component version wherever Wave 3.5
  *                        changed what payroll does with it (recurring
  *                        voluntary deductions and employer contributions)
- *   8. idempotency       drop the old TTL index that expired every record (its
- *                        replacement expires only COMPLETED ones)
+ *   8. idempotency       drop the old TTL indexes (one expired every record; the
+ *                        replacement expires only COMPLETED ones, counted from
+ *                        completion) and set completedAt on older COMPLETED records
  *   9. everything else   build any missing schema indexes
  *
  * Audit records are never rewritten. Events recorded before companyId existed
@@ -39,7 +40,7 @@ import config from '../src/config/environment.js';
 import Admin from '../src/models/Admin.js';
 import AuditLog from '../src/models/AuditLog.js';
 import Company from '../src/models/Company.js';
-import IdempotencyRecord, { LEGACY_IDEMPOTENCY_TTL_INDEX } from '../src/models/IdempotencyRecord.js';
+import IdempotencyRecord, { LEGACY_IDEMPOTENCY_TTL_INDEXES } from '../src/models/IdempotencyRecord.js';
 import ComplianceRuleVersion from '../src/models/ComplianceRuleVersion.js';
 import Employee from '../src/models/Employee.js';
 import EmployeeAccount from '../src/models/EmployeeAccount.js';
@@ -258,10 +259,18 @@ async function main() {
   }
   await backfillCompensation({ dryRun, log, problems });
   await refreshPayrollApplication({ dryRun, log });
-  // The earlier TTL index expired EVERY idempotency record, including the ones that stop a retry from re-running work whose
-  // outcome is unknown or that already committed. Its replacement (built below) expires only COMPLETED records. Dropping an
-  // index removes no document.
-  await dropIndexIfPresent(IdempotencyRecord, LEGACY_IDEMPOTENCY_TTL_INDEX);
+  // The earlier TTL indexes expired records the system still needs: 'idempotency_ttl' every record (including the ones that
+  // stop a retry from re-running work whose outcome is unknown or that already committed), 'idempotency_ttl_completed'
+  // COMPLETED records counted from creation rather than completion. The replacement (built below) expires COMPLETED records
+  // counted from completedAt. Dropping an index removes no document. COMPLETED records written before completedAt existed get
+  // completedAt = createdAt, so they keep the retention they had.
+  for (const name of LEGACY_IDEMPOTENCY_TTL_INDEXES) await dropIndexIfPresent(IdempotencyRecord, name);
+  await updateMany(
+    IdempotencyRecord,
+    { status: 'COMPLETED', completedAt: null }, // matches a missing field as well as null
+    [{ $set: { completedAt: '$createdAt' } }],
+    'set completedAt on COMPLETED records written before the field existed'
+  );
   for (const model of [
     Admin, AuditLog, Company, ComplianceRuleVersion, EmployeeAccount, IdempotencyRecord, PayrollSnapshot, PayrollStagingResult,
     EmployeeStatutoryProfile, EmployeeBankAccount, EmployeeDocument,

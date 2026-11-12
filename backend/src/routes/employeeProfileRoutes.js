@@ -112,7 +112,7 @@ router.get('/:employeeId/bank-accounts', requirePermission(P.EMPLOYEE_READ), emp
 router.post(
   '/:employeeId/bank-accounts',
   requirePermission(P.EMPLOYEE_BANK_WRITE),
-  idempotent(),
+  idempotent({ required: true }), // a payment destination: required
   [...employee, optionalText('reason', 300), body('effectiveFrom').optional({ nullable: true }).isISO8601().withMessage('effectiveFrom must be a date.')],
   handleValidation,
   addBankAccount

@@ -44,6 +44,7 @@ const TEST_FILES = [
   'test_commit_ambiguity.js',
   'test_snapshot_recovery.js',
   'test_seed_compliance.js',
+  'test_idempotency_policy.js',
 ];
 
 const base = new URL(process.argv[2] || process.env.REPLICA_SET_URI || 'mongodb://127.0.0.1:27018/?replicaSet=rs0');

@@ -103,7 +103,7 @@ employeeCompensationRouter.get(
 employeeCompensationRouter.post(
   '/:employeeId/compensation/changes',
   requirePermission(P.COMPENSATION_PROPOSE),
-  idempotent(),
+  idempotent({ required: true }),
   [...employeeParam, ...proposalBody, body('reason').isString().withMessage('A reason is required for a pay change.')],
   handleValidation,
   proposeChange
@@ -144,7 +144,7 @@ router.post('/changes/:changeId/submit', requirePermission(P.COMPENSATION_PROPOS
 router.post(
   '/changes/:changeId/approve',
   requirePermission(P.COMPENSATION_APPROVE),
-  idempotent(),
+  idempotent({ required: true }),
   [...changeParam, decisionNote],
   handleValidation,
   approveChange

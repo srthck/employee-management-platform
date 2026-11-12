@@ -220,29 +220,30 @@ describe('unconfirmed commits against a real server', { skip: MONGOD ? false : '
     assert.equal(update.matchedCount, 1);
   });
 
-  describe('retention: only settled records expire (the REAL TTL monitor, running every second)', () => {
+  describe('retention: only completed records expire, counted from completion (the REAL TTL monitor, running every second)', () => {
     const DAY = 24 * 3600 * 1000;
     // The fingerprint the middleware computes for the request send() makes, so a retry is recognised as the same request.
     const SEND_FINGERPRINT = crypto.createHash('sha256').update(JSON.stringify({ method: 'POST', url: '/op', body: {} })).digest('hex');
     const row = (status, extra = {}) => ({
       operationId: crypto.randomUUID(), key: newKey(), userId: USER, companyId: null, method: 'POST', path: '/op',
       requestHash: SEND_FINGERPRINT, status, lockExpiresAt: new Date(Date.now() - DAY), lockToken: null, committedTransactions: 0, commits: [],
-      responseStatus: null, responseBody: null, createdAt: new Date(Date.now() - 30 * DAY), ...extra,
+      responseStatus: null, responseBody: null, createdAt: new Date(Date.now() - 30 * DAY), completedAt: null, ...extra,
     });
     const waitFor = async (predicate, ms = 20_000) => {
       const end = Date.now() + ms;
       while (Date.now() < end) { if (await predicate()) return true; await sleep(250); }
       return false;
     };
+    const MONITOR_PASSES_MS = 4000; // several passes of a monitor that runs every second
 
-    test('a month-old COMPLETED record expires; month-old UNKNOWN_COMMIT and committed IN_PROGRESS records are kept, so their keys can never run again', async () => {
-      const completed = row('COMPLETED', { responseStatus: 201, responseBody: '{}' });
+    test('a record COMPLETED a month ago expires; month-old UNKNOWN_COMMIT and committed IN_PROGRESS records are kept, so their keys can never run again', async () => {
+      const completed = row('COMPLETED', { responseStatus: 201, responseBody: '{}', completedAt: new Date(Date.now() - 30 * DAY) });
       const unknown = row('UNKNOWN_COMMIT', { responseStatus: 503 });
       const committed = row('IN_PROGRESS', { committedTransactions: 1, commits: [{ marker: 'm', label: 'x', at: new Date() }] });
       await IdempotencyRecord.collection.insertMany([completed, unknown, committed]);
 
       assert.ok(await waitFor(async () => !(await IdempotencyRecord.exists({ key: completed.key }))), 'the settled record expired');
-      await sleep(3000); // several more monitor passes
+      await sleep(MONITOR_PASSES_MS);
       assert.ok(await IdempotencyRecord.exists({ key: unknown.key }), 'UNKNOWN_COMMIT is kept');
       assert.ok(await IdempotencyRecord.exists({ key: committed.key }), 'an attempt that committed work is kept');
 
@@ -256,11 +257,32 @@ describe('unconfirmed commits against a real server', { skip: MONGOD ? false : '
       assert.equal(await scratch().countDocuments({}), 0, 'nothing ran');
     });
 
-    test('the migration replaces the old TTL index that expired every record; the dry run changes nothing and no document is removed', async () => {
-      const name = 'idempotency_ttl';
-      await IdempotencyRecord.collection.dropIndex('idempotency_ttl_completed');
-      await IdempotencyRecord.collection.createIndex({ createdAt: 1 }, { name, expireAfterSeconds: 10 * 365 * 24 * 3600 }); // long enough that nothing expires during the test
-      await IdempotencyRecord.collection.insertMany([row('UNKNOWN_COMMIT', { createdAt: new Date() }), row('COMPLETED', { createdAt: new Date() })]);
+    test('an operation that COMPLETES long after its record was created keeps its replay window: an abandoned attempt taken over a month later is not deleted on completion, and a lost-response retry replays instead of running again', async () => {
+      const abandoned = row('IN_PROGRESS'); // created a month ago, nothing committed, lock long expired
+      await IdempotencyRecord.collection.insertOne(abandoned);
+      handler = commitOnce;
+      const first = await send(abandoned.key);
+      assert.equal(first.status, 201, await first.clone().text());
+      const completed = await IdempotencyRecord.findOne({ key: abandoned.key }).lean();
+      assert.equal(completed.status, 'COMPLETED');
+      assert.ok(Date.now() - completed.completedAt.getTime() < 60_000, 'completedAt is the completion time');
+
+      await sleep(MONITOR_PASSES_MS);
+      assert.ok(await IdempotencyRecord.exists({ key: abandoned.key }), 'the record outlives a month-old createdAt');
+      const retry = await send(abandoned.key); // the client never saw the first response and tries again
+      assert.equal(retry.status, 201);
+      assert.equal(retry.headers.get('idempotent-replayed'), 'true');
+      assert.equal(await scratch().countDocuments({}), 1, 'applied exactly once');
+    });
+
+    test('the migration replaces both earlier TTL indexes, gives older COMPLETED records a completion time, removes no document, and its dry run changes nothing', async () => {
+      await IdempotencyRecord.collection.dropIndex('idempotency_ttl_completed_at');
+      const TEN_YEARS = 10 * 365 * 24 * 3600; // long enough that nothing expires during the test
+      await IdempotencyRecord.collection.createIndex({ createdAt: 1 }, { name: 'idempotency_ttl', expireAfterSeconds: TEN_YEARS });
+      await IdempotencyRecord.collection.createIndex({ createdAt: 1 }, { name: 'idempotency_ttl_completed', expireAfterSeconds: TEN_YEARS, partialFilterExpression: { status: 'COMPLETED' } });
+      const legacyCompleted = row('COMPLETED', { createdAt: new Date(), responseStatus: 201, responseBody: '{}' });
+      delete legacyCompleted.completedAt; // written before the field existed
+      await IdempotencyRecord.collection.insertMany([row('UNKNOWN_COMMIT', { createdAt: new Date() }), legacyCompleted]);
       const before = await IdempotencyRecord.countDocuments({});
       const indexNames = async () => (await IdempotencyRecord.collection.indexes()).map((index) => index.name).sort();
       const migrate = (args) => spawnSync(process.execPath, ['scripts/migrate.js', ...args], {
@@ -271,16 +293,26 @@ describe('unconfirmed commits against a real server', { skip: MONGOD ? false : '
       const dry = migrate(['--dry-run']);
       assert.equal(dry.status, 0, dry.stdout + dry.stderr);
       assert.match(dry.stdout, /idempotencyrecords: drop index idempotency_ttl\b/);
-      assert.ok((await indexNames()).includes(name), 'the dry run dropped nothing');
+      assert.match(dry.stdout, /idempotencyrecords: drop index idempotency_ttl_completed\b/);
+      assert.match(dry.stdout, /set completedAt on COMPLETED records written before the field existed \(1 document/);
+      assert.ok((await indexNames()).includes('idempotency_ttl') && (await indexNames()).includes('idempotency_ttl_completed'), 'the dry run dropped nothing');
+      assert.equal((await IdempotencyRecord.collection.findOne({ key: legacyCompleted.key })).completedAt, undefined, 'the dry run wrote nothing');
 
       const real = migrate([]);
       assert.equal(real.status, 0, real.stdout + real.stderr);
       const indexes = await IdempotencyRecord.collection.indexes();
-      assert.ok(!indexes.some((index) => index.name === name), 'the old index is gone');
-      const replacement = indexes.find((index) => index.name === 'idempotency_ttl_completed');
+      assert.ok(!indexes.some((index) => ['idempotency_ttl', 'idempotency_ttl_completed'].includes(index.name)), 'the earlier indexes are gone');
+      const replacement = indexes.find((index) => index.name === 'idempotency_ttl_completed_at');
       assert.ok(replacement, 'the replacement exists');
+      assert.deepEqual(replacement.key, { completedAt: 1 });
       assert.deepEqual(replacement.partialFilterExpression, { status: 'COMPLETED' });
+      const migrated = await IdempotencyRecord.collection.findOne({ key: legacyCompleted.key });
+      assert.equal(migrated.completedAt.getTime(), legacyCompleted.createdAt.getTime(), 'an older COMPLETED record keeps the retention it had');
       assert.equal(await IdempotencyRecord.countDocuments({}), before, 'no document was removed by the migration');
+
+      const again = migrate([]);
+      assert.equal(again.status, 0, again.stdout + again.stderr);
+      assert.doesNotMatch(again.stdout, /idempotencyrecords: (drop index|set completedAt)/, 'a second run has nothing left to do');
     });
   });
 });

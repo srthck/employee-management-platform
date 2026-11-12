@@ -69,10 +69,11 @@ const validateFinalize = [
 ];
 
 // ─── Write routes ─────────────────────────────────────────────────────────────
+// Financially material and irreversible: a retry must never apply it twice, so the key is REQUIRED (428 without one).
 router.post(
   '/',
   requirePermission(P.PAYROLL_PREPARE),
-  idempotent(),
+  idempotent({ required: true }),
   validateCreatePayrollRun,
   handleValidationErrors,
   createPayrollRun
@@ -82,7 +83,7 @@ router.post(
   '/:id/process',
   requirePermission(P.PAYROLL_PREPARE),
   payrollActionRateLimiter,
-  idempotent(),
+  idempotent({ required: true }),
   validateRunId,
   handleValidationErrors,
   processPayrollRun
@@ -92,7 +93,7 @@ router.post(
   '/:id/finalize',
   requirePermission(P.PAYROLL_FINALIZE),
   payrollActionRateLimiter,
-  idempotent(),
+  idempotent({ required: true }),
   validateRunId,
   validateFinalize,
   handleValidationErrors,
@@ -103,12 +104,13 @@ router.post(
   '/:id/cancel',
   requirePermission(P.PAYROLL_PREPARE),
   payrollActionRateLimiter,
-  idempotent(),
+  idempotent({ required: true }),
   validateRunId,
   handleValidationErrors,
   cancelPayrollRun
 );
 
+// No key: recovery only moves a stuck PROCESSING run to FAILED, conditionally; repeating it changes nothing more.
 router.post(
   '/:id/recover',
   requirePermission(P.PAYROLL_PREPARE),

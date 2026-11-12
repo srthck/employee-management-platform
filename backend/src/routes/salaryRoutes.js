@@ -36,5 +36,6 @@ const router = express.Router();
 router.use(authMiddleware);
 router.get('/:employeeId/salary/current', requirePermission(PERMISSIONS.SALARY_READ), validateEmployee, handleValidation, getCurrentSalary);
 router.get('/:employeeId/salary', requirePermission(PERMISSIONS.SALARY_READ), validateEmployee, handleValidation, getSalaryHistory);
-router.post('/:employeeId/salary', requirePermission(PERMISSIONS.SALARY_REVISE), idempotent(), validateRevision, handleValidation, createSalaryRevision);
+// Financially material and irreversible: a retry must never apply it twice, so the key is REQUIRED (428 without one).
+router.post('/:employeeId/salary', requirePermission(PERMISSIONS.SALARY_REVISE), idempotent({ required: true }), validateRevision, handleValidation, createSalaryRevision);
 export default router;

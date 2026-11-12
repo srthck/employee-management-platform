@@ -56,7 +56,9 @@ const { default: auditService } = await import('./src/services/auditService.js')
 const { supportsTransactions } = await import('./src/utils/transaction.js');
 
 const PASSWORD = 'StrongPass123';
-const PAN = 'ABCDE1234F';
+// Not the format example in the PAN validation message ("for example ABCDE1234F"): a stored error response quoting the
+// example would look like a leak of this fixture.
+const PAN = 'LMNOP4321Q';
 const UAN = '100200300400';
 const FIRST_ACCOUNT = '123456789012';
 const SECOND_ACCOUNT = '987654321098';
@@ -71,7 +73,7 @@ function createClient() {
   const request = async (method, url, body, headers = {}) => {
     const response = await fetch(`${baseUrl}${url}`, {
       method,
-      headers: { 'content-type': 'application/json', ...(cookie && { cookie }), ...headers },
+      headers: { 'content-type': 'application/json', ...(method !== 'GET' && { 'Idempotency-Key': `test-${globalThis.crypto.randomUUID()}` }), ...(cookie && { cookie }), ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const setCookie = response.headers.get('set-cookie');
@@ -313,11 +315,11 @@ describe('Wave 2 — workforce identity and Employee 360', () => {
 
     const saved = await s.hr.post(
       `/employees/${s.asha}/statutory`,
-      { pan: 'abcde 1234f', uan: UAN, reason: 'Joining documents' },
+      { pan: 'lmnop 4321q', uan: UAN, reason: 'Joining documents' },
       { 'Idempotency-Key': `statutory-${crypto.randomUUID()}` }
     );
     expectStatus(saved, 201);
-    assert.equal(saved.body.data.profile.fields.pan.masked, '••••••234F');
+    assert.equal(saved.body.data.profile.fields.pan.masked, '••••••321Q');
     assert.equal(saved.body.data.profile.fields.uan.masked, '••••••••0400');
     assert.equal(saved.body.data.profile.fields.esicNumber.isSet, false);
     assert.deepEqual(containsNone(saved.raw), []);
@@ -361,7 +363,7 @@ describe('Wave 2 — workforce identity and Employee 360', () => {
     await assert.rejects(
       EmployeeStatutoryProfile.create({
         employeeId: new mongoose.Types.ObjectId(), companyId: new mongoose.Types.ObjectId(), version: 1,
-        pan: { ciphertext: PAN, last4: '234F' }, recordedBy: new mongoose.Types.ObjectId(),
+        pan: { ciphertext: PAN, last4: '321Q' }, recordedBy: new mongoose.Types.ObjectId(),
       }),
       /must be stored encrypted/
     );
