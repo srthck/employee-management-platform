@@ -43,6 +43,7 @@ const TEST_FILES = [
   'test_atomicity.js',
   'test_commit_ambiguity.js',
   'test_snapshot_recovery.js',
+  'test_seed_compliance.js',
 ];
 
 const base = new URL(process.argv[2] || process.env.REPLICA_SET_URI || 'mongodb://127.0.0.1:27018/?replicaSet=rs0');
@@ -72,6 +73,7 @@ const env = {
   AUDIT_HARDENING_MONGO_URI: databaseUri('payguard_audit_hardening_test'),
   INTEGRITY_P0_MONGO_URI: databaseUri('payguard_integrity_p0_test'),
   AUDIT_HEAD_MONGO_URI: databaseUri('payguard_audit_head_test'),
+  SEED_MONGO_URI: databaseUri('payguard_seed_test'),
 };
 
 console.log(`Running ${TEST_FILES.length} suites against ${base.host} with REQUIRE_TRANSACTIONS=true`);

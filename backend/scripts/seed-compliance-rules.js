@@ -30,11 +30,11 @@ const RULES = [
     jurisdiction: 'IN',
     effectiveFrom: new Date('2014-09-01T00:00:00Z'),
     description:
-      'EPF values carried from the pre-Code regime: 12% employee and 12% employer (the rate in para 18(2) of the ' +
-      'Employees’ Provident Funds Scheme, 2026) on PF wages capped at ₹15,000/month. The notified Chapter III ' +
-      'wage ceiling is ₹25,000 from 17-09-2026 (S.O. 5109(E)); whether it governs this cap is undecided, so periods ' +
-      'from that date need review. EPS 8.33% within the employer share, ceiling ₹15,000. Rounded to paise, then to the ' +
-      'nearest rupee; para 18(5) requires the nearest rupee, and the paise step is undecided.',
+      'Pre-Code EPF values: 12% employee and 12% employer (para 18(2), EPF Scheme 2026) on PF wages capped at ' +
+      '₹15,000/month. S.O. 5109(E) notifies a ₹25,000 Chapter III wage ceiling from 17-09-2026; whether it ' +
+      'governs this cap is undecided, so periods from that date need review. EPS 8.33% of the employer share, ' +
+      'ceiling ₹15,000. Rounded to paise, then to the nearest rupee; para 18(5) sets the nearest rupee and the ' +
+      'paise step is undecided. See docs/legal/SEED-RULES-REVIEW.md.',
     epfParams: {
       employeeContributionRate: 0.12,
       employerContributionRate: 0.12,
