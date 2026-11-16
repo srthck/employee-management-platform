@@ -11,11 +11,11 @@ export default function DeleteConfirmModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4 backdrop-blur-sm"
+      className="dialog-backdrop"
       onClick={handleBackdropClick}
     >
       <div
-        className="w-full max-w-sm rounded-[14px] border border-line bg-porcelain shadow-[0_12px_40px_rgba(60,25,30,0.16)]"
+        className="dialog max-w-sm"
         role="dialog"
         aria-modal="true"
         aria-labelledby="delete-employee-title"
@@ -83,7 +83,7 @@ export default function DeleteConfirmModal({
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-[8px] border border-line bg-white px-4 py-2 text-sm font-medium text-ink-2 transition hover:border-crimson hover:bg-crimson-tint hover:text-crimson"
+            className="rounded-[8px] border border-line bg-transparent px-4 py-2 text-sm font-medium text-ink-2 transition hover:border-crimson hover:bg-crimson-tint hover:text-crimson"
           >
             Cancel
           </button>
@@ -91,7 +91,7 @@ export default function DeleteConfirmModal({
           <button
             type="button"
             onClick={onConfirm}
-            className="flex items-center gap-2 rounded-[8px] bg-crimson px-5 py-2 text-sm font-semibold text-white transition hover:bg-crimson-strong disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex items-center gap-2 rounded-[8px] bg-crimson px-5 py-2 text-sm font-semibold text-on-accent transition hover:bg-crimson-strong disabled:cursor-not-allowed disabled:opacity-60"
           >
             <svg
               className="h-4 w-4"

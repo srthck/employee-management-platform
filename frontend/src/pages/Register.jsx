@@ -212,7 +212,7 @@ export default function Register() {
         <button id="register-submit" type="submit" disabled={isLoading} className="btn btn-primary min-h-[46px] w-full">
           {isLoading ? (
             <>
-              <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+              <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-on-accent/30 border-t-on-accent" />
               Creating account…
             </>
           ) : (

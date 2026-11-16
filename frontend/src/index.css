@@ -1,4 +1,5 @@
 @import './styles/tokens.css';
+@import './styles/themes.css';
 
 @tailwind base;
 @tailwind components;
@@ -6,15 +7,24 @@
 
 /* =========================================================
    PAYGUARD — APPLICATION LAYER
-   Tokens: src/styles/tokens.css. The class names below are the
-   shared component API used by every signed-in page.
+
+   The shared component API used by every signed-in page.
+   Structure comes from styles/tokens.css, colour from
+   styles/themes.css. Changing a value in either changes
+   every screen; nothing below hard-codes a colour.
+
+   Three layers, and the distinction matters:
+     .pg-canvas   the lit gradient
+     .panel       CONTENT — near-opaque, no blur, trustworthy contrast
+     .glass       the FLOATING layer — blur lives here and nowhere else
    ========================================================= */
 
 :root {
   font-family: var(--pg-sans);
+  font-optical-sizing: auto;
+  font-synthesis-weight: none;
   color: var(--pg-ink);
-  background: var(--pg-porcelain);
-  font-synthesis: none;
+  background: rgb(var(--pg-backdrop-rgb));
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -22,15 +32,17 @@
 
 html {
   scroll-behavior: smooth;
+  background: rgb(var(--pg-backdrop-rgb));
 }
 
 body {
   margin: 0;
   min-width: 320px;
-  background: var(--pg-porcelain);
+  background: rgb(var(--pg-backdrop-rgb));
   color: var(--pg-ink);
   font-size: 15px;
   line-height: 1.55;
+  letter-spacing: var(--pg-track-body);
 }
 
 button,
@@ -39,6 +51,7 @@ input,
 select,
 textarea {
   font: inherit;
+  letter-spacing: inherit;
 }
 
 button {
@@ -57,32 +70,47 @@ a {
 :focus-visible {
   outline: 2px solid var(--pg-crimson);
   outline-offset: 2px;
+  border-radius: 4px;
 }
 
 ::selection {
-  background: rgb(var(--pg-crimson-rgb) / 0.16);
+  background: rgb(var(--pg-crimson-rgb) / 0.3);
+  color: var(--pg-ink);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
+/* =========================================================
+   THE CANVAS
+   ========================================================= */
 
-  *,
-  *::before,
-  *::after {
-    animation-duration: 1ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 1ms !important;
-  }
+.pg-canvas {
+  position: relative;
+  isolation: isolate;
+  background: var(--pg-canvas-gradient);
+}
+
+.pg-canvas::before,
+.pg-canvas::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pg-canvas::before {
+  background: var(--pg-bloom);
+  z-index: -2;
+}
+
+.pg-canvas::after {
+  background: var(--pg-pinstripe);
+  opacity: 0.85;
+  z-index: -1;
 }
 
 /* =========================================================
    SCROLLBAR
    ========================================================= */
 
-/* Scroll containers are positioned so visually hidden (absolute) labels inside
-   tables stay inside them instead of widening the page. */
 .overflow-x-auto,
 .overflow-auto {
   position: relative;
@@ -90,7 +118,7 @@ a {
 
 .pg-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: var(--pg-line-strong) transparent;
+  scrollbar-color: rgb(var(--pg-ink-3-rgb) / 0.45) transparent;
 }
 
 .pg-scrollbar::-webkit-scrollbar {
@@ -99,8 +127,12 @@ a {
 }
 
 .pg-scrollbar::-webkit-scrollbar-thumb {
-  background: var(--pg-line-strong);
+  background: rgb(var(--pg-ink-3-rgb) / 0.45);
   border-radius: 8px;
+}
+
+.pg-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--pg-ink-3-rgb) / 0.7);
 }
 
 /* =========================================================
@@ -109,44 +141,178 @@ a {
 
 @layer components {
 
-  /* ── Typography ───────────────────────────────────────── */
+  /* -- Type scale ----------------------------------------
+     Tracking tightens as size grows, the way an optical-size
+     axis behaves, so headlines set close and small labels
+     stay open enough to read. */
+
+  .t-display {
+    font-size: clamp(40px, 7.4vw, 84px);
+    font-weight: 700;
+    line-height: 0.98;
+    letter-spacing: var(--pg-track-display);
+    text-wrap: balance;
+  }
 
   .eyebrow {
-    @apply font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-ink-2;
+    @apply font-mono text-[11px] font-medium uppercase text-ink-2;
+    letter-spacing: var(--pg-track-micro);
   }
 
   .page-title {
-    @apply mt-1.5 text-[28px] font-bold leading-[1.1] tracking-[-0.03em] text-ink sm:text-[34px];
+    @apply mt-2 text-[30px] font-bold text-ink sm:text-[40px];
+    line-height: 1.04;
+    letter-spacing: var(--pg-track-title);
     text-wrap: balance;
   }
 
   .page-subtitle {
-    @apply mt-2 max-w-[62ch] text-[15px] leading-6 text-ink-2;
+    @apply mt-3 max-w-[64ch] text-[15px] leading-7 text-ink-2;
+    letter-spacing: var(--pg-track-body);
   }
 
   .section-title {
-    @apply mt-1 text-[19px] font-semibold leading-tight tracking-[-0.015em] text-ink;
+    @apply mt-1 text-[19px] font-semibold leading-tight text-ink;
+    letter-spacing: var(--pg-track-heading);
   }
 
   .mono {
     @apply font-mono text-[12.5px];
   }
 
-  /* ── Page header ──────────────────────────────────────── */
+  /* -- Page header ---------------------------------------- */
 
   .page-header {
-    @apply flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between;
+    @apply flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between;
   }
 
   .page-header__actions {
     @apply flex flex-wrap items-center gap-2;
   }
 
-  /* ── Panels ───────────────────────────────────────────── */
+  /* -- The specular rim -----------------------------------
+     A 1px gradient border, brightest where light would catch
+     the top-left edge, with a faint bounce along the bottom.
+     Masked so only the border band paints. Every material
+     surface carries it; it is what makes an edge read as a
+     physical edge rather than a stroke. */
+
+  .rim {
+    position: relative;
+  }
+
+  .rim::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      145deg,
+      var(--pg-glass-hi) 0%,
+      rgb(var(--pg-glass-rgb) / 0.08) 32%,
+      rgb(var(--pg-glass-rgb) / 0.04) 62%,
+      rgb(var(--pg-glass-rgb) / 0.16) 100%
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* -- CONTENT surfaces -----------------------------------
+     Panels hold data, so they do not blur. Their colour is
+     known, which is what lets the text on them be trusted to
+     meet contrast. They still read as a material because of
+     the rim and the slight translucency over the canvas. */
 
   .panel {
-    @apply min-w-0 rounded-[14px] border border-line bg-surface p-5 sm:p-6;
+    @apply relative min-w-0 overflow-hidden p-5 sm:p-6;
+    border-radius: var(--pg-radius-panel);
+    background-color: var(--pg-surface-translucent);
     box-shadow: var(--pg-shadow-panel);
+  }
+
+  .panel::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(
+      145deg,
+      var(--pg-glass-hi) 0%,
+      rgb(var(--pg-glass-rgb) / 0.08) 32%,
+      rgb(var(--pg-glass-rgb) / 0.04) 62%,
+      rgb(var(--pg-glass-rgb) / 0.16) 100%
+    );
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* The rim is masked to a 1px band at the very edge, and panel content is
+     inset by its padding, so the two never overlap. Nothing needs lifting
+     above it — which avoids forcing a stacking context onto every child. */
+
+  /* -- THE FLOATING LAYER ---------------------------------
+     Real glass: it samples and blurs what is behind it. Used
+     for the top bar, the pill nav, the drawer, dialogs and
+     the hero's card stack — the things that float over
+     content, never the content itself. */
+
+  .glass {
+    background-color: rgb(var(--pg-surface-rgb) / 0.58);
+    background-image: var(--pg-glass-fill);
+    backdrop-filter: blur(var(--pg-blur)) saturate(var(--pg-saturate));
+    -webkit-backdrop-filter: blur(var(--pg-blur)) saturate(var(--pg-saturate));
+  }
+
+  .glass-strong {
+    background-color: rgb(var(--pg-surface-rgb) / 0.76);
+    background-image: var(--pg-glass-fill);
+    backdrop-filter: blur(var(--pg-blur-strong)) saturate(var(--pg-saturate));
+    -webkit-backdrop-filter: blur(var(--pg-blur-strong)) saturate(var(--pg-saturate));
+  }
+
+  /* The clear variant: barely tinted, for small controls over
+     a visually rich backdrop. Apple's rule is that it is only
+     legible on a dimming layer, so it brings its own. */
+  .glass-clear {
+    background-color: var(--pg-scrim);
+    backdrop-filter: blur(10px) saturate(140%);
+    -webkit-backdrop-filter: blur(10px) saturate(140%);
+  }
+
+  /* A panel that floats: content surface plus real glass. */
+  .panel-float {
+    background-color: rgb(var(--pg-surface-rgb) / 0.66);
+    background-image: var(--pg-glass-fill);
+    box-shadow: var(--pg-shadow-float);
+    backdrop-filter: blur(var(--pg-blur-strong)) saturate(var(--pg-saturate));
+    -webkit-backdrop-filter: blur(var(--pg-blur-strong)) saturate(var(--pg-saturate));
+  }
+
+  /* An inner card. Its radius is the panel's minus the gap
+     between them, so the corners stay concentric. */
+  .card-inset {
+    @apply relative overflow-hidden p-4;
+    border-radius: var(--pg-radius-card);
+    border: 1px solid var(--pg-glass-line);
+    background: var(--pg-glass);
   }
 
   .panel-head {
@@ -157,36 +323,100 @@ a {
     @apply border-t border-line;
   }
 
-  /* ── Buttons ──────────────────────────────────────────── */
+  .grabber {
+    @apply mx-auto mb-4 h-[3px] w-10 rounded-full;
+    background: var(--pg-glass-line-strong);
+  }
+
+  /* -- Buttons --------------------------------------------
+     Capsules, and they answer the press: Apple's controls
+     scale down on touch rather than only changing colour. */
 
   .btn {
-    @apply inline-flex min-h-[40px] items-center justify-center gap-2 whitespace-nowrap rounded-[10px] border border-line-strong bg-surface px-4 text-sm font-semibold text-ink transition-colors duration-150 hover:border-ink-2 hover:bg-canvas-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-line-strong disabled:hover:bg-surface;
+    @apply inline-flex min-h-[38px] items-center justify-center gap-2 whitespace-nowrap px-4 text-[13.5px] font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-45;
+    border-radius: var(--pg-radius-control);
+    border: 1px solid var(--pg-glass-line);
+    background: var(--pg-glass);
+    letter-spacing: var(--pg-track-small);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    transition:
+      background var(--pg-fast) var(--pg-ease),
+      border-color var(--pg-fast) var(--pg-ease),
+      transform var(--pg-fast) var(--pg-ease-bounce),
+      box-shadow var(--pg-fast) var(--pg-ease);
+  }
+
+  .btn:hover:not(:disabled) {
+    border-color: var(--pg-glass-line-strong);
+    background: var(--pg-glass-strong);
+  }
+
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
   }
 
   .btn-primary {
-    @apply border-crimson bg-crimson text-white hover:border-crimson-strong hover:bg-crimson-strong disabled:hover:border-crimson disabled:hover:bg-crimson;
+    @apply border-crimson bg-crimson text-on-accent;
+    box-shadow: var(--pg-shadow-accent);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    @apply border-crimson-strong bg-crimson-strong text-on-accent;
   }
 
   .btn-danger {
-    @apply border-bad-line bg-surface text-bad hover:border-bad hover:bg-bad-tint;
+    @apply border-bad-line text-bad;
+    background: rgb(var(--pg-bad-rgb) / 0.1);
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    @apply border-bad;
+    background: rgb(var(--pg-bad-rgb) / 0.18);
   }
 
   .btn-quiet {
-    @apply border-transparent bg-transparent hover:border-transparent hover:bg-canvas-2;
+    @apply border-transparent text-ink-2;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .btn-quiet:hover:not(:disabled) {
+    @apply border-transparent text-ink;
+    background: var(--pg-glass);
   }
 
   .btn-small {
-    @apply min-h-[32px] rounded-[8px] px-2.5 text-xs;
+    @apply min-h-[30px] px-3 text-[12.5px];
   }
 
   .link {
-    @apply font-semibold text-crimson underline decoration-crimson/30 decoration-2 underline-offset-4 transition-colors hover:text-crimson-strong hover:decoration-crimson;
+    @apply font-semibold text-crimson underline decoration-crimson/40 decoration-2 underline-offset-4 transition-colors hover:text-crimson-strong hover:decoration-crimson;
   }
 
-  /* ── Form fields ──────────────────────────────────────── */
+  /* -- Form fields ----------------------------------------- */
 
   .field {
-    @apply w-full min-h-[40px] rounded-[10px] border border-field bg-surface px-3 py-2 text-sm text-ink placeholder-ink-3 transition-colors focus:border-crimson focus:outline-none focus:ring-2 focus:ring-crimson/15 disabled:bg-canvas-2 disabled:text-ink-2;
+    @apply w-full min-h-[38px] border border-field px-3.5 py-2 text-[14px] text-ink placeholder-ink-3 transition-colors focus:border-crimson focus:outline-none focus:ring-[3px] focus:ring-crimson/20 disabled:text-ink-2;
+    border-radius: var(--pg-radius-input);
+    background: var(--pg-well);
+  }
+
+  .field:hover:not(:disabled):not(:focus) {
+    border-color: var(--pg-line-strong);
+  }
+
+  .field:disabled {
+    background: var(--pg-well);
+    opacity: 0.6;
+  }
+
+  select.field option {
+    background: rgb(var(--pg-surface-rgb));
+    color: rgb(var(--pg-ink-rgb));
   }
 
   .label {
@@ -201,20 +431,26 @@ a {
     @apply mt-1 text-xs font-medium text-bad;
   }
 
-  /* ── Status badges ────────────────────────────────────── */
-  /* Semantic, not decorative: success = verified/resolved, warn = action
-     required, danger = failed, deferred = out of scope, neutral/info = state. */
+  /* -- Status badges ---------------------------------------
+     Semantic, never colour alone: each carries an icon and a
+     word. The accent colour is deliberately not reused here,
+     so a tinted control is never mistaken for a status. */
 
   .status {
     @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-[3px] text-[11.5px] font-semibold leading-4;
+    letter-spacing: var(--pg-track-small);
   }
 
   .status-neutral {
-    @apply border-line-strong bg-surface text-ink-2;
+    @apply text-ink-2;
+    border-color: var(--pg-glass-line);
+    background: var(--pg-glass);
   }
 
   .status-info {
-    @apply border-line-strong bg-canvas-2 text-ink;
+    @apply text-ink;
+    border-color: var(--pg-glass-line-strong);
+    background: var(--pg-glass-strong);
   }
 
   .status-warn {
@@ -234,100 +470,257 @@ a {
   }
 
   .status-unknown {
-    @apply border-dashed border-line-strong bg-surface text-ink-2;
+    @apply border-dashed text-ink-2;
+    border-color: var(--pg-line-strong);
+    background: var(--pg-glass-quiet);
   }
 
-  /* ── Health indicators (inline text) ──────────────────── */
+  /* -- Health indicators ----------------------------------- */
 
   .health {
     @apply inline-flex items-center gap-1.5 text-xs font-semibold;
   }
 
-  .health-good {
-    @apply text-ok;
-  }
+  .health-good { @apply text-ok; }
+  .health-warn { @apply text-warn; }
+  .health-muted { @apply text-defer; }
 
-  .health-warn {
-    @apply text-warn;
-  }
-
-  .health-muted {
-    @apply text-defer;
-  }
-
-  /* ── Tables ───────────────────────────────────────────── */
+  /* -- Tables ---------------------------------------------- */
 
   .data-table {
     @apply w-full min-w-[800px] text-left text-sm;
   }
 
   .data-table th {
-    @apply border-b border-line bg-canvas-2 px-4 py-2.5 text-[12px] font-semibold text-ink-2 first:rounded-tl-[10px] last:rounded-tr-[10px];
+    @apply border-b border-line px-4 py-3 text-[11px] font-semibold uppercase text-ink-2;
+    letter-spacing: var(--pg-track-micro);
+    background: var(--pg-glass-quiet);
   }
+
+  .data-table th:first-child { border-top-left-radius: var(--pg-radius-card); }
+  .data-table th:last-child { border-top-right-radius: var(--pg-radius-card); }
 
   .data-table td {
     @apply border-b border-line px-4 py-3.5 align-top text-ink;
   }
 
   .data-table tbody tr {
-    @apply transition-colors hover:bg-porcelain;
+    transition: background var(--pg-fast) var(--pg-ease);
+  }
+
+  .data-table tbody tr:hover {
+    background: var(--pg-glass-quiet);
   }
 
   .data-table tbody tr:last-child td {
     @apply border-b-0;
   }
 
-  /* ── Alerts ───────────────────────────────────────────── */
+  /* -- Alerts ----------------------------------------------- */
 
   .alert {
-    @apply rounded-[10px] border px-4 py-3 text-sm leading-6;
+    @apply border px-4 py-3 text-sm leading-6;
+    border-radius: var(--pg-radius-card);
   }
 
-  .alert-danger {
-    @apply border-bad-line bg-bad-tint text-bad;
-  }
-
-  .alert-warn {
-    @apply border-warn-line bg-warn-tint text-warn;
-  }
-
-  .alert-success {
-    @apply border-ok-line bg-ok-tint text-ok;
-  }
+  .alert-danger { @apply border-bad-line bg-bad-tint text-bad; }
+  .alert-warn { @apply border-warn-line bg-warn-tint text-warn; }
+  .alert-success { @apply border-ok-line bg-ok-tint text-ok; }
 
   .alert-info {
-    @apply border-line-strong bg-canvas-2 text-ink;
+    @apply text-ink;
+    border-color: var(--pg-glass-line);
+    background: var(--pg-glass);
   }
 
-  /* ── Empty / loading states ───────────────────────────── */
+  /* -- Empty / loading -------------------------------------- */
 
   .empty-state {
     @apply px-4 py-12 text-center text-sm text-ink-2;
   }
 
   .skeleton {
-    @apply animate-pulse rounded-[8px] bg-canvas-2;
+    @apply animate-pulse rounded-[8px];
+    background: var(--pg-glass-strong);
   }
 
-  /* ── Dialogs ──────────────────────────────────────────── */
+  /* -- Dialogs ---------------------------------------------
+     The floating layer at its most literal, so these do blur. */
 
   .dialog-backdrop {
-    @apply fixed inset-0 z-50 flex items-center justify-center bg-obsidian/50 p-4 backdrop-blur-[2px];
+    @apply fixed inset-0 z-50 flex items-center justify-center p-4;
+    background: rgb(var(--pg-obsidian-rgb) / 0.62);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    animation: pg-fade-in var(--pg-fast) var(--pg-ease) both;
   }
 
   .dialog {
-    @apply max-h-[88vh] w-full max-w-lg overflow-y-auto rounded-[16px] border border-line bg-surface p-6;
+    @apply relative max-h-[88vh] w-full max-w-lg overflow-y-auto overflow-x-hidden p-6;
+    border-radius: var(--pg-radius-panel);
+    background-color: rgb(var(--pg-surface-rgb) / 0.88);
+    background-image: var(--pg-glass-fill);
+    border: 1px solid var(--pg-glass-line-strong);
     box-shadow: var(--pg-shadow-overlay);
-    animation: pg-dialog-in var(--pg-move) var(--pg-ease) both;
+    backdrop-filter: blur(var(--pg-blur-strong)) saturate(var(--pg-saturate));
+    -webkit-backdrop-filter: blur(var(--pg-blur-strong)) saturate(var(--pg-saturate));
+    animation: pg-dialog-in var(--pg-move) var(--pg-ease-bounce) both;
   }
 
-  /* ── Icon buttons ─────────────────────────────────────── */
+  /* -- Circular controls ------------------------------------ */
 
   .icon-button {
-    @apply inline-flex min-h-[32px] min-w-[32px] items-center justify-center rounded-[8px] text-ink-2 transition-colors hover:bg-canvas-2 hover:text-ink;
+    @apply inline-flex min-h-[36px] min-w-[36px] items-center justify-center rounded-full border text-ink-2 hover:text-ink;
+    border-color: var(--pg-glass-line);
+    background: var(--pg-glass);
+    transition:
+      background var(--pg-fast) var(--pg-ease),
+      border-color var(--pg-fast) var(--pg-ease),
+      transform var(--pg-fast) var(--pg-ease-bounce),
+      color var(--pg-fast) var(--pg-ease);
   }
 
-  /* ── Legacy brand helpers (kept for existing markup) ──── */
+  .icon-button:hover {
+    border-color: var(--pg-glass-line-strong);
+    background: var(--pg-glass-strong);
+  }
+
+  .icon-button:active {
+    transform: scale(0.94);
+  }
+
+  .icon-button-solid {
+    @apply border-transparent text-on-accent;
+    background: var(--pg-ink);
+  }
+
+  .icon-button-solid:hover {
+    @apply border-transparent text-on-accent;
+    background: var(--pg-ink);
+    filter: brightness(1.08);
+  }
+
+  /* -- Pill navigation --------------------------------------
+     One glass capsule holding the sections, the current one
+     lifted in its own lighter pill behind an accent point. */
+
+  .pill-nav {
+    @apply flex items-center gap-1 rounded-full border p-1;
+    border-color: var(--pg-glass-line);
+    background: var(--pg-glass);
+    backdrop-filter: blur(var(--pg-blur)) saturate(var(--pg-saturate));
+    -webkit-backdrop-filter: blur(var(--pg-blur)) saturate(var(--pg-saturate));
+  }
+
+  .pill-nav__item {
+    @apply relative inline-flex min-h-[32px] items-center gap-2 whitespace-nowrap rounded-full px-3.5 text-[13px] font-medium text-ink-2;
+    letter-spacing: var(--pg-track-small);
+    transition:
+      background var(--pg-fast) var(--pg-ease),
+      color var(--pg-fast) var(--pg-ease),
+      transform var(--pg-fast) var(--pg-ease-bounce);
+  }
+
+  .pill-nav__item:hover {
+    @apply text-ink;
+    background: var(--pg-glass);
+  }
+
+  .pill-nav__item:active {
+    transform: scale(0.97);
+  }
+
+  .pill-nav__item.is-active,
+  .pill-nav__item[data-active] {
+    @apply text-ink;
+    background: var(--pg-glass-strong);
+    box-shadow:
+      0 1px 0 0 rgb(var(--pg-glass-rgb) / 0.14) inset,
+      0 4px 12px -6px rgb(var(--pg-shadow-rgb) / 0.7);
+  }
+
+  .pill-nav__dot {
+    @apply h-[5px] w-[5px] shrink-0 rounded-full bg-crimson;
+    box-shadow: 0 0 0 3px rgb(var(--pg-crimson-rgb) / 0.22);
+  }
+
+  /* -- Feature strip -----------------------------------------
+     A hairline across the full width, cells beneath it, and an
+     accent segment sitting on the rule above the active cell. */
+
+  .feature-strip {
+    @apply grid border-t;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    column-gap: clamp(16px, 2.5vw, 32px);
+    border-color: var(--pg-glass-line);
+  }
+
+  .feature-strip__item {
+    @apply relative flex min-w-0 flex-col gap-2 pb-1 pt-4;
+  }
+
+  .feature-strip__item::before {
+    content: '';
+    position: absolute;
+    top: -1px;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    border-radius: 2px;
+    background: transparent;
+  }
+
+  .feature-strip__item[data-active]::before {
+    background: var(--pg-crimson);
+  }
+
+  .feature-strip__label {
+    @apply text-[13px] leading-5 text-ink-2;
+  }
+
+  .feature-strip__item[data-active] .feature-strip__label,
+  .feature-strip__item[data-active] dt {
+    @apply text-crimson;
+  }
+
+  /* -- Segmented control (used by the theme picker) ---------- */
+
+  .segmented {
+    @apply inline-flex items-center gap-1 rounded-full border p-1;
+    border-color: var(--pg-glass-line);
+    background: var(--pg-glass-quiet);
+  }
+
+  .segmented__option {
+    @apply inline-flex h-7 items-center justify-center gap-1.5 rounded-full px-2.5 text-[12px] font-semibold text-ink-2;
+    transition:
+      background var(--pg-fast) var(--pg-ease),
+      color var(--pg-fast) var(--pg-ease),
+      transform var(--pg-fast) var(--pg-ease-bounce);
+  }
+
+  .segmented__option:hover {
+    @apply text-ink;
+    background: var(--pg-glass);
+  }
+
+  .segmented__option:active {
+    transform: scale(0.95);
+  }
+
+  .segmented__option[aria-checked='true'] {
+    @apply text-ink;
+    background: var(--pg-glass-strong);
+    box-shadow: 0 1px 0 0 rgb(var(--pg-glass-rgb) / 0.14) inset;
+  }
+
+  /* A swatch showing a theme's canvas and accent. */
+  .theme-swatch {
+    @apply h-3.5 w-3.5 shrink-0 rounded-full border;
+    border-color: var(--pg-glass-line-strong);
+  }
+
+  /* -- Legacy brand helpers (kept for existing markup) ------- */
 
   .pg-primary-text { @apply text-crimson; }
   .pg-primary-bg { @apply bg-crimson; }
@@ -337,8 +730,8 @@ a {
   .pg-border { @apply border-line; }
 }
 
-/* Figures: Schibsted's tabular figures also widen commas and points, so tabular
-   numbers use IBM Plex Mono, whose digits and punctuation are naturally aligned. */
+/* Figures: proportional figures make columns of numbers ragged, so tabular
+   contexts switch to the monospaced face and tabular numerals. */
 .tabular-nums,
 .tabular {
   font-family: var(--pg-mono);
@@ -347,16 +740,122 @@ a {
 }
 
 @keyframes pg-dialog-in {
-  from { opacity: 0; transform: translateY(6px) scale(0.99); }
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
   to { opacity: 1; transform: none; }
 }
 
+@keyframes pg-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes pg-rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.pg-rise {
+  animation: pg-rise-in var(--pg-slow) var(--pg-ease) both;
+}
+
 @media (max-width: 640px) {
-  .panel {
-    padding: 1rem;
+  .panel { padding: 1rem; }
+  .data-table { min-width: 700px; }
+}
+
+/* =========================================================
+   ACCESSIBILITY FALLBACKS
+
+   Contrast never depends on these: every text colour already
+   passes against its surface's opaque value. They exist so the
+   material itself can be switched off.
+   ========================================================= */
+
+/* Where backdrop-filter is unsupported the film would wash out, so the
+   floating layer becomes opaque instead. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass,
+  .glass-strong,
+  .glass-clear,
+  .panel-float,
+  .dialog,
+  .pill-nav,
+  .btn:not(.btn-primary):not(.btn-quiet) {
+    background-color: rgb(var(--pg-surface-rgb));
+    background-image: none;
+  }
+}
+
+/* Reduced transparency: drop every film and blur. Support for this query is
+   still uneven, which is exactly why it only removes effects and never
+   supplies contrast that was missing before. */
+@media (prefers-reduced-transparency: reduce) {
+  .panel,
+  .glass,
+  .glass-strong,
+  .glass-clear,
+  .panel-float,
+  .dialog,
+  .pill-nav,
+  .card-inset,
+  .btn {
+    background-color: rgb(var(--pg-surface-rgb));
+    background-image: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
   }
 
-  .data-table {
-    min-width: 700px;
+  .dialog-backdrop {
+    background: rgb(var(--pg-obsidian-rgb) / 0.88);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .pg-canvas::before,
+  .pg-canvas::after {
+    display: none;
+  }
+
+  .pg-canvas {
+    background: rgb(var(--pg-canvas-solid-rgb));
+  }
+
+  .panel::before,
+  .rim::before {
+    display: none;
+  }
+
+  .panel,
+  .pill-nav,
+  .dialog {
+    border: 1px solid var(--pg-line-strong);
+  }
+}
+
+@media (prefers-contrast: more) {
+  .panel,
+  .dialog,
+  .card-inset {
+    background-color: rgb(var(--pg-surface-rgb));
+    border: 1px solid var(--pg-line-strong);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+
+  .btn:active:not(:disabled),
+  .icon-button:active,
+  .pill-nav__item:active,
+  .segmented__option:active {
+    transform: none;
   }
 }

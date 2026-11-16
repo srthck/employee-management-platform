@@ -1,48 +1,146 @@
 /* =========================================================================
-   PAYGUARD DESIGN TOKENS — the single source for colour, type, space and motion.
-   Used by the public site (.pg-site) and the signed-in application alike.
-   Tailwind reads the *-rgb triplets (tailwind.config.js), so utilities such as
-   `text-ink-2` or `bg-ink/40` resolve to these values.
-   Contrast ratios are measured against porcelain (#FBF8F6) unless noted.
-   Rules: docs/design/PROOFLINE-DESIGN-SYSTEM.md
+   PAYGUARD DESIGN TOKENS — structure.
+
+   This file holds everything that does NOT change with the theme: the type
+   system, the material physics (film densities, blur, rim light), radii,
+   elevation and motion. Colour lives in themes.css, keyed on
+   <html data-theme>. Tailwind reads the `--pg-*-rgb` triplets, so
+   `text-ink-2` and `var(--pg-ink-2)` always resolve to the same value.
+
+   MATERIAL MODEL — three layers, following Apple's rule that glass belongs
+   to the navigation layer that floats above content, never to the content
+   itself:
+
+     1. CANVAS    the lit gradient + bloom + pinstripe. `.pg-canvas`.
+     2. CONTENT   near-opaque surfaces that hold data: panels, tables,
+                  lists. No backdrop-filter. Contrast here is deterministic,
+                  which is why text can be trusted to meet 4.5:1.
+     3. GLASS     the floating layer: top bar, pill nav, drawer, dialogs,
+                  the hero's card stack. Backdrop-filter lives here and
+                  only here.
+
+   Glass is never stacked on glass, and text contrast is always measured
+   against the OPAQUE fallback colour, never against the blurred backdrop —
+   a blurred backdrop can be any colour, so it cannot be relied on.
+
+   Rules and sources: docs/design/PROOFLINE-DESIGN-SYSTEM.md
    ========================================================================= */
 
 :root {
-  /* Brand */
-  --pg-obsidian-rgb: 16 9 13;          /* #10090D  dark surfaces */
-  --pg-wine-rgb: 101 11 27;            /* #650B1B  deep brand surfaces; white on it 13:1 */
-  --pg-crimson-rgb: 200 16 46;         /* #C8102E  actions, red text 5.6:1, white on it 5.9:1 */
-  --pg-crimson-strong-rgb: 165 13 38;  /* #A50D26  hover / pressed */
-  --pg-scarlet-rgb: 255 41 72;         /* #FF2948  lines, nodes, accents: graphics only (3.5:1) */
-  --pg-crimson-tint-rgb: 251 234 237;  /* #FBEAED  selected / brand tint */
-  --pg-crimson-line-rgb: 240 201 208;  /* #F0C9D0 */
+  /* -- Type ---------------------------------------------------------------
+     Apple's own faces can't be self-hosted, so the stack asks for the
+     system face first — that renders real SF Pro on Apple devices and
+     Segoe UI Variable on Windows 11 — and falls back to self-hosted Inter
+     Variable everywhere else. Inter carries an optical-size axis, the same
+     idea as SF Text vs SF Display, so `font-optical-sizing: auto` makes
+     small text slightly wider and display text slightly tighter by itself. */
+  --pg-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+    'Inter Variable', 'Segoe UI Variable Text', 'Segoe UI', system-ui,
+    'Helvetica Neue', Arial, sans-serif;
+  --pg-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', 'IBM Plex Mono', 'Cascadia Mono',
+    Menlo, Consolas, monospace;
 
-  /* Neutrals */
-  --pg-porcelain-rgb: 251 248 246;     /* #FBF8F6  page */
-  --pg-canvas-2-rgb: 245 240 238;      /* #F5F0EE  quiet fills, table heads */
-  --pg-surface-rgb: 255 255 255;       /* #FFFFFF  panels */
-  --pg-ink-rgb: 23 19 22;              /* #171316  17.4:1 */
-  --pg-ink-2-rgb: 113 102 109;         /* #71666D  5.2:1 (5.5:1 on white) */
-  --pg-ink-3-rgb: 142 131 137;         /* #8E8389  placeholders, disabled only */
-  --pg-line-rgb: 232 221 224;          /* #E8DDE0  decorative separators */
-  --pg-line-strong-rgb: 205 191 196;   /* #CDBFC4  button outlines */
-  --pg-field-rgb: 156 143 149;         /* #9C8F95  input borders: 3.1:1 on white */
+  /* Tracking follows optical size the way SF does: tight on display sizes,
+     neutral in body copy, open on small caps-y labels. */
+  --pg-track-display: -0.045em;
+  --pg-track-title: -0.028em;
+  --pg-track-heading: -0.018em;
+  --pg-track-body: -0.006em;
+  --pg-track-small: 0em;
+  --pg-track-micro: 0.07em;
 
-  /* Status — always paired with a text label and an icon, never colour alone */
-  --pg-ok-rgb: 22 122 62;              /* #167A3E  verified / resolved: 5.4:1 on white */
-  --pg-ok-tint-rgb: 234 245 238;
-  --pg-ok-line-rgb: 191 220 201;
-  --pg-warn-rgb: 138 83 0;             /* #8A5300  action required: 5.8:1 on its tint */
-  --pg-warn-tint-rgb: 255 244 224;
-  --pg-warn-line-rgb: 235 203 143;
-  --pg-bad-rgb: 163 19 42;             /* #A3132A  failed / error: 6.9:1 on its tint */
-  --pg-bad-tint-rgb: 253 236 238;
-  --pg-bad-line-rgb: 237 184 193;
-  --pg-defer-rgb: 94 88 92;            /* #5E585C  deferred / out of scope: 6.1:1 on its tint */
-  --pg-defer-tint-rgb: 242 239 240;
-  --pg-defer-line-rgb: 217 210 213;
+  /* -- Material physics ---------------------------------------------------
+     Blur sits in the 8–18px band: past roughly 18px the look barely changes
+     while the compositing cost keeps climbing, so the extra blur is paid
+     for and not seen. */
+  --pg-blur: 14px;
+  --pg-blur-strong: 18px;
+  --pg-saturate: 180%;
 
-  /* Hex aliases for CSS and inline styles */
+  /* Film densities. The `-solid` values are the opaque fallbacks that
+     contrast is actually measured against. */
+  --pg-surface-translucent: rgb(var(--pg-surface-rgb) / 0.72);
+  --pg-surface-solid: rgb(var(--pg-surface-rgb) / 0.94);
+
+  --pg-glass: rgb(var(--pg-glass-rgb) / 0.06);
+  --pg-glass-strong: rgb(var(--pg-glass-rgb) / 0.1);
+  --pg-glass-quiet: rgb(var(--pg-glass-rgb) / 0.032);
+  --pg-glass-line: rgb(var(--pg-glass-rgb) / 0.11);
+  --pg-glass-line-strong: rgb(var(--pg-glass-rgb) / 0.2);
+  --pg-glass-hi: rgb(var(--pg-glass-rgb) / 0.55);
+  --pg-glass-fill: linear-gradient(
+    180deg,
+    rgb(var(--pg-glass-rgb) / 0.08) 0%,
+    rgb(var(--pg-glass-rgb) / 0.025) 46%,
+    rgb(var(--pg-glass-rgb) / 0.045) 100%
+  );
+
+  /* A recessed band: deeper than the canvas, in whichever direction the
+     theme runs. Daylight overrides it with a lighter tint. */
+  --pg-band-recessed: linear-gradient(
+    180deg,
+    rgb(var(--pg-obsidian-rgb) / 0.45) 0%,
+    rgb(var(--pg-obsidian-rgb) / 0.66) 100%
+  );
+
+  /* The scrim that sits under Clear glass. Apple's guidance is that the
+     clear variant is only legible on a dimming layer. */
+  --pg-scrim: rgb(0 0 0 / 0.28);
+
+  /* Fine vertical corduroy over the canvas. */
+  --pg-pinstripe: repeating-linear-gradient(
+    90deg,
+    rgb(var(--pg-glass-rgb) / 0.045) 0px,
+    rgb(var(--pg-glass-rgb) / 0.045) 1px,
+    rgb(0 0 0 / 0.032) 1px,
+    rgb(0 0 0 / 0.032) 3px
+  );
+
+  /* -- Radii --------------------------------------------------------------
+     Concentric: a child's radius is its parent's radius minus the padding
+     between them, so nested corners stay parallel instead of drifting.
+     18 − 6 = 12, 12 − 6 = 6. Controls are capsules. */
+  --pg-radius-shell: 26px;
+  --pg-radius-panel: 18px;
+  --pg-radius-card: 12px;
+  --pg-radius-inner: 8px;
+  --pg-radius-input: 10px;
+  --pg-radius-control: 999px;
+
+  /* -- Elevation ----------------------------------------------------------
+     Two-part: a tight contact shadow plus a wide ambient one, both keyed to
+     the theme's shadow colour and strength. */
+  --pg-shadow-panel:
+    0 1px 2px -1px rgb(var(--pg-shadow-rgb) / calc(0.3 * var(--pg-shadow-strength))),
+    0 12px 28px -18px rgb(var(--pg-shadow-rgb) / calc(0.7 * var(--pg-shadow-strength)));
+  --pg-shadow-float:
+    0 2px 6px -2px rgb(var(--pg-shadow-rgb) / calc(0.34 * var(--pg-shadow-strength))),
+    0 24px 56px -24px rgb(var(--pg-shadow-rgb) / calc(0.8 * var(--pg-shadow-strength)));
+  --pg-shadow-overlay:
+    0 4px 10px -3px rgb(var(--pg-shadow-rgb) / calc(0.4 * var(--pg-shadow-strength))),
+    0 40px 90px -30px rgb(var(--pg-shadow-rgb) / calc(0.92 * var(--pg-shadow-strength)));
+  --pg-shadow-accent: 0 10px 24px -12px rgb(var(--pg-crimson-rgb) / 0.55);
+
+  /* -- Shell --------------------------------------------------------------- */
+  --pg-topbar: 68px;
+  --pg-gutter: 16px;
+
+  /* -- Motion -------------------------------------------------------------
+     Apple's glass settles rather than eases out: a short spring-like curve
+     for state changes, a softer one for things entering. Nothing loops. */
+  --pg-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --pg-ease-bounce: cubic-bezier(0.17, 0.89, 0.32, 1.28);
+  --pg-fast: 140ms;
+  --pg-move: 260ms;
+  --pg-slow: 420ms;
+}
+
+/* -- Hex aliases ----------------------------------------------------------
+   For plain CSS and inline styles. These read the theme's triplets, so they
+   follow the theme automatically. */
+:root {
   --pg-obsidian: rgb(var(--pg-obsidian-rgb));
   --pg-wine: rgb(var(--pg-wine-rgb));
   --pg-crimson: rgb(var(--pg-crimson-rgb));
@@ -50,6 +148,7 @@
   --pg-scarlet: rgb(var(--pg-scarlet-rgb));
   --pg-crimson-tint: rgb(var(--pg-crimson-tint-rgb));
   --pg-crimson-line: rgb(var(--pg-crimson-line-rgb));
+  --pg-on-accent: rgb(var(--pg-on-accent-rgb));
   --pg-porcelain: rgb(var(--pg-porcelain-rgb));
   --pg-canvas-2: rgb(var(--pg-canvas-2-rgb));
   --pg-surface: rgb(var(--pg-surface-rgb));
@@ -72,22 +171,9 @@
   --pg-defer-tint: rgb(var(--pg-defer-tint-rgb));
   --pg-defer-line: rgb(var(--pg-defer-line-rgb));
 
-  /* Type */
-  --pg-sans: "Schibsted Grotesk Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --pg-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
-
-  /* Radii and elevation */
-  --pg-radius-control: 10px;
-  --pg-radius-panel: 14px;
-  --pg-shadow-panel: 0 1px 2px rgb(23 19 22 / 0.04);
-  --pg-shadow-overlay: 0 24px 64px -24px rgb(16 9 13 / 0.35);
-
-  /* Shell */
-  --pg-rail: 248px;
-  --pg-topbar: 60px;
-
-  /* Motion */
-  --pg-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --pg-fast: 140ms;
-  --pg-move: 220ms;
+  /* The proof point, used by the mark and the trace graphics. */
+  --pg-signal: var(--pg-crimson);
+  --pg-signal-tint: rgb(var(--pg-crimson-rgb) / 0.26);
+  --pg-signal-muted: rgb(var(--pg-crimson-rgb) / 0.55);
+  --pg-signal-on-ink: var(--pg-crimson);
 }

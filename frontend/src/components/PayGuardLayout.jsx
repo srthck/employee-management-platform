@@ -4,6 +4,19 @@ import { AuthContext } from '../contexts/AuthContext';
 import { can, roleLabel } from '../utils/permissions';
 import Icon from './ui/Icon';
 import ProoflineMark from './site/ProoflineMark';
+import ThemePicker from './ui/ThemePicker';
+
+/**
+ * The signed-in shell.
+ *
+ * Layout follows the product's design language: a lit navy canvas, the brand
+ * at the left, the sections in a centred glass capsule, and circular glass
+ * controls at the right. Below the pill breakpoint — and at any width, via the
+ * menu control — every section is reachable from a glass drawer.
+ *
+ * Which links appear is still decided by the signed-in user's permissions;
+ * nothing here grants access that `can()` does not already allow.
+ */
 
 const allLinks = [
   { to: '/dashboard', label: 'Overview', icon: 'overview', permission: 'payroll.read' },
@@ -17,11 +30,6 @@ const allLinks = [
 
 const settingsLink = { to: '/settings', label: 'Settings', icon: 'settings' };
 
-const RAIL_KEY = 'pg.rail.collapsed';
-const readCollapsed = () => {
-  try { return window.localStorage.getItem(RAIL_KEY) === '1'; } catch { return false; }
-};
-
 /** Closes a disclosure on Escape or an outside click, returning focus to its trigger. */
 function useDismiss(open, setOpen, ref, triggerRef) {
   useEffect(() => {
@@ -34,40 +42,58 @@ function useDismiss(open, setOpen, ref, triggerRef) {
   }, [open, setOpen, ref, triggerRef]);
 }
 
-function RailLink({ link, collapsed, onNavigate }) {
+/** One section inside the centred capsule. The current section keeps a coral point. */
+function PillLink({ link }) {
   return (
     <NavLink
       to={link.to}
-      onClick={onNavigate}
-      aria-label={collapsed ? link.label : undefined}
-      className={({ isActive }) => [
-        'group relative flex min-h-[40px] items-center gap-3 rounded-[10px] px-3 text-[14px] font-medium transition-colors duration-150',
-        collapsed ? 'lg:justify-center lg:px-0' : '',
-        isActive ? 'bg-white/[0.08] text-white' : 'text-[#CFC4C9] hover:bg-white/[0.05] hover:text-white',
-      ].join(' ')}
+      className={({ isActive }) => `pill-nav__item${isActive ? ' is-active' : ''}`}
     >
       {({ isActive }) => (
         <>
-          <span
-            aria-hidden="true"
-            className={`absolute bottom-2 left-0 top-2 w-[2px] rounded-full bg-scarlet transition-opacity ${isActive ? 'opacity-100' : 'opacity-0'}`}
-          />
-          <Icon name={link.icon} size={19} className={isActive ? 'text-white' : 'text-[#A99BA2] group-hover:text-white'} />
-          <span className={collapsed ? 'lg:sr-only' : ''}>{link.label}</span>
-          {collapsed && (
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute left-full z-50 ml-3 hidden whitespace-nowrap rounded-[8px] bg-obsidian px-2.5 py-1.5 text-xs font-medium text-white opacity-0 shadow-lg ring-1 ring-white/10 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 lg:block"
-            >
-              {link.label}
-            </span>
-          )}
+          {isActive && <span className="pill-nav__dot" aria-hidden="true" />}
+          {link.label}
         </>
       )}
     </NavLink>
   );
 }
 
+/** A section row inside the drawer. */
+function DrawerLink({ link, onNavigate }) {
+  return (
+    <NavLink
+      to={link.to}
+      onClick={onNavigate}
+      className={({ isActive }) => [
+        'group relative flex min-h-[46px] items-center gap-3 rounded-full px-4 text-[14.5px] font-medium transition-colors duration-150',
+        isActive ? 'text-ink' : 'text-ink-2 hover:text-ink',
+      ].join(' ')}
+    >
+      {({ isActive }) => (
+        <>
+          <span
+            aria-hidden="true"
+            className={`absolute inset-0 rounded-full border transition-colors ${
+              isActive
+                ? 'border-[var(--pg-glass-line-strong)] bg-[var(--pg-glass-strong)]'
+                : 'border-transparent group-hover:border-[var(--pg-glass-line)] group-hover:bg-[var(--pg-glass)]'
+            }`}
+          />
+          <Icon name={link.icon} size={18} className="relative" />
+          <span className="relative">{link.label}</span>
+          {isActive && <span className="pill-nav__dot relative ml-auto" aria-hidden="true" />}
+        </>
+      )}
+    </NavLink>
+  );
+}
+
+/**
+ * The scope disclosure. PayGuard does not calculate TDS or apply attendance,
+ * and the product states that wherever figures are shown — here as a circular
+ * control carrying a coral point, and again in the shell footer.
+ */
 function ScopeNote() {
   const [open, setOpen] = useState(false);
   const id = useId();
@@ -82,17 +108,16 @@ function ScopeNote() {
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex min-h-[36px] items-center gap-2 rounded-full border border-dashed border-defer-line bg-defer-tint px-3 text-[12.5px] font-semibold text-defer transition-colors hover:border-defer"
+        className="icon-button relative h-10 w-10"
       >
-        <Icon name="pause-circle" size={15} strokeWidth={2} />
-        <span className="hidden md:inline">Scope: TDS and attendance deferred</span>
-        <span className="md:hidden">Scope</span>
+        <Icon name="pause-circle" size={17} strokeWidth={2} />
+        <span className="absolute right-1.5 top-1.5 h-[6px] w-[6px] rounded-full bg-crimson" aria-hidden="true" />
+        <span className="sr-only">Scope: TDS and attendance are deferred</span>
       </button>
       {open && (
         <div
           id={id}
-          className="absolute right-0 top-full z-50 mt-2 w-[min(360px,calc(100vw-32px))] rounded-[14px] border border-line bg-surface p-4 text-sm"
-          style={{ boxShadow: 'var(--pg-shadow-overlay)' }}
+          className="dialog absolute right-0 top-full z-50 mt-2.5 max-h-none w-[min(380px,calc(100vw-32px))] p-5 text-sm"
         >
           <p className="font-semibold text-ink">What PayGuard does not calculate yet</p>
           <dl className="mt-3 space-y-3">
@@ -129,36 +154,50 @@ function AccountMenu({ user, logout, logoutAll }) {
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen((v) => !v)}
-        className="flex min-h-[40px] items-center gap-2.5 rounded-full p-1 transition-colors hover:bg-canvas-2 sm:pr-3"
+        className="icon-button h-10 gap-2.5 pl-1 pr-1 sm:pr-3.5"
       >
-        <span aria-hidden="true" className="flex h-8 w-8 items-center justify-center rounded-full bg-obsidian text-[12px] font-semibold text-white">
+        <span
+          aria-hidden="true"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-ink text-[12px] font-bold text-on-accent"
+        >
           {initials}
         </span>
         <span className="hidden text-left sm:block">
-          <span className="block max-w-[160px] truncate text-[13px] font-semibold leading-4 text-ink">{user?.name || 'Signed in'}</span>
-          <span className="block text-[11.5px] leading-4 text-ink-2">{roleLabel(user?.role)}</span>
+          <span className="block max-w-[150px] truncate text-[13px] font-semibold leading-4 text-ink">{user?.name || 'Signed in'}</span>
+          <span className="block text-[11px] leading-4 text-ink-2">{roleLabel(user?.role)}</span>
         </span>
         <span className="sr-only sm:hidden">Account: {user?.name}</span>
       </button>
       {open && (
-        <div
-          id={id}
-          className="absolute right-0 top-full z-50 mt-2 w-60 rounded-[14px] border border-line bg-surface p-1.5 text-sm"
-          style={{ boxShadow: 'var(--pg-shadow-overlay)' }}
-        >
+        <div id={id} className="dialog absolute right-0 top-full z-50 mt-2.5 max-h-none w-[272px] p-1.5 text-sm">
           <div className="px-3 py-2 sm:hidden">
             <p className="truncate font-semibold text-ink">{user?.name}</p>
             <p className="text-xs text-ink-2">{roleLabel(user?.role)}</p>
           </div>
-          <NavLink to="/settings" onClick={() => setOpen(false)} className="flex min-h-[38px] items-center gap-2.5 rounded-[8px] px-3 text-ink hover:bg-canvas-2">
+          <NavLink
+            to="/settings"
+            onClick={() => setOpen(false)}
+            className="flex min-h-[40px] items-center gap-2.5 rounded-full px-3 text-ink transition-colors hover:bg-[var(--pg-glass)]"
+          >
             <Icon name="settings" size={17} className="text-ink-2" /> Settings
           </NavLink>
-          <button type="button" onClick={logout} className="flex min-h-[38px] w-full items-center gap-2.5 rounded-[8px] px-3 text-left text-ink hover:bg-canvas-2">
+          <button
+            type="button"
+            onClick={logout}
+            className="flex min-h-[40px] w-full items-center gap-2.5 rounded-full px-3 text-left text-ink transition-colors hover:bg-[var(--pg-glass)]"
+          >
             <Icon name="logout" size={17} className="text-ink-2" /> Sign out
           </button>
-          <button type="button" onClick={logoutAll} className="flex min-h-[38px] w-full items-center gap-2.5 rounded-[8px] px-3 text-left text-ink-2 hover:bg-canvas-2 hover:text-ink">
+          <button
+            type="button"
+            onClick={logoutAll}
+            className="flex min-h-[40px] w-full items-center gap-2.5 rounded-full px-3 text-left text-ink-2 transition-colors hover:bg-[var(--pg-glass)] hover:text-ink"
+          >
             <span className="w-[17px]" aria-hidden="true" /> Sign out on all devices
           </button>
+          <div className="mt-1.5 border-t pt-2.5" style={{ borderColor: 'var(--pg-glass-line)' }}>
+            <ThemePicker />
+          </div>
         </div>
       )}
     </div>
@@ -168,7 +207,6 @@ function AccountMenu({ user, logout, logoutAll }) {
 export default function PayGuardLayout() {
   const { user, logout, logoutAll } = useContext(AuthContext);
   const [open, setOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(readCollapsed);
   const location = useLocation();
   const menuButtonRef = useRef(null);
   const drawerRef = useRef(null);
@@ -176,11 +214,7 @@ export default function PayGuardLayout() {
   const links = allLinks.filter((link) => can(user, link.permission));
   const current = [...links, settingsLink].find((link) => location.pathname.startsWith(link.to));
 
-  useEffect(() => {
-    try { window.localStorage.setItem(RAIL_KEY, collapsed ? '1' : '0'); } catch { /* storage unavailable */ }
-  }, [collapsed]);
-
-  // Mobile drawer: focus moves into it, Escape closes it, the page behind does not scroll.
+  // Drawer: focus moves into it, Escape closes it, the page behind does not scroll.
   useEffect(() => {
     if (!open) return undefined;
     const frame = requestAnimationFrame(() => drawerRef.current?.querySelector('nav a')?.focus());
@@ -196,107 +230,141 @@ export default function PayGuardLayout() {
   const closeDrawer = () => setOpen(false);
 
   return (
-    <div className="min-h-screen bg-porcelain text-ink">
-      <a href="#app-main" className="sr-only z-[60] rounded-[8px] bg-obsidian px-3 py-2 text-sm font-semibold text-white focus:not-sr-only focus:fixed focus:left-3 focus:top-3">
+    <div className="pg-canvas flex min-h-screen flex-col text-ink">
+      <a
+        href="#app-main"
+        className="sr-only z-[60] rounded-full bg-crimson px-4 py-2 text-sm font-semibold text-on-accent focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
+      >
         Skip to content
       </a>
 
-      {/* One sidebar: a rail on desktop, a drawer below 1024px (invisible, so unfocusable, while closed). */}
-      <aside
-        ref={drawerRef}
-        className={[
-          'fixed inset-y-0 left-0 z-40 flex w-[264px] flex-col bg-obsidian text-white',
-          'lg:visible lg:translate-x-0',
-          collapsed ? 'lg:w-[76px]' : 'lg:w-[var(--pg-rail)]',
-          open ? 'visible translate-x-0' : 'invisible -translate-x-full',
-        ].join(' ')}
-        // Visible at once when opening (so focus can move in); hidden only after sliding out.
-        style={{
-          transition: open
-            ? 'transform 200ms ease-out, width 200ms ease-out, visibility 0s'
-            : 'transform 200ms ease-out, width 200ms ease-out, visibility 0s linear 200ms',
-        }}
-        aria-label="Sidebar"
-      >
-        <div className={`flex h-[var(--pg-topbar)] shrink-0 items-center gap-2.5 border-b border-white/10 px-4 ${collapsed ? 'lg:justify-center lg:px-0' : ''}`}>
-          <ProoflineMark size={28} inverse />
-          <span className={`text-[16px] font-bold tracking-[-0.02em] ${collapsed ? 'lg:sr-only' : ''}`}>PayGuard</span>
-          <button
-            type="button"
-            onClick={closeDrawer}
-            className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-[8px] text-[#CFC4C9] hover:bg-white/10 hover:text-white lg:hidden"
-            aria-label="Close navigation"
-          >
-            <Icon name="close" size={18} />
-          </button>
-        </div>
+      {/* The bar: brand, the sections in a centred capsule, circular controls. */}
+      <header className="sticky top-0 z-30">
+        <div className="glass-strong border-b" style={{ borderColor: 'var(--pg-glass-line)' }}>
+          <div className="relative mx-auto flex h-[var(--pg-topbar)] max-w-[1480px] items-center gap-3 px-4 sm:px-6">
+            <NavLink to="/dashboard" className="flex shrink-0 items-center gap-2.5" aria-label="PayGuard overview">
+              <ProoflineMark size={28} />
+              <span className="text-[17px] font-bold tracking-[-0.03em] text-ink">PayGuard</span>
+            </NavLink>
 
-        <nav aria-label="Primary navigation" className="pg-scrollbar flex-1 space-y-0.5 overflow-y-auto px-3 py-4">
-          <p className={`px-3 pb-2 font-mono text-[10.5px] font-medium uppercase tracking-[0.12em] text-[#A99BA2] ${collapsed ? 'lg:sr-only' : ''}`}>
-            Workspace
-          </p>
-          {links.map((link) => (
-            <RailLink key={link.to} link={link} collapsed={collapsed} onNavigate={closeDrawer} />
-          ))}
-          <div className="!my-4 border-t border-white/10" />
-          <RailLink link={settingsLink} collapsed={collapsed} onNavigate={closeDrawer} />
-        </nav>
+            {/* Centred capsule, as in the reference. */}
+            <nav
+              aria-label="Primary navigation"
+              className="pill-nav absolute left-1/2 hidden -translate-x-1/2 xl:flex"
+            >
+              {links.map((link) => (
+                <PillLink key={link.to} link={link} />
+              ))}
+            </nav>
 
-        <div className={`shrink-0 border-t border-white/10 p-3 ${collapsed ? 'lg:px-2' : ''}`}>
-          <button
-            type="button"
-            onClick={() => setCollapsed((v) => !v)}
-            aria-pressed={collapsed}
-            className={`hidden min-h-[40px] w-full items-center gap-3 rounded-[10px] px-3 text-[13px] font-medium text-[#CFC4C9] transition-colors hover:bg-white/[0.05] hover:text-white lg:flex ${collapsed ? 'lg:justify-center lg:px-0' : ''}`}
-          >
-            <Icon name={collapsed ? 'expand' : 'collapse'} size={18} />
-            <span className={collapsed ? 'sr-only' : ''}>{collapsed ? 'Expand sidebar' : 'Collapse sidebar'}</span>
-          </button>
-          <div className="px-3 pt-1 lg:hidden">
-            <p className="truncate text-sm font-semibold">{user?.name}</p>
-            <p className="text-xs text-[#A99BA2]">{roleLabel(user?.role)}</p>
+            {/* The current section, named where the capsule is not shown. */}
+            <p className="min-w-0 flex-1 truncate pl-1 text-[14px] font-semibold text-ink-2 xl:hidden">
+              <span className="sr-only">Current section: </span>
+              {current?.label || 'PayGuard'}
+            </p>
+
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              <ScopeNote />
+              <AccountMenu user={user} logout={logout} logoutAll={logoutAll} />
+              <button
+                ref={menuButtonRef}
+                type="button"
+                aria-label="Open navigation"
+                aria-expanded={open}
+                onClick={() => setOpen(true)}
+                className="icon-button h-10 w-10"
+              >
+                <Icon name="menu" size={18} />
+              </button>
+            </div>
           </div>
         </div>
-      </aside>
+      </header>
 
+      <main
+        id="app-main"
+        tabIndex={-1}
+        className="mx-auto w-full max-w-[1480px] flex-1 px-4 pb-14 pt-7 outline-none sm:px-6 sm:pt-9"
+      >
+        <Outlet />
+      </main>
+
+      {/* The scope limits stay stated on every screen, not only in the disclosure. */}
+      <footer className="mx-auto w-full max-w-[1480px] px-4 pb-8 sm:px-6">
+        <div
+          className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t pt-5 text-[12px] leading-5 text-ink-2"
+          style={{ borderColor: 'var(--pg-glass-line)' }}
+        >
+          <span className="inline-flex items-center gap-2">
+            <ProoflineMark size={18} />
+            © {new Date().getFullYear()} PayGuard
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <Icon name="pause-circle" size={14} className="text-defer" />
+            Income tax (TDS) and attendance are not calculated. Net pay is shown before TDS.
+          </span>
+        </div>
+      </footer>
+
+      {/* Drawer: every section, at any width. */}
       {open && (
         <button
           aria-label="Close navigation"
           type="button"
           tabIndex={-1}
-          className="fixed inset-0 z-30 bg-obsidian/45 backdrop-blur-[1px] lg:hidden"
+          className="fixed inset-0 z-40 backdrop-blur-[6px]"
+          style={{ background: 'rgb(var(--pg-obsidian-rgb) / 0.62)' }}
           onClick={closeDrawer}
         />
       )}
+      <aside
+        ref={drawerRef}
+        className={[
+          'glass-strong fixed inset-y-0 right-0 z-50 flex w-[min(310px,88vw)] flex-col border-l',
+          open ? 'visible translate-x-0' : 'invisible translate-x-full',
+        ].join(' ')}
+        style={{
+          borderColor: 'var(--pg-glass-line)',
+          boxShadow: 'var(--pg-shadow-overlay)',
+          // Visible at once when opening (so focus can move in); hidden only after sliding out.
+          transition: open
+            ? 'transform 220ms var(--pg-ease), visibility 0s'
+            : 'transform 220ms var(--pg-ease), visibility 0s linear 220ms',
+        }}
+        aria-label="Sections"
+      >
+        <div
+          className="flex h-[var(--pg-topbar)] shrink-0 items-center gap-2.5 border-b px-4"
+          style={{ borderColor: 'var(--pg-glass-line)' }}
+        >
+          <ProoflineMark size={26} />
+          <span className="text-[16px] font-bold tracking-[-0.03em]">PayGuard</span>
+          <button
+            type="button"
+            onClick={closeDrawer}
+            className="icon-button ml-auto h-9 w-9"
+            aria-label="Close navigation"
+          >
+            <Icon name="close" size={17} />
+          </button>
+        </div>
 
-      <div className={`transition-[padding] duration-200 ${collapsed ? 'lg:pl-[76px]' : 'lg:pl-[var(--pg-rail)]'}`}>
-        <header className="sticky top-0 z-20 border-b border-line bg-porcelain/90 backdrop-blur-md">
-          <div className="mx-auto flex h-[var(--pg-topbar)] max-w-[1400px] items-center gap-3 px-4 sm:px-8">
-            <button
-              ref={menuButtonRef}
-              type="button"
-              aria-label="Open navigation"
-              aria-expanded={open}
-              onClick={() => setOpen(true)}
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] border border-line-strong bg-surface text-ink hover:bg-canvas-2 lg:hidden"
-            >
-              <Icon name="menu" size={18} />
-            </button>
-            <p className="min-w-0 truncate text-[15px] font-semibold text-ink">
-              <span className="sr-only">Current section: </span>
-              {current?.label || 'PayGuard'}
-            </p>
-            <div className="ml-auto flex items-center gap-2 sm:gap-3">
-              <ScopeNote />
-              <AccountMenu user={user} logout={logout} logoutAll={logoutAll} />
-            </div>
-          </div>
-        </header>
+        <nav aria-label="All sections" className="pg-scrollbar flex-1 space-y-1 overflow-y-auto p-3">
+          <p className="px-4 pb-2 pt-1 font-mono text-[10.5px] font-medium uppercase tracking-[0.14em] text-ink-3">
+            Workspace
+          </p>
+          {links.map((link) => (
+            <DrawerLink key={link.to} link={link} onNavigate={closeDrawer} />
+          ))}
+          <div className="!my-3 border-t" style={{ borderColor: 'var(--pg-glass-line)' }} />
+          <DrawerLink link={settingsLink} onNavigate={closeDrawer} />
+        </nav>
 
-        <main id="app-main" tabIndex={-1} className="mx-auto max-w-[1400px] px-4 pb-16 pt-6 outline-none sm:px-8 sm:pt-8">
-          <Outlet />
-        </main>
-      </div>
+        <div className="shrink-0 border-t p-4" style={{ borderColor: 'var(--pg-glass-line)' }}>
+          <p className="truncate text-sm font-semibold">{user?.name}</p>
+          <p className="text-xs text-ink-2">{roleLabel(user?.role)}</p>
+        </div>
+      </aside>
     </div>
   );
 }

@@ -150,10 +150,6 @@ function RuleDetail({ rule, onClose }) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="rule-detail-title"
-        style={{
-          backgroundColor: 'var(--pg-surface)',
-          borderColor: 'var(--pg-line)',
-        }}
       >
 
         {/* MODAL HEADER */}

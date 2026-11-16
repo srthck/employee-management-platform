@@ -28,6 +28,37 @@ export const SAMPLE_RESULT = {
 };
 
 /**
+ * The same illustrative scenario as two payroll runs, for the hero card stack:
+ * March 2026 (the result traced above) and the February run it is compared
+ * against. SAMPLE DATA, labelled as such wherever it is shown. The states are
+ * the ones the backend state machine actually uses.
+ */
+export const SAMPLE_RUNS = [
+  {
+    id: 'mar-2026',
+    period: 'March 2026',
+    status: 'Finalized',
+    tone: 'ok',
+    openedLabel: 'Opened',
+    opened: 'Mar 01',
+    closedLabel: 'Frozen',
+    closed: 'Mar 28',
+    span: '31 days',
+  },
+  {
+    id: 'feb-2026',
+    period: 'February 2026',
+    status: 'Disbursed',
+    tone: 'ok',
+    openedLabel: 'Opened',
+    opened: 'Feb 01',
+    closedLabel: 'Frozen',
+    closed: 'Feb 26',
+    span: '28 days',
+  },
+];
+
+/**
  * The evidence behind the result, in the order PayGuard produces it.
  * `where` names the real screen a user opens to see this evidence.
  */

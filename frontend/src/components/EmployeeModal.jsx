@@ -59,11 +59,11 @@ function Field({
         value={form[name]}
         onChange={handleChange}
         placeholder={placeholder}
-        className={`w-full rounded-[9px] border bg-white px-3.5 py-2.5 text-sm text-ink placeholder-ink-3 outline-none transition-all duration-200
+        className={`w-full rounded-[9px] border bg-[var(--pg-well)] px-3.5 py-2.5 text-sm text-ink placeholder-ink-3 outline-none transition-all duration-200
           focus:border-crimson focus:ring-2 focus:ring-crimson/10
           ${
             errors[name]
-              ? 'border-crimson bg-porcelain'
+              ? 'border-crimson bg-[var(--pg-well)]'
               : 'border-line hover:border-line-strong'
           }`}
       />
@@ -261,24 +261,23 @@ export default function EmployeeModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/35 p-4 backdrop-blur-[3px]"
+      className="dialog-backdrop"
       onClick={handleBackdropClick}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="employee-modal-title"
-        className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-[16px] border border-line bg-porcelain"
-        style={{ boxShadow: 'var(--pg-shadow-overlay)' }}
+        className="dialog max-w-2xl max-h-[90vh]"
       >
 
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-line bg-white px-6 py-5">
+        <div className="flex items-center justify-between border-b border-line px-6 py-5">
           <div className="flex items-center gap-3">
 
-            <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-obsidian">
+            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-crimson">
               <svg
-                className="h-4.5 w-4.5 text-white"
+                className="h-4.5 w-4.5 text-on-accent"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -361,7 +360,7 @@ export default function EmployeeModal({
           )}
 
           {/* Personal Information */}
-          <section className="rounded-[12px] border border-line bg-white p-5">
+          <section className="card-inset p-5">
             <div className="mb-4 flex items-center gap-2">
 
               <div>
@@ -425,7 +424,7 @@ export default function EmployeeModal({
           </section>
 
           {/* Employment Information */}
-          <section className="rounded-[12px] border border-line bg-white p-5">
+          <section className="card-inset p-5">
             <div className="mb-4 flex items-center gap-2">
 
               <div>
@@ -456,11 +455,11 @@ export default function EmployeeModal({
                   name="department"
                   value={form.department}
                   onChange={handleChange}
-                  className={`w-full rounded-[9px] border bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all
+                  className={`w-full rounded-[9px] border bg-[var(--pg-well)] px-3.5 py-2.5 text-sm text-ink outline-none transition-all
                     focus:border-crimson focus:ring-2 focus:ring-crimson/10
                     ${
                       errors.department
-                        ? 'border-crimson bg-porcelain'
+                        ? 'border-crimson bg-[var(--pg-well)]'
                         : 'border-line hover:border-line-strong'
                     }`}
                 >
@@ -522,14 +521,14 @@ export default function EmployeeModal({
                     readOnly={isEdit}
                     aria-readonly={isEdit}
                     placeholder="60000"
-                    className={`w-full rounded-[9px] border bg-white py-2.5 pl-8 pr-3 text-sm text-ink placeholder-ink-3 outline-none transition-all
+                    className={`w-full rounded-[9px] border bg-[var(--pg-well)] py-2.5 pl-8 pr-3 text-sm text-ink placeholder-ink-3 outline-none transition-all
                       focus:border-crimson focus:ring-2 focus:ring-crimson/10
                       ${
                         errors.salary
-                          ? 'border-crimson bg-porcelain'
+                          ? 'border-crimson bg-[var(--pg-well)]'
                           : 'border-line hover:border-line-strong'
                       }
-                      ${isEdit ? 'bg-porcelain text-ink-2' : ''}`}
+                      ${isEdit ? 'bg-[var(--pg-well)] text-ink-2' : ''}`}
                   />
                 </div>
 
@@ -571,7 +570,7 @@ export default function EmployeeModal({
                   name="status"
                   value={form.status}
                   onChange={handleChange}
-                  className="w-full rounded-[9px] border border-line bg-white px-3.5 py-2.5 text-sm text-ink outline-none transition-all hover:border-line-strong focus:border-crimson focus:ring-2 focus:ring-crimson/10"
+                  className="w-full rounded-[9px] border border-line bg-[var(--pg-well)] px-3.5 py-2.5 text-sm text-ink outline-none transition-all hover:border-line-strong focus:border-crimson focus:ring-2 focus:ring-crimson/10"
                 >
                   <option value="active">
                     Active
@@ -590,7 +589,7 @@ export default function EmployeeModal({
           </section>
 
           {/* Notes */}
-          <section className="rounded-[12px] border border-line bg-white p-5">
+          <section className="card-inset p-5">
             <div className="mb-4">
               <p className="text-sm font-semibold text-ink">
                 Notes
@@ -609,7 +608,7 @@ export default function EmployeeModal({
               rows={3}
               maxLength={500}
               placeholder="Any additional information…"
-              className="w-full resize-none rounded-[9px] border border-line bg-white px-3.5 py-2.5 text-sm text-ink placeholder-ink-3 outline-none transition-all hover:border-line-strong focus:border-crimson focus:ring-2 focus:ring-crimson/10"
+              className="w-full resize-none rounded-[9px] border border-line bg-[var(--pg-well)] px-3.5 py-2.5 text-sm text-ink placeholder-ink-3 outline-none transition-all hover:border-line-strong focus:border-crimson focus:ring-2 focus:ring-crimson/10"
             />
 
             <p className="mt-1.5 text-right text-[11px] text-ink-2">
@@ -623,7 +622,7 @@ export default function EmployeeModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-[9px] border border-line bg-white px-4 py-2.5 text-sm font-semibold text-ink-2 transition-all hover:border-line-strong hover:bg-porcelain"
+              className="rounded-[9px] border border-line bg-transparent px-4 py-2.5 text-sm font-semibold text-ink-2 transition-all hover:border-line-strong hover:bg-[var(--pg-glass)]"
             >
               Cancel
             </button>
@@ -631,11 +630,11 @@ export default function EmployeeModal({
             <button
               type="submit"
               disabled={isLoading}
-              className="flex items-center gap-2 rounded-[9px] bg-crimson px-5 py-2.5 text-sm font-semibold text-white shadow-[0_8px_18px_rgba(198,40,40,0.18)] transition-all hover:-translate-y-0.5 hover:bg-crimson-strong disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
+              className="flex items-center gap-2 rounded-[9px] bg-crimson px-5 py-2.5 text-sm font-semibold text-on-accent shadow-[0_8px_18px_rgba(198,40,40,0.18)] transition-all hover:-translate-y-0.5 hover:bg-crimson-strong disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-y-0"
             >
               {isLoading ? (
                 <>
-                  <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-on-accent/30 border-t-on-accent" />
                   Saving…
                 </>
               ) : (

@@ -1,6 +1,7 @@
 import { useContext } from 'react';
 import { Navigate, Outlet } from 'react-router-dom';
 import { AuthContext } from '../contexts/AuthContext';
+import ProoflineMark from './site/ProoflineMark';
 
 /**
  * ProtectedRoute
@@ -15,22 +16,20 @@ import { AuthContext } from '../contexts/AuthContext';
 
 function LoadingSpinner() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-porcelain">
-      <div className="flex flex-col items-center gap-5">
+    <div className="pg-canvas flex min-h-screen items-center justify-center p-6">
+      <div className="panel panel-float flex flex-col items-center gap-5 px-10 py-9">
 
         {/* PayGuard mark */}
-        <div className="flex h-12 w-12 items-center justify-center rounded-[12px] bg-crimson text-lg font-semibold text-white shadow-sm">
-          P
-        </div>
+        <ProoflineMark size={38} />
 
         {/* Loading spinner */}
         <div
-          className="h-9 w-9 animate-spin rounded-full border-4 border-crimson-tint border-t-crimson"
+          className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--pg-glass-line)] border-t-crimson"
           aria-label="Loading"
         />
 
         <div className="text-center">
-          <p className="text-sm font-medium text-ink">
+          <p className="text-sm font-semibold text-ink">
             Verifying session
           </p>
 

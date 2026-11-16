@@ -23,7 +23,7 @@ export function EmptyState({ title, children, action, kind = 'none' }) {
   const icon = kind === 'error' ? 'x-circle' : kind === 'blocked' ? 'alert-triangle' : 'info';
   return (
     <div className="flex flex-col items-center px-4 py-10 text-center">
-      <span className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-porcelain text-ink-2">
+      <span className="flex h-11 w-11 items-center justify-center rounded-full border border-[var(--pg-glass-line)] bg-[var(--pg-glass)] text-ink-2">
         <Icon name={icon} size={20} />
       </span>
       <p className="mt-3 text-[15px] font-semibold text-ink">{title}</p>

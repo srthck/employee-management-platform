@@ -340,11 +340,7 @@ export default function Employees() {
                               type="button"
                               className="btn btn-small"
                               onClick={() => restoreEmployee(employee)}
-                              style={{
-                                backgroundColor: 'var(--pg-surface)',
-                                borderColor: 'var(--pg-line)',
-                                color: 'var(--pg-crimson)',
-                              }}
+                              style={{ color: 'var(--pg-crimson)' }}
                             >
                               Restore
                             </button>
@@ -357,11 +353,7 @@ export default function Employees() {
                             type="button"
                             className="btn btn-small"
                             onClick={() => setModal({ employee })}
-                            style={{
-                              backgroundColor: 'var(--pg-surface)',
-                              borderColor: 'var(--pg-line)',
-                              color: 'var(--pg-crimson)',
-                            }}
+                            style={{ color: 'var(--pg-crimson)' }}
                           >
                             Edit
                           </button>
@@ -380,12 +372,6 @@ export default function Employees() {
                                 : 'Login accounts can only be created for active employees'
                             }
                             style={{
-                              backgroundColor: isActive
-                                ? 'var(--pg-crimson-tint)'
-                                : 'var(--pg-canvas-2)',
-                              borderColor: isActive
-                                ? 'var(--pg-line)'
-                                : 'var(--pg-line)',
                               color: isActive
                                 ? 'var(--pg-crimson)'
                                 : 'var(--pg-ink-2)',
@@ -405,11 +391,7 @@ export default function Employees() {
                             type="button"
                             className="btn btn-small"
                             onClick={() => setDeleteTarget(employee)}
-                            style={{
-                              backgroundColor: 'var(--pg-surface)',
-                              borderColor: 'var(--pg-line)',
-                              color: 'var(--pg-bad)',
-                            }}
+                            style={{ color: 'var(--pg-bad)' }}
                           >
                             Archive
                           </button>
@@ -463,20 +445,9 @@ export default function Employees() {
 
       {/* ==================== CREATE EMPLOYEE LOGIN MODAL ==================== */}
       {accountTarget && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center px-4"
-          style={{
-            backgroundColor: 'rgba(36, 31, 32, 0.45)',
-          }}
-        >
+        <div className="dialog-backdrop">
 
-          <div
-            className="w-full max-w-md rounded-xl border p-6 shadow-xl"
-            style={{
-              backgroundColor: 'var(--pg-porcelain)',
-              borderColor: 'var(--pg-line)',
-            }}
-          >
+          <div className="dialog max-w-md">
 
             {/* MODAL HEADER */}
             <div className="mb-6">
@@ -565,11 +536,7 @@ export default function Employees() {
                   autoComplete="new-password"
                   className="field w-full"
                   disabled={accountLoading}
-                  style={{
-                    backgroundColor: 'var(--pg-surface)',
-                    borderColor: 'var(--pg-line)',
-                    color: 'var(--pg-ink)',
-                  }}
+                  style={{ color: 'var(--pg-ink)' }}
                 />
 
               </div>
@@ -597,11 +564,7 @@ export default function Employees() {
                   autoComplete="new-password"
                   className="field w-full"
                   disabled={accountLoading}
-                  style={{
-                    backgroundColor: 'var(--pg-surface)',
-                    borderColor: 'var(--pg-line)',
-                    color: 'var(--pg-ink)',
-                  }}
+                  style={{ color: 'var(--pg-ink)' }}
                 />
 
               </div>
@@ -644,25 +607,15 @@ export default function Employees() {
                   className="btn btn-small"
                   onClick={closeAccountModal}
                   disabled={accountLoading}
-                  style={{
-                    backgroundColor: 'var(--pg-surface)',
-                    borderColor: 'var(--pg-line)',
-                    color: 'var(--pg-ink-2)',
-                  }}
+                  style={{ color: 'var(--pg-ink-2)' }}
                 >
                   Cancel
                 </button>
 
                 <button
                   type="submit"
-                  className="btn btn-small"
+                  className="btn btn-primary btn-small"
                   disabled={accountLoading}
-                  style={{
-                    backgroundColor: 'var(--pg-crimson)',
-                    borderColor: 'var(--pg-crimson)',
-                    color: 'var(--pg-surface)',
-                    opacity: accountLoading ? 0.7 : 1,
-                  }}
                 >
                   {accountLoading
                     ? 'Creating...'

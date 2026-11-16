@@ -7,6 +7,8 @@ import ProoflineDemo from '../components/site/ProoflineDemo';
 import RunLifecycle from '../components/site/RunLifecycle';
 import ServiceStatus from '../components/site/ServiceStatus';
 import ProoflineMark from '../components/site/ProoflineMark';
+import Icon from '../components/ui/Icon';
+import { SAMPLE_RUNS } from '../components/site/sampleResult';
 
 /**
  * PayGuard public site — "The Proofline".
@@ -16,6 +18,15 @@ import ProoflineMark from '../components/site/ProoflineMark';
  * Design rules: docs/design/PROOFLINE-DESIGN-SYSTEM.md. Every product claim on
  * this page names behaviour that exists in the backend today.
  */
+
+/** The reference's bottom strip: five standing properties of the product. */
+const PROPERTIES = [
+  { icon: 'compliance', lines: ['Every deduction names', 'the rule that set it'], active: true },
+  { icon: 'lock', lines: ['Bank and statutory IDs', 'encrypted field by field'] },
+  { icon: 'employees', lines: ['Maker-checker keeps', 'approval separate'] },
+  { icon: 'hash', lines: ['Finalized results', 'frozen and hashed'] },
+  { icon: 'audit', lines: ['Audit records chain', 'to the one before'] },
+];
 
 const CAPABILITIES = [
   {
@@ -74,6 +85,49 @@ function SectionMark({ index, label }) {
   );
 }
 
+/**
+ * The floating card stack over the hero: the illustrative scenario traced
+ * further down the page, shown as the two runs it spans. Sample data, and
+ * labelled so on the card.
+ */
+function RunStack() {
+  return (
+    <aside className="run-stack" aria-label="Sample payroll runs">
+      <span className="run-stack__grabber" aria-hidden="true" />
+      <p className="run-stack__place">
+        <Icon name="pin" size={14} />
+        Pune, Maharashtra · EPF · ESI · PT
+        <span className="run-stack__sample">Sample</span>
+      </p>
+
+      {SAMPLE_RUNS.map((run) => (
+        <article className="run-card" key={run.id}>
+          <header className="run-card__head">
+            <h3 className="run-card__period">{run.period}</h3>
+            <p className="run-card__status">
+              <span className="run-card__status-dot" aria-hidden="true" />
+              {run.status}
+            </p>
+          </header>
+          <div className="run-card__dates">
+            <div className="run-card__date">
+              <p className="run-card__date-label">{run.openedLabel}</p>
+              <p className="run-card__date-value">{run.opened}</p>
+            </div>
+            <span className="run-card__span">{run.span}</span>
+            <div className="run-card__date run-card__date--end">
+              <p className="run-card__date-label">{run.closedLabel}</p>
+              <p className="run-card__date-value">{run.closed}</p>
+            </div>
+          </div>
+        </article>
+      ))}
+
+      <p className="run-stack__badge">Net pay shown before TDS</p>
+    </aside>
+  );
+}
+
 export default function Home() {
   const { user, loading } = useContext(AuthContext);
   const primaryAction = user
@@ -83,32 +137,75 @@ export default function Home() {
   return (
     <div className="pg-site">
       <a className="skip-link" href="#main">Skip to content</a>
-      <SiteNav />
 
-      <main id="main">
-        <section className="hero site-container" aria-labelledby="hero-title">
-          <div className="hero__copy">
-            <p className="hero__eyebrow">
-              Payroll operations for India · <span className="nowrap">EPF · ESI · Professional tax</span>
-            </p>
-            <h1 className="hero__title" id="hero-title">
-              Payroll, <span className="hero__title-line">with proof<span className="hero__point">.</span></span>
-            </h1>
+      {/* The hero shell: one lit, rounded surface holding the chrome, the
+          promise, the sample stack and the standing properties. */}
+      <div className="hero-shell">
+        <div className="hero-shell__grain" aria-hidden="true" />
+        <SiteNav />
+
+        <section className="hero" aria-labelledby="hero-title">
+          <div className="hero__grid">
+            <div className="hero__copy">
+              <p className="hero__eyebrow">
+                Payroll operations for India
+                {' · '}
+                <span className="nowrap">EPF · ESI · Professional tax</span>
+              </p>
+              <h1 className="hero__title" id="hero-title">
+                Every rupee, with
+                <span className="hero__title-line">the reason attached<span className="hero__point">.</span></span>
+              </h1>
+            </div>
+
+            <RunStack />
+          </div>
+
+          <div className="hero__foot">
             <p className="hero__lede">
-              <strong>Every rupee, every reason.</strong> PayGuard ties each payslip to the salary version,
-              statutory rule and approval behind it, then freezes the finalized result so it can be checked later.
+              PayGuard ties each payslip to the salary version, statutory rule and approval
+              behind it, then freezes the finalized result so it can be checked later.
             </p>
             <div className="hero__actions" data-loading={loading ? '' : undefined}>
               <Link to={primaryAction.to} className="site-btn site-btn--primary site-btn--large">
                 {primaryAction.label}
-                <span aria-hidden="true" className="site-btn__arrow">→</span>
+                <Icon name="arrow-up-right" size={15} className="site-btn__arrow" />
               </Link>
-              <a href="#lifecycle" className="site-link">How a payroll run closes</a>
+              <a href="#lifecycle" className="site-link">
+                How a payroll run closes
+                <Icon name="arrow-up-right" size={14} />
+              </a>
             </div>
           </div>
 
-          <div className="hero__proof" id="trace">
-            <SectionMark index="01" label="Trace a result" />
+          <ul className="hero-strip">
+            {PROPERTIES.map((item) => (
+              <li className="hero-strip__item" key={item.lines[0]} data-active={item.active ? '' : undefined}>
+                <Icon name={item.icon} size={17} className="hero-strip__icon" />
+                <p className="hero-strip__label">
+                  {item.lines[0]}
+                  <br />
+                  {item.lines[1]}
+                </p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
+
+      <main id="main">
+        <section className="band" id="trace" aria-labelledby="trace-title">
+          <div className="site-container">
+            <header className="site-section-head site-section-head--split">
+              <div>
+                <SectionMark index="01" label="Trace a result" />
+                <h2 className="site-section-title" id="trace-title">One result, back to its evidence.</h2>
+              </div>
+              <p className="site-section-lede">
+                The line runs from the amount to the record that produced it. Select a stage to open
+                the evidence PayGuard stores for it.
+              </p>
+            </header>
             <ProoflineDemo />
           </div>
         </section>
@@ -198,7 +295,7 @@ export default function Home() {
             <div className="closing__actions" data-loading={loading ? '' : undefined}>
               <Link to={primaryAction.to} className="site-btn site-btn--primary site-btn--large">
                 {primaryAction.label}
-                <span aria-hidden="true" className="site-btn__arrow">→</span>
+                <Icon name="arrow-up-right" size={15} className="site-btn__arrow" />
               </Link>
               {!user && <Link to="/login" className="site-link">Sign in to an existing workspace</Link>}
             </div>

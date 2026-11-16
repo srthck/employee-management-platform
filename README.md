@@ -185,6 +185,14 @@ Key design decisions:
 - [Wave 3 report](./docs/WAVE3-COMPENSATION-REPORT.md) — compensation components, lineage, CTC, impact preview, change workflow
 - [Competitive position and roadmap](./docs/COMPETITIVE-STRATEGY.md)
 
-## Author
+## Project ownership
 
-Sarthak Kadam
+**Project:** PayGuard  
+**Project Owner:** Sarthak Kadam  
+**Project Lead:** Sarthak Kadam  
+
+PayGuard is owned and led by Sarthak Kadam, who is responsible for the product direction, architecture oversight, engineering coordination and overall project accountability.
+
+PayGuard is not the work of a single author. Individual contributions are recorded in the Git history. Much of the implementation was produced with AI coding assistance (Claude) under the project owner's direction, review and acceptance; those commits carry `Co-Authored-By` trailers.
+
+**Licence:** not yet decided. `backend/package.json` declares MIT, but no licence file has been published; treat the project's licensing as unresolved until one is.

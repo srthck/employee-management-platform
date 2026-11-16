@@ -149,7 +149,7 @@ export default function Login() {
         <button id="login-submit" type="submit" disabled={isLoading} className="btn btn-primary min-h-[46px] w-full">
           {isLoading ? (
             <>
-              <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+              <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-on-accent/30 border-t-on-accent" />
               Signing in…
             </>
           ) : (

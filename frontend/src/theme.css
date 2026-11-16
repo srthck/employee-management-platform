@@ -1,28 +1,38 @@
+/* =========================================================================
+   DEPRECATED — kept only so any stray import keeps resolving.
+
+   This file used to hold a second, light-themed palette that drifted from the
+   real one. The single source of colour, type, glass, radius and motion is
+   src/styles/tokens.css, which src/index.css imports. The names below are
+   aliases onto those tokens; do not add to them, and prefer the --pg-* tokens
+   or the Tailwind utilities that read them.
+
+   Nothing imports this file today.
+   ========================================================================= */
+
+@import './styles/tokens.css';
+
 :root {
-  /* =========================================================
-     PAYGUARD — ROYAL RED + CREAM THEME
-  ========================================================= */
+  --primary: var(--pg-crimson);
+  --primary-dark: var(--pg-crimson-strong);
+  --primary-light: var(--pg-crimson-tint);
 
-  --primary: #A6192E;
-  --primary-dark: #7D1022;
-  --primary-light: #F8E8EA;
+  --background: var(--pg-porcelain);
+  --surface: var(--pg-surface);
+  --surface-soft: var(--pg-canvas-2);
 
-  --background: #FFFDF8;
-  --surface: #FFFFFF;
-  --surface-soft: #FFF7F0;
+  --text-primary: var(--pg-ink);
+  --text-secondary: var(--pg-ink-2);
 
-  --text-primary: #241F20;
-  --text-secondary: #6F6565;
+  --border: var(--pg-line);
 
-  --border: #E7D8D5;
+  --success: var(--pg-ok);
+  --warning: var(--pg-warn);
+  --error: var(--pg-bad);
 
-  --success: #2E7D32;
-  --warning: #B7791F;
-  --error: #9B1C31;
+  --shadow: var(--pg-shadow-panel);
 
-  --shadow: 0 2px 10px rgba(60, 25, 30, 0.06);
-
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-sm: 8px;
+  --radius-md: var(--pg-radius-input);
+  --radius-lg: var(--pg-radius-card);
 }

@@ -28,6 +28,11 @@ const PATHS = {
   logout: <><path d="M14 4.5H6.5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2H14" /><path d="M10 12h10M16.5 8.5 20 12l-3.5 3.5" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
   link: <><path d="M10 14a4 4 0 0 0 5.66 0l2.83-2.83a4 4 0 0 0-5.66-5.66l-1 1" /><path d="M14 10a4 4 0 0 0-5.66 0l-2.83 2.83a4 4 0 0 0 5.66 5.66l1-1" /></>,
+  lock: <><rect x="4.5" y="10.5" width="15" height="10" rx="2.5" /><path d="M8 10.5V7.75a4 4 0 0 1 8 0v2.75" /><path d="M12 14.5v2" /></>,
+  clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.25V12l3.25 1.9" /></>,
+  pin: <><path d="M12 21s6.5-5.7 6.5-10.25a6.5 6.5 0 1 0-13 0C5.5 15.3 12 21 12 21z" /><circle cx="12" cy="10.5" r="2.5" /></>,
+  hash: <><path d="M9.5 4 7.75 20M16.25 4 14.5 20M4.5 9h15M3.75 15h15" /></>,
+  'arrow-up-right': <path d="M7.5 16.5 16.5 7.5M9 7.5h7.5V15" />,
 };
 
 export default function Icon({ name, size = 18, label, className = '', strokeWidth = 1.75 }) {

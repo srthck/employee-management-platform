@@ -67,52 +67,182 @@ C's state machine appears as section 02, in a calmer form.
 
 | Role | Face | Licence | Rules |
 |---|---|---|---|
-| Display, headings, body | Schibsted Grotesk (variable), `@fontsource-variable/schibsted-grotesk@5.3.0` | SIL OFL 1.1 | Display 760, −0.048em, line-height 0.92; H2 720, −0.038em, 1.02; body 400, 1.55 |
-| Evidence, metadata, amounts in tables | IBM Plex Mono 400/500, `@fontsource/ibm-plex-mono@5.3.0` | SIL OFL 1.1 | 11–13 px, uppercase labels +0.08–0.1em; values in sentence case |
+| Display, headings, body | the system face, falling back to Inter Variable (`@fontsource-variable/inter@5.2.5`, `opsz` build) | SIL OFL 1.1 | weight 400–700; tracking follows size (below) |
+| Evidence, metadata, amounts in tables | the system mono, falling back to IBM Plex Mono 400/500 | SIL OFL 1.1 | 10–13 px, uppercase labels +0.07em |
 
-Both are self-hosted (no third-party font request). The browser downloads only the subsets a page uses
-(unicode-range); ₹ comes from the Latin-extended subset. Fallbacks: Segoe UI / system-ui and
-Cascadia Mono / Consolas.
+**Why the stack is ordered this way.** Apple's SF Pro is licensed for Apple
+platforms only and may not be self-hosted on the web, so the stack asks for
+the system face first:
 
-Fluid scale (`clamp`, 320–1440 px): display 3.5→6.5 rem; H2 2.125→3.75 rem; H3 1.1875→1.4375 rem;
-lede 1.0625→1.3125 rem; body 1 rem; small 0.875 rem; meta 0.75 rem. Headings use `text-wrap: balance`,
-paragraphs `pretty`. The big net-pay figure uses proportional figures (tabular figures widened the comma and
-point); table amounts are monospaced so columns align.
+```
+-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display',
+'Inter Variable', 'Segoe UI Variable Text', 'Segoe UI', system-ui, …
+```
+
+That renders genuine SF Pro on Apple devices and Segoe UI Variable on
+Windows 11, with no licence problem, and falls back to self-hosted Inter —
+the closest open face to SF — everywhere else. The mono stack does the same
+via `ui-monospace, SFMono-Regular`.
+
+**Optical sizing.** Inter carries an `opsz` axis, the same idea as SF's
+Text/Display split, and `font-optical-sizing: auto` drives it: small text
+opens up slightly, display text tightens. Both faces are self-hosted, so
+there is no third-party font request.
+
+**Tracking scale** (`--pg-track-*` in tokens.css). Letter-spacing tightens as
+size grows, which is what makes large type read as deliberate rather than
+merely big:
+
+| Step | Tracking | Used by |
+|---|---|---|
+| display | −0.045em | hero, `.t-display` |
+| title | −0.028em | `.page-title` |
+| heading | −0.018em | `.section-title` |
+| body | −0.006em | body copy |
+| small | 0 | buttons, badges |
+| micro | +0.07em | eyebrows, table heads, uppercase labels |
+
+Headings use `text-wrap: balance`. Proportional figures make columns ragged,
+so tabular contexts (`.tabular`) switch to the mono face with
+`font-variant-numeric: tabular-nums`.
 
 ## 6. Colour
 
-One token file, `frontend/src/styles/tokens.css`, serves the public site and the signed-in application.
-Tailwind reads the same values (`tailwind.config.js`), so `text-ink-2` and `var(--pg-ink-2)` are one colour.
-Ratios are measured against porcelain unless noted.
+Colour lives in `frontend/src/styles/themes.css`; everything structural —
+type, space, radii, blur, motion — lives in `tokens.css` and never varies by
+theme. Tailwind reads the same values (`tailwind.config.js`), so `text-ink-2`
+and `var(--pg-ink-2)` are one colour.
+
+**Four themes**, selected by `data-theme` on `<html>` and persisted per
+browser (`contexts/ThemeContext.jsx`, picker in the account menu). An inline
+script in `index.html` applies the stored choice before first paint, so the
+page never flashes the default on its way to the chosen one.
+
+| Theme | Canvas | Accent | For |
+|---|---|---|---|
+| `midnight` (default) | deep navy, warm bloom | coral `#FF6A5C` | the brand look |
+| `graphite` | neutral charcoal | Apple blue `#4C9DFF` | the quietest, for long sessions |
+| `aurora` | indigo | violet `#A78BFA` | — |
+| `daylight` | white glass on a tinted canvas | `#0066CC` | bright rooms, printing |
+
+No accent collides with a status colour, so a tinted control is never
+mistaken for "verified", "action required" or "failed". The table below is
+the `midnight` palette; the other three follow the same token names.
+
+The canvas is a deep navy lit from the left by a warm bloom; surfaces are frosted glass over it; a single
+coral carries every action and accent. Ratios are measured against the panel surface (#101B31) unless noted.
 
 | Token | Value | Use | Contrast |
 |---|---|---|---|
-| `obsidian` | #10090D | sidebar, dark band, auth brand panel | porcelain on it 18.6:1 |
-| `wine` | #650B1B | deep brand surface | white on it 13:1 |
-| `crimson` | #C8102E | primary actions, links, red text | 5.6:1; white on it 5.9:1 |
-| `crimson-strong` | #A50D26 | hover / pressed | — |
-| `scarlet` | #FF2948 | the Proofline: lines, nodes, active-nav marker | 3.5:1, graphics only; 5.3:1 on obsidian |
-| `porcelain` | #FBF8F6 | page | — |
-| `surface` | #FFFFFF | panels | — |
-| `ink` / `ink-2` | #171316 / #71666D | text / secondary text | 17.4:1 / 5.2:1 |
-| `ink-3` | #8E8389 | placeholders and disabled only | — |
-| `line` / `line-strong` | #E8DDE0 / #CDBFC4 | separators / button outlines | decorative |
-| `field` | #9C8F95 | input borders | 3.1:1 on white |
-| `ok` | #167A3E | verified / resolved | 5.4:1 on white |
-| `warn` | #8A5300 | action required | 5.8:1 on its tint |
-| `bad` | #A3132A | failed / error | 6.9:1 on its tint |
-| `defer` | #5E585C | deferred / out of scope | 6.1:1 on its tint |
+| `obsidian` | #050912 | the backdrop behind the shell, recessed field wells | — |
+| `wine` | #13264A | deep brand bands | — |
+| `crimson` | #FF6A5C | primary actions, links, accent rules, the proof point | 6.6:1 as text on the canvas |
+| `crimson-strong` | #FF867A | hover / pressed (lighter, not darker, on a dark canvas) | — |
+| `scarlet` | #FF8D7D | graphics only: lines, nodes | — |
+| `on-accent` | #2A0A06 | text and icons **on** coral fills | 6.5:1 on crimson |
+| `porcelain` | #0A1424 | page canvas | — |
+| `canvas-2` | #131F38 | quiet fills | — |
+| `surface` | #101B31 | panels (the glass film sits over this) | — |
+| `ink` / `ink-2` | #F2EBE6 / #A4B0C4 | text / secondary text | 14.4:1 / 7.9:1 |
+| `ink-3` | #76839A | placeholders and disabled only | 4.4:1 |
+| `line` / `line-strong` | #22304C / #33425F | separators / control outlines | decorative |
+| `field` | #3A4A68 | input borders | — |
+| `ok` | #5FD79B | verified / resolved | 9.7:1 |
+| `warn` | #F2B55C | action required | 9.6:1 |
+| `bad` | #FF8178 | failed / error | 7.3:1 |
+| `defer` | #93A1B8 | deferred / out of scope | 6.3:1 |
 
-Red is used for connection and action only. Status is never colour-alone: every status carries text and an
-icon (see §11).
+Coral is used for connection and action only. Because white on coral reaches only 2.8:1, filled coral
+controls take `on-accent` (dark warm ink), not white. Status is never colour-alone: every status carries
+text and an icon (see §11).
+
+### 6a. Atmosphere
+
+Three tokens produce the lit canvas, and nothing else should hand-roll it:
+
+| Token | What it is |
+|---|---|
+| `--pg-canvas-gradient` | the base ramp, lighter at the top |
+| `--pg-bloom` | a warm light leak at centre-left, a cool one at top-right, and a floor vignette |
+| `--pg-pinstripe` | 3px vertical corduroy laid over everything |
+
+`.pg-canvas` (application) and `.hero-shell` (site) apply all three.
+`--pg-canvas-solid` is the flat equivalent, used wherever effects are off.
+
+Each theme also separates three colours that are easy to conflate:
+`--pg-backdrop` (behind the shell), `--pg-obsidian` (the scrim ink, dark in
+*every* theme so sheets still dim what is behind them, including in
+Daylight) and `--pg-well` (the recessed fill inside inputs).
+
+### 6b. The material model
+
+Three layers, and the distinction is load-bearing. Apple's own guidance is
+that the glass material belongs to *"the navigation layer that floats above
+the content of your app"*, and that it should not be applied to lists,
+tables or content, nor stacked on itself.
+
+| Layer | What it is | Blur? | Class |
+|---|---|---|---|
+| Canvas | the lit gradient, bloom and pinstripe | no | `.pg-canvas`, `.hero-shell` |
+| Content | panels holding data: tables, lists, figures | **no** | `.panel` |
+| Floating | top bar, pill nav, drawer, dialogs, the hero stack | yes | `.glass`, `.glass-strong`, `.dialog`, `.panel-float` |
+
+Content surfaces are near-opaque (`--pg-surface-translucent`, 0.72) and carry
+no `backdrop-filter`. That is deliberate on both counts:
+
+- **Contrast becomes deterministic.** Text over a blurred backdrop has a
+  contrast ratio that depends on whatever happens to be behind it. Over a
+  known surface colour it can be guaranteed. Every colour in themes.css is
+  checked against its *opaque* surface, never against the blur.
+- **It costs nothing.** Each `backdrop-filter` element forces the browser to
+  render what is behind it to a texture, blur it and composite the result.
+  Keeping it off the data-dense screens removes most of that work.
+
+**Blur budget.** `--pg-blur` is 14px and `--pg-blur-strong` is 18px. Past
+roughly 18px the look barely changes while the compositing cost keeps
+climbing, so a larger radius is paid for and not seen.
+
+**The specular rim.** Every material surface carries a 1px gradient border,
+brightest where light would catch the top-left edge with a faint bounce along
+the bottom, masked with `mask-composite: exclude` so only the border band
+paints. It is what makes an edge read as a physical edge rather than a
+stroke. It is a 1px band and content is inset by its padding, so the two
+never overlap.
+
+**Refraction is deliberately not attempted.** Apple's lensing is real-time
+refraction of the pixels behind the material. On the web the only approximation
+is an SVG `feDisplacementMap` referenced from `backdrop-filter`, which is
+Chromium-only, cannot follow arbitrary shapes, and warps any text it covers.
+Apple itself walked back lensing after it was criticised for exactly that
+legibility cost. A frosted film that is correct everywhere beats a refraction
+that works in one browser and damages reading in it.
+
+**Fallbacks.** `@supports not (backdrop-filter)` makes the floating layer
+opaque; `prefers-reduced-transparency: reduce` removes every film, blur and
+bloom; `prefers-contrast: more` solidifies surfaces and strengthens borders;
+`prefers-reduced-motion: reduce` removes transitions and press scaling.
+Support for the transparency query is still uneven, which is precisely why it
+only ever *removes* effects and never supplies contrast that was missing.
 
 ## 7. Space, layout, surfaces
 
-4 px base. Container 1320 px max, gutter `clamp(16px, 4vw, 48px)`, section padding
-`clamp(72px, 10vw, 144px)`. Hero is two columns from 1140 px (copy sticky beside the evidence), one column
-below. Lifecycle: vertical below 640 px, label/body rows 640–999 px, five columns from 1000 px.
-Capabilities are an editorial index (rules, not cards). Radius: 10 px controls, 16 px surfaces, 12 px inner
-panels. Only the evidence card has elevation; everything else is separated by rules.
+4 px base. Site container 1340 px max, gutter `clamp(18px, 4vw, 44px)`, band padding
+`clamp(56px, 9vw, 112px)`; the application content column is 1480 px.
+
+The hero is one rounded, lit shell (`--pg-radius-shell`, 26 px) holding the chrome, the promise, a floating
+sample stack and the property strip. From 1080 px the promise and the stack sit side by side as in the
+reference; below that the promise leads and the stack follows it. Lifecycle: vertical below 1000 px, five
+columns above. Capabilities are a one-pixel-gap grid, so the dividing lines are the layout.
+
+Radius: controls and badges are fully pilled (`--pg-radius-control`), inputs 12 px, inner cards 14 px,
+panels 18 px, dialogs 20 px, the shell 26 px. Elevation comes from the glass itself — an inset top
+highlight plus a long, soft drop shadow (`--pg-shadow-panel`, `--pg-shadow-float`, `--pg-shadow-overlay`);
+coral controls add `--pg-shadow-accent`.
+
+**The property strip** is the recurring hairline motif: a single rule across the full width, cells below it
+carrying an icon and two short lines, and a 2 px coral segment sitting on the rule above whichever cell is
+active. It appears under the hero (`.hero-strip`) and over a run's figures in the application
+(`.feature-strip`), where coral marks the figure holding the run up.
 
 ## 8. Motion
 
@@ -130,7 +260,8 @@ transition is removed and smooth scrolling is disabled; the full trace is visibl
 
 - Stages are buttons with `aria-expanded`/`aria-controls`; one is open at a time; all summaries are always visible.
 - Skip link; sticky header with `scroll-padding-top` so anchored and focused content is not hidden (2.4.11).
-- Focus: 2 px crimson outline, offset 3 px (signal-on-ink on the dark band).
+- Focus: 2 px coral outline, offset 2–3 px. Coral reaches 6.6:1 on the canvas, so one focus colour works
+  on every surface.
 - Targets ≥ 44 px for primary controls, ≥ 24 px everywhere (2.5.8).
 - Mobile menu: disclosure button, Escape closes it and returns focus, links close it.
 - The footer service line reports only API reachability (checking / reachable / not responding / offline,
@@ -157,10 +288,16 @@ density and speed over motion.
 | deferred | deliberately out of scope (TDS, attendance): dashed, neutral | success or failure |
 | unknown | not checked, unavailable or forbidden to this role | "verified" |
 
-**Shell** (`components/PayGuardLayout.jsx`). An obsidian rail (248 px, collapsible to 76 px with tooltips,
-remembered per browser) with a 2 px scarlet marker on the active item; below 1024 px the same nav element
-becomes a drawer that takes focus, closes on Escape and cannot be reached while closed. The top bar holds
-the section name, an explained scope note ("TDS and attendance deferred") and an account menu.
+**Shell** (`components/PayGuardLayout.jsx`). The application sits on `.pg-canvas`, the same lit navy as the
+site. A single glass bar holds the brand at the left, the permitted sections in a centred capsule
+(`.pill-nav`, the current one in a lighter pill behind a coral point) and circular glass controls at the
+right: the scope disclosure, the account menu and the sections drawer. The capsule appears from 1280 px; at
+every width the drawer reaches all of them, takes focus, closes on Escape and cannot be reached while
+closed. Below the capsule breakpoint the bar names the current section instead.
+
+Which links appear is still decided by `can(user, permission)`; the shell grants nothing the API does not.
+The scope limits ("income tax and attendance are not calculated") are stated twice: as a coral point on the
+disclosure control, and as standing text in the shell footer on every screen.
 
 **Overview.** Built only from API data, each source loaded independently so a forbidden or failed call
 marks its own check "unavailable" instead of blanking the page. The failed run shows its recorded failure
@@ -172,6 +309,9 @@ audit-chain verification, and the two deferred areas. Chain verification, connec
 **Figures.** Schibsted Grotesk's tabular figures widen commas and points, so tabular numbers render in
 IBM Plex Mono (`.tabular`, `.tabular-nums`). Clock times stay proportional.
 
-**Layout.** Content max 1400 px; panels 14 px radius, 1 px line border, no decorative shadow; tables scroll
-inside focusable, positioned containers so they never widen the page; panels set `min-width: 0` to shrink
-inside grids.
+**Layout.** Content max 1480 px; panels are frosted (§6a) at 18 px radius; tables scroll inside focusable,
+positioned containers so they never widen the page; panels set `min-width: 0` to shrink inside grids.
+Pages compose from the shared classes only — `.panel`, `.card-inset`, `.btn`, `.field`, `.status`,
+`.data-table`, `.alert`, `.dialog`, `.feature-strip`. A screen that paints its own surface colour will
+drift out of the system the next time the canvas changes, so inline colour is reserved for the one
+property a control is varying (a text colour), never a background.

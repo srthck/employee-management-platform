@@ -1,0 +1,274 @@
+/* =========================================================================
+   PAYGUARD THEMES
+
+   Four palettes over one material system. A theme sets only colour: the
+   canvas, the bloom, the glass film, the ink ladder, the accent and the
+   status ramp. Everything structural — type, space, radii, blur, motion —
+   lives in tokens.css and never varies by theme.
+
+   The theme is an attribute on <html> (`data-theme`), written by
+   contexts/ThemeContext.jsx and pre-applied by the inline script in
+   index.html so the first paint is already correct.
+
+   Accents are chosen so none of them collides with a status colour: a coral
+   / blue / violet accent is never mistaken for "verified", "action required"
+   or "failed". Every value below is checked for WCAG AA (4.5:1) against the
+   surface it is used on, and the check assumes the OPAQUE surface, never the
+   blurred backdrop — see the contrast rule in tokens.css.
+   ========================================================================= */
+
+/* -------------------------------------------------------------------------
+   MIDNIGHT — deep navy lit by a warm bloom, coral accent. The default.
+   ------------------------------------------------------------------------- */
+[data-theme='midnight'] {
+  color-scheme: dark;
+
+  --pg-backdrop-rgb: 5 9 18;
+  --pg-canvas-solid-rgb: 15 29 54;
+  --pg-well: rgb(var(--pg-obsidian-rgb) / 0.34);
+
+  --pg-obsidian-rgb: 5 9 18;
+  --pg-wine-rgb: 19 38 74;
+  --pg-crimson-rgb: 255 106 92;         /* #FF6A5C  6.6:1 on canvas */
+  --pg-crimson-strong-rgb: 255 134 122;
+  --pg-scarlet-rgb: 255 141 125;
+  --pg-crimson-tint-rgb: 48 26 32;
+  --pg-crimson-line-rgb: 92 47 47;
+  --pg-on-accent-rgb: 42 10 6;          /* 6.5:1 on the accent */
+
+  --pg-porcelain-rgb: 10 20 36;
+  --pg-canvas-2-rgb: 19 31 56;
+  --pg-surface-rgb: 16 27 49;
+  --pg-ink-rgb: 242 235 230;            /* 14.4:1 */
+  --pg-ink-2-rgb: 164 176 196;          /* 7.9:1 */
+  --pg-ink-3-rgb: 124 137 160;          /* 4.8:1 */
+  --pg-line-rgb: 34 48 76;
+  --pg-line-strong-rgb: 51 66 95;
+  --pg-field-rgb: 58 74 104;
+
+  /* Pulled toward crimson-pink so "failed" never reads as the coral accent. */
+  --pg-ok-rgb: 95 215 155;
+  --pg-ok-tint-rgb: 15 42 34;
+  --pg-ok-line-rgb: 37 92 69;
+  --pg-warn-rgb: 242 181 92;
+  --pg-warn-tint-rgb: 43 35 22;
+  --pg-warn-line-rgb: 94 71 35;
+  --pg-bad-rgb: 255 125 143;
+  --pg-bad-tint-rgb: 48 24 31;
+  --pg-bad-line-rgb: 108 50 62;
+  --pg-defer-rgb: 147 161 184;
+  --pg-defer-tint-rgb: 23 34 56;
+  --pg-defer-line-rgb: 46 59 85;
+
+  --pg-canvas-gradient:
+    linear-gradient(176deg, #1D3459 0%, #16294C 22%, #0F1D36 56%, #091428 82%, #060D1C 100%);
+  --pg-bloom:
+    radial-gradient(58% 62% at 34% 56%, rgb(226 150 142 / 0.34) 0%, rgb(170 98 112 / 0.17) 38%, rgb(10 20 36 / 0) 72%),
+    radial-gradient(44% 48% at 26% 44%, rgb(240 186 170 / 0.16) 0%, rgb(10 20 36 / 0) 68%),
+    radial-gradient(62% 72% at 80% 4%, rgb(96 136 204 / 0.30) 0%, rgb(10 20 36 / 0) 60%),
+    radial-gradient(130% 115% at 50% 114%, rgb(3 7 15 / 0.78) 0%, rgb(3 7 15 / 0) 54%);
+
+  --pg-glass-rgb: 255 255 255;
+  --pg-shadow-rgb: 0 0 0;
+  --pg-shadow-strength: 1;
+}
+
+/* -------------------------------------------------------------------------
+   GRAPHITE — neutral charcoal, Apple blue. The quietest of the four; the
+   right choice for long sessions in a data-dense screen.
+   ------------------------------------------------------------------------- */
+[data-theme='graphite'] {
+  color-scheme: dark;
+
+  --pg-backdrop-rgb: 6 7 9;
+  --pg-canvas-solid-rgb: 21 23 27;
+  --pg-well: rgb(var(--pg-obsidian-rgb) / 0.4);
+
+  --pg-obsidian-rgb: 6 7 9;
+  --pg-wine-rgb: 26 29 35;
+  --pg-crimson-rgb: 76 157 255;         /* #4C9DFF  6.5:1 on canvas */
+  --pg-crimson-strong-rgb: 120 182 255;
+  --pg-scarlet-rgb: 120 182 255;
+  --pg-crimson-tint-rgb: 20 32 50;
+  --pg-crimson-line-rgb: 38 66 104;
+  --pg-on-accent-rgb: 4 16 32;          /* 6.8:1 on the accent */
+
+  --pg-porcelain-rgb: 12 13 16;
+  --pg-canvas-2-rgb: 22 24 28;
+  --pg-surface-rgb: 20 22 26;
+  --pg-ink-rgb: 240 241 243;
+  --pg-ink-2-rgb: 165 170 180;
+  --pg-ink-3-rgb: 124 130 141;
+  --pg-line-rgb: 39 42 48;
+  --pg-line-strong-rgb: 56 60 68;
+  --pg-field-rgb: 64 69 78;
+
+  --pg-ok-rgb: 90 214 150;
+  --pg-ok-tint-rgb: 14 36 28;
+  --pg-ok-line-rgb: 34 84 63;
+  --pg-warn-rgb: 243 183 94;
+  --pg-warn-tint-rgb: 42 34 20;
+  --pg-warn-line-rgb: 92 70 33;
+  --pg-bad-rgb: 255 125 125;
+  --pg-bad-tint-rgb: 44 24 24;
+  --pg-bad-line-rgb: 101 48 48;
+  --pg-defer-rgb: 150 156 166;
+  --pg-defer-tint-rgb: 26 28 33;
+  --pg-defer-line-rgb: 51 55 62;
+
+  --pg-canvas-gradient:
+    linear-gradient(176deg, #24272D 0%, #1C1F24 24%, #15171B 58%, #101216 84%, #0B0C0F 100%);
+  --pg-bloom:
+    radial-gradient(56% 58% at 30% 50%, rgb(150 168 200 / 0.16) 0%, rgb(12 13 16 / 0) 70%),
+    radial-gradient(58% 66% at 82% 6%, rgb(76 157 255 / 0.16) 0%, rgb(12 13 16 / 0) 62%),
+    radial-gradient(130% 115% at 50% 114%, rgb(0 0 0 / 0.7) 0%, rgb(0 0 0 / 0) 55%);
+
+  --pg-glass-rgb: 255 255 255;
+  --pg-shadow-rgb: 0 0 0;
+  --pg-shadow-strength: 1;
+}
+
+/* -------------------------------------------------------------------------
+   AURORA — deep indigo with a violet accent and a cool bloom.
+   ------------------------------------------------------------------------- */
+[data-theme='aurora'] {
+  color-scheme: dark;
+
+  --pg-backdrop-rgb: 7 6 18;
+  --pg-canvas-solid-rgb: 20 22 51;
+  --pg-well: rgb(var(--pg-obsidian-rgb) / 0.38);
+
+  --pg-obsidian-rgb: 7 6 18;
+  --pg-wine-rgb: 36 27 72;
+  --pg-crimson-rgb: 167 139 250;        /* #A78BFA  6.8:1 on canvas */
+  --pg-crimson-strong-rgb: 193 174 253;
+  --pg-scarlet-rgb: 193 174 253;
+  --pg-crimson-tint-rgb: 35 27 58;
+  --pg-crimson-line-rgb: 68 53 110;
+  --pg-on-accent-rgb: 20 10 46;         /* 6.5:1 on the accent */
+
+  --pg-porcelain-rgb: 12 16 32;
+  --pg-canvas-2-rgb: 23 27 51;
+  --pg-surface-rgb: 19 23 45;
+  --pg-ink-rgb: 237 234 248;
+  --pg-ink-2-rgb: 170 174 205;
+  --pg-ink-3-rgb: 128 133 167;
+  --pg-line-rgb: 38 42 72;
+  --pg-line-strong-rgb: 56 61 97;
+  --pg-field-rgb: 65 70 110;
+
+  --pg-ok-rgb: 94 221 183;
+  --pg-ok-tint-rgb: 13 40 39;
+  --pg-ok-line-rgb: 33 90 83;
+  --pg-warn-rgb: 247 186 103;
+  --pg-warn-tint-rgb: 44 35 25;
+  --pg-warn-line-rgb: 96 72 39;
+  --pg-bad-rgb: 255 132 149;
+  --pg-bad-tint-rgb: 48 24 36;
+  --pg-bad-line-rgb: 108 51 70;
+  --pg-defer-rgb: 151 157 190;
+  --pg-defer-tint-rgb: 26 30 54;
+  --pg-defer-line-rgb: 50 55 88;
+
+  --pg-canvas-gradient:
+    linear-gradient(176deg, #2A2458 0%, #1E1C46 22%, #141633 56%, #0E1128 82%, #090A1B 100%);
+  --pg-bloom:
+    radial-gradient(56% 60% at 32% 54%, rgb(167 139 250 / 0.30) 0%, rgb(120 90 200 / 0.14) 40%, rgb(12 16 32 / 0) 72%),
+    radial-gradient(52% 60% at 78% 6%, rgb(94 200 221 / 0.20) 0%, rgb(12 16 32 / 0) 62%),
+    radial-gradient(130% 115% at 50% 114%, rgb(4 4 12 / 0.76) 0%, rgb(4 4 12 / 0) 54%);
+
+  --pg-glass-rgb: 255 255 255;
+  --pg-shadow-rgb: 4 2 18;
+  --pg-shadow-strength: 1;
+}
+
+/* -------------------------------------------------------------------------
+   DAYLIGHT — the light material. White glass over a soft tinted canvas,
+   Apple blue accent. Built for bright offices and for printing.
+   ------------------------------------------------------------------------- */
+[data-theme='daylight'] {
+  color-scheme: light;
+
+  /* `obsidian` stays the scrim ink even here, so sheets still dim what is
+     behind them; the page backdrop and the input well get their own light
+     values instead of borrowing it. */
+  --pg-backdrop-rgb: 226 231 240;
+  --pg-canvas-solid-rgb: 237 240 246;
+  --pg-well: rgb(16 24 40 / 0.045);
+
+  --pg-obsidian-rgb: 16 20 26;
+  --pg-wine-rgb: 222 230 243;
+  --pg-crimson-rgb: 0 102 204;          /* #0066CC  5.4:1 on white */
+  --pg-crimson-strong-rgb: 0 82 168;
+  --pg-scarlet-rgb: 0 113 227;
+  --pg-crimson-tint-rgb: 232 240 253;
+  --pg-crimson-line-rgb: 188 212 245;
+  --pg-on-accent-rgb: 255 255 255;      /* 5.4:1 on the accent */
+
+  --pg-porcelain-rgb: 240 242 246;
+  --pg-canvas-2-rgb: 245 247 250;
+  --pg-surface-rgb: 255 255 255;
+  --pg-ink-rgb: 15 19 26;               /* 17.3:1 */
+  --pg-ink-2-rgb: 88 97 112;            /* 5.6:1 */
+  --pg-ink-3-rgb: 97 106 121;           /* 4.8:1 on the canvas, 5.5:1 on a panel */
+  --pg-line-rgb: 224 228 235;
+  --pg-line-strong-rgb: 198 205 215;
+  --pg-field-rgb: 170 179 192;
+
+  --pg-ok-rgb: 13 115 65;
+  --pg-ok-tint-rgb: 232 246 238;
+  --pg-ok-line-rgb: 183 219 199;
+  --pg-warn-rgb: 134 86 0;
+  --pg-warn-tint-rgb: 253 243 225;
+  --pg-warn-line-rgb: 232 206 155;
+  --pg-bad-rgb: 185 28 50;
+  --pg-bad-tint-rgb: 253 235 238;
+  --pg-bad-line-rgb: 240 194 202;
+  --pg-defer-rgb: 92 101 116;
+  --pg-defer-tint-rgb: 241 243 246;
+  --pg-defer-line-rgb: 214 219 227;
+
+  --pg-canvas-gradient:
+    linear-gradient(176deg, #FFFFFF 0%, #F4F6FA 26%, #EDF0F6 60%, #E7EBF3 86%, #E2E7F0 100%);
+  --pg-bloom:
+    radial-gradient(58% 62% at 32% 52%, rgb(255 196 180 / 0.40) 0%, rgb(255 214 200 / 0.18) 40%, rgb(240 242 246 / 0) 72%),
+    radial-gradient(58% 66% at 80% 4%, rgb(150 190 255 / 0.36) 0%, rgb(240 242 246 / 0) 62%),
+    radial-gradient(130% 115% at 50% 116%, rgb(170 182 205 / 0.34) 0%, rgb(170 182 205 / 0) 54%);
+
+  /* On a light canvas the film is white and the rim is a soft dark hairline. */
+  --pg-glass-rgb: 255 255 255;
+  --pg-shadow-rgb: 26 38 64;
+  --pg-shadow-strength: 0.45;
+}
+
+/* Daylight needs a denser film and a darker hairline than the dark themes,
+   because white-on-white has no edge of its own. */
+[data-theme='daylight'] {
+  --pg-glass: rgb(255 255 255 / 0.62);
+  --pg-glass-strong: rgb(255 255 255 / 0.82);
+  --pg-glass-quiet: rgb(255 255 255 / 0.42);
+  --pg-glass-line: rgb(16 24 40 / 0.1);
+  --pg-glass-line-strong: rgb(16 24 40 / 0.16);
+  --pg-glass-hi: rgb(255 255 255 / 0.9);
+  --pg-glass-fill: linear-gradient(
+    180deg,
+    rgb(255 255 255 / 0.72) 0%,
+    rgb(255 255 255 / 0.52) 46%,
+    rgb(255 255 255 / 0.62) 100%
+  );
+  --pg-surface-translucent: rgb(255 255 255 / 0.78);
+  --pg-surface-solid: rgb(255 255 255 / 0.92);
+  --pg-pinstripe: repeating-linear-gradient(
+    90deg,
+    rgb(255 255 255 / 0.5) 0px,
+    rgb(255 255 255 / 0.5) 1px,
+    rgb(16 24 40 / 0.016) 1px,
+    rgb(16 24 40 / 0.016) 3px
+  );
+  --pg-scrim: rgb(226 231 240 / 0.6);
+  --pg-band-recessed: linear-gradient(
+    180deg,
+    rgb(var(--pg-wine-rgb) / 0.5) 0%,
+    rgb(var(--pg-wine-rgb) / 0.85) 100%
+  );
+}

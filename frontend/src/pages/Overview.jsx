@@ -144,27 +144,37 @@ function LatestRun({ run, error, canWriteEmployees }) {
         </div>
       )}
 
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-5 px-5 py-6 sm:px-6 md:grid-cols-4">
-        <Figure
-          label="Employees"
-          value={run.employeeCount ?? '—'}
-          note={run.employeeCount === 0 ? 'No employee was in scope for this run' : 'In scope for this run'}
-        />
-        <Figure
-          label="Eligible"
-          value={preflight ? eligible ?? '—' : 'Not evaluated'}
-          note={!preflight ? 'Preflight has not run' : zeroEligible ? 'Nobody passed preflight' : `Passed preflight${preflight.blockedEmployeeCount ? `, ${preflight.blockedEmployeeCount} blocked` : ''}`}
-        />
-        <Figure
-          label="Processed"
-          value={`${run.processedEmployeeCount ?? 0} / ${run.employeeCount ?? 0}`}
-          note={run.failedEmployeeCount ? `${run.failedEmployeeCount} failed in calculation` : `${run.successfulEmployeeCount ?? 0} calculated successfully`}
-        />
-        <Figure
-          label="Snapshots"
-          value={run.durableResultCount ?? 0}
-          note={run.durableResultCount ? 'Stored results for finalization' : 'No results stored'}
-        />
+      {/* The run's figures read as the product's hairline strip: one rule per
+          cell, coral on the figure that is holding the run up. */}
+      <dl className="feature-strip mx-5 mb-6 mt-5 sm:mx-6">
+        <div className="feature-strip__item">
+          <Figure
+            label="Employees"
+            value={run.employeeCount ?? '—'}
+            note={run.employeeCount === 0 ? 'No employee was in scope for this run' : 'In scope for this run'}
+          />
+        </div>
+        <div className="feature-strip__item" data-active={!preflight || zeroEligible || preflight.blockedEmployeeCount ? '' : undefined}>
+          <Figure
+            label="Eligible"
+            value={preflight ? eligible ?? '—' : 'Not evaluated'}
+            note={!preflight ? 'Preflight has not run' : zeroEligible ? 'Nobody passed preflight' : `Passed preflight${preflight.blockedEmployeeCount ? `, ${preflight.blockedEmployeeCount} blocked` : ''}`}
+          />
+        </div>
+        <div className="feature-strip__item" data-active={run.failedEmployeeCount ? '' : undefined}>
+          <Figure
+            label="Processed"
+            value={`${run.processedEmployeeCount ?? 0} / ${run.employeeCount ?? 0}`}
+            note={run.failedEmployeeCount ? `${run.failedEmployeeCount} failed in calculation` : `${run.successfulEmployeeCount ?? 0} calculated successfully`}
+          />
+        </div>
+        <div className="feature-strip__item">
+          <Figure
+            label="Snapshots"
+            value={run.durableResultCount ?? 0}
+            note={run.durableResultCount ? 'Stored results for finalization' : 'No results stored'}
+          />
+        </div>
       </dl>
 
       {scopeNotes.length > 0 && (
@@ -179,7 +189,7 @@ function LatestRun({ run, error, canWriteEmployees }) {
         </details>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-line bg-porcelain/60 px-5 py-4 sm:px-6">
+      <div className="flex flex-wrap items-center gap-2 border-t border-line bg-[var(--pg-glass-quiet)] px-5 py-4 sm:px-6">
         <Link to={`/payroll/${run._id}`} className="btn btn-primary">
           Inspect run <Icon name="arrow-right" size={16} />
         </Link>
@@ -388,9 +398,9 @@ function NeedsAttention({ run, checks }) {
   }
   if (!items.length) return null;
   return (
-    <section aria-labelledby="attention-title" className="rounded-[14px] border border-line bg-surface">
-      <h2 id="attention-title" className="flex items-center gap-2 border-b border-line px-5 py-3 text-sm font-semibold text-ink sm:px-6">
-        Needs attention <span className="tabular rounded-full bg-canvas-2 px-2 text-xs font-semibold text-ink-2">{items.length}</span>
+    <section aria-labelledby="attention-title" className="panel !p-0">
+      <h2 id="attention-title" className="flex items-center gap-2 border-b border-line px-5 py-3.5 text-sm font-semibold text-ink sm:px-6">
+        Needs attention <span className="tabular rounded-full border border-line bg-[var(--pg-glass)] px-2 text-xs font-semibold text-ink-2">{items.length}</span>
       </h2>
       <ul className="divide-y divide-line">
         {items.slice(0, 4).map((item) => (

@@ -86,7 +86,7 @@ export default function Compensation() {
       <td className="text-sm">
         {change.reason}
         {change.decisionNote && <span className="block text-xs text-ink-2">Note: {change.decisionNote}</span>}
-        <button type="button" className="mt-1 text-xs font-semibold text-crimson" onClick={() => setExpanded(expanded === change.id ? null : change.id)}>
+        <button type="button" className="mt-1 block text-xs font-semibold text-crimson hover:text-crimson-strong" onClick={() => setExpanded(expanded === change.id ? null : change.id)}>
           {expanded === change.id ? 'Hide impact' : 'Show impact'}
         </button>
         {expanded === change.id && <ImpactSummary impact={change.impactAtApproval || change.impact} compact />}

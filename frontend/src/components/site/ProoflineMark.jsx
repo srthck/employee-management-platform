@@ -1,19 +1,31 @@
 /**
  * PayGuard mark: a "P" whose stem continues as the proofline and ends in a
- * signal-red proof point. Decorative; the wordmark beside it carries the name.
+ * coral proof point. Drawn as an open glyph rather than a filled tile, so it
+ * sits on the lit navy canvas the way the rest of the chrome does.
+ * Decorative; the wordmark beside it carries the name.
+ *
+ * `inverse` draws it for a light surface (used where the canvas is cream).
  */
 export default function ProoflineMark({ size = 28, inverse = false }) {
+  const stroke = inverse ? 'var(--pg-obsidian)' : 'var(--pg-ink)';
   return (
-    <svg className="site-mark" width={size} height={size} viewBox="0 0 28 28" aria-hidden="true" focusable="false">
-      <rect width="28" height="28" rx="7" fill={inverse ? 'var(--pg-porcelain)' : 'var(--pg-ink)'} />
+    <svg
+      className="site-mark"
+      width={size}
+      height={size}
+      viewBox="0 0 28 28"
+      aria-hidden="true"
+      focusable="false"
+    >
       <path
-        d="M10 21.5V6.5h5.25a4.75 4.75 0 0 1 0 9.5H10"
+        d="M8.5 22.2V5.8h6a4.9 4.9 0 0 1 0 9.8h-6"
         fill="none"
-        stroke={inverse ? 'var(--pg-ink)' : 'var(--pg-porcelain)'}
-        strokeWidth="2.4"
+        stroke={stroke}
+        strokeWidth="2.3"
+        strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <circle cx="10" cy="21.75" r="2.6" fill="var(--pg-signal)" />
+      <circle cx="8.5" cy="22.2" r="2.7" fill="var(--pg-signal)" />
     </svg>
   );
 }

@@ -247,7 +247,7 @@ export default function PayrollRuns() {
                 Payroll month
 
                 <select
-                  className="field mt-2 border-line bg-porcelain text-ink"
+                  className="field mt-2"
                   value={month}
                   onChange={(e) => setMonth(e.target.value)}
                 >
@@ -275,7 +275,7 @@ export default function PayrollRuns() {
                 Payroll year
 
                 <input
-                  className="field mt-2 border-line bg-porcelain text-ink"
+                  className="field mt-2"
                   type="number"
                   min="2000"
                   max="2100"

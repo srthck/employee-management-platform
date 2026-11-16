@@ -24,7 +24,7 @@
     "api",
     "rest"
   ],
-  "author": "",
+  "author": "Sarthak Kadam",
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^2.4.3",
